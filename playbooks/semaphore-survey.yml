@@ -1,0 +1,198 @@
+---
+# Ensure the "Provision Node" Semaphore template carries the full survey-variable
+# set (issue #48) — Semaphore configuration as code, via its own REST API.
+#
+# Designed to run FROM Semaphore itself (an ad-hoc template with no survey):
+# inside the Semaphore container its API is http://127.0.0.1:3000. Override
+# semaphore_api_url for a run from elsewhere.
+#
+# The Semaphore API token comes from OpenBao (#2): infra/semaphore, field
+# api_token. Create it once in the Semaphore UI (user menu -> API Tokens):
+#
+#   read -rs V && printf '%s' "$V" #     | docker exec -i openbao bao kv put infra/semaphore api_token=-
+#
+# The template must have the Variable Group carrying OPENBAO_SECRET_ID
+# attached, or the read fails on its first assert.
+#
+# Idempotent (fetch-then-guard, CLAUDE.md §6): only variables MISSING by name
+# are appended; existing entries — including manual edits to titles, types or
+# defaults — are never touched. The PUT runs only when something is missing.
+
+- name: Ensure Provision Node survey variables in Semaphore
+  hosts: controller
+  gather_facts: false
+
+  vars:
+    semaphore_api_url: "http://127.0.0.1:3000"
+    semaphore_template_name: "Provision Node"
+    _api_headers:
+      Authorization: "Bearer {{ _semaphore_api_token }}"
+    # The desired survey set. type: "" is String, "secret" masks the value.
+    # Existing variables always win — entries here only fill the gaps.
+    semaphore_survey_vars:
+      - name: node_ip
+        title: Node IP
+        description: >-
+          Public IP of the freshly rented VPS (root + admin key).
+          Used ONLY for SSH — the panel never sees it
+        type: ""
+        required: true
+      - name: node_name
+        title: Node name
+        description: >-
+          DNS-safe short name (lowercase letters, digits, hyphens; >=3 chars,
+          e.g. pl-1). Becomes hostname, NetBird peer, panel node and Dockhand
+          environment name
+        type: ""
+        required: true
+      - name: node_profile
+        title: Config profile
+        description: >-
+          Config profile name (e.g. Poland). Created automatically if missing —
+          then Profile domain is required
+        type: ""
+        required: true
+      - name: hawser_token
+        title: Hawser token
+        description: Dockhand edge token for this host's environment
+        type: secret
+        required: true
+      - name: node_country
+        title: Country code
+        description: ISO-2 country code for the panel flag (e.g. PL)
+        type: ""
+        required: false
+      - name: profile_domain
+        title: Profile domain
+        description: >-
+          Reality domain / SNI (e.g. pl.example.com). Required only when the
+          profile must be created (new country)
+        type: ""
+        required: false
+      - name: node_address
+        title: Node address override
+        description: >-
+          Address the panel connects to. Leave empty to use the mesh DNS name
+          <node_name>.<netbird_dns_domain> (default)
+        type: ""
+        required: false
+      - name: squad_name
+        title: Squad name
+        description: >-
+          Internal squad for the profile's inbound. Required only when more
+          than one squad exists
+        type: ""
+        required: false
+
+  tasks:
+    # Read the API token from OpenBao (#2). The vault entry stays in place as
+    # the cold fallback until backups are real (#7): reverting this switch is
+    # reverting the commit, not editing anything on a server.
+    - name: Fetch the Semaphore API token
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: semaphore
+        openbao_read_field: api_token
+        openbao_read_into: _semaphore_api_token
+      tags:
+        - config
+
+    - name: Fetch Semaphore projects
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/projects"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: projects_result
+      # No no_log on the read-only GETs: responses carry no secrets (the token
+      # travels in headers, which uri does not log), and censoring them made a
+      # wrong project id undebuggable (#52). The PUT keeps no_log.
+      # Needed only for auto-discovery; skipped when the id is supplied.
+      when: semaphore_project_id is not defined
+
+    - name: Assert exactly one project exists
+      ansible.builtin.assert:
+        that:
+          - projects_result.json | length == 1
+        fail_msg: >-
+          Expected exactly one Semaphore project, found
+          {{ projects_result.json | length }} — pass -e semaphore_project_id
+          to disambiguate.
+      when: semaphore_project_id is not defined
+
+    - name: Resolve the project id
+      ansible.builtin.set_fact:
+        _project_id: "{{ semaphore_project_id | default(projects_result.json[0].id) }}"
+
+    - name: Fetch the project templates
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: templates_result
+
+    - name: Resolve the target template id
+      ansible.builtin.set_fact:
+        _template_stub: >-
+          {{ templates_result.json
+             | selectattr('name', 'equalto', semaphore_template_name)
+             | list | first | default({}) }}
+
+    - name: Assert the template exists
+      ansible.builtin.assert:
+        that:
+          - _template_stub.id is defined
+        fail_msg: >-
+          Template '{{ semaphore_template_name }}' not found. Available:
+          {{ templates_result.json | map(attribute='name') | list | join(', ') }}
+
+    # The LIST endpoint omits survey_vars (and possibly other fields) — merging
+    # against it wiped the existing survey on the first run. Only the DETAIL
+    # endpoint returns the full object safe to modify and PUT back.
+    - name: Fetch the full template object
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates/{{ _template_stub.id }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: template_result
+
+    - name: Resolve the target template
+      ansible.builtin.set_fact:
+        _template: "{{ template_result.json }}"
+
+    # survey_vars can be JSON null on a template that never had any.
+    - name: Determine which survey variables are missing
+      ansible.builtin.set_fact:
+        _existing_vars: "{{ _template.survey_vars | default([], true) }}"
+        _missing_vars: >-
+          {{ semaphore_survey_vars
+             | rejectattr('name', 'in',
+                          _template.survey_vars | default([], true)
+                          | map(attribute='name') | list)
+             | list }}
+
+    - name: Add the missing survey variables (only when something is missing)
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates/{{ _template.id }}"
+        method: PUT
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body: "{{ _template | combine({'survey_vars': _existing_vars + _missing_vars}) }}"
+        status_code: [200, 204]
+      no_log: true
+      # The when-guard is the change detector: the PUT runs only when variables
+      # are actually missing, so completing it IS the state change.
+      changed_when: _missing_vars | length > 0
+      when: _missing_vars | length > 0
+
+    - name: Show the survey sync summary
+      ansible.builtin.debug:
+        msg: >-
+          Template "{{ semaphore_template_name }}":
+          {{ (_missing_vars | map(attribute='name') | join(', '))
+             if _missing_vars | length > 0 else 'nothing' }} added;
+          {{ _existing_vars | length }} variable(s) were already present.
+      tags:
+        - debug

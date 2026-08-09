@@ -1,0 +1,167 @@
+---
+# Register this node in the Beszel hub (PocketBase) and obtain its per-node
+# token — idempotent (fetch-then-guard). All calls hit the hub API from the
+# controller (delegate_to localhost), not the node.
+- name: Assert hub superuser credentials are provided
+  ansible.builtin.assert:
+    that:
+      - beszel_agent_admin_email | length > 0
+      - beszel_agent_admin_password | length > 0
+    fail_msg: >
+      Auto-registration needs the hub superuser creds
+      beszel_agent_admin_email / _admin_password (vault). Set them, or disable
+      with beszel_agent_register: false.
+  tags:
+    - config
+
+- name: Authenticate to the Beszel hub as a superuser
+  ansible.builtin.uri:
+    url: "{{ beszel_agent_hub_url }}/api/collections/_superusers/auth-with-password"
+    method: POST
+    body_format: json
+    body:
+      identity: "{{ beszel_agent_admin_email }}"
+      password: "{{ beszel_agent_admin_password }}"
+    status_code: 200
+  register: beszel_agent_auth
+  delegate_to: localhost
+  become: false
+  no_log: true
+  tags:
+    - config
+
+# The hub serves its own public key (what the agent verifies it with) at
+# /api/beszel/info — fetch it instead of pasting it by hand.
+- name: Fetch the hub's public key
+  ansible.builtin.uri:
+    url: "{{ beszel_agent_hub_url }}/api/beszel/info"
+    method: GET
+    headers:
+      Authorization: "{{ beszel_agent_auth.json.token }}"
+    status_code: 200
+  register: beszel_agent_info
+  delegate_to: localhost
+  become: false
+  tags:
+    - config
+
+- name: Set the hub public key
+  ansible.builtin.set_fact:
+    beszel_agent_key: "{{ beszel_agent_info.json.key }}"
+  tags:
+    - config
+
+# Owner (dashboard user) that owns the systems. Filter by email when given,
+# otherwise take the first/only user — so a single-admin hub needs no email.
+- name: Look up the owner user
+  ansible.builtin.uri:
+    url: "{{ beszel_agent_hub_url }}/api/collections/users/records?perPage=1{{ ('&filter=' ~ ((\"(email='\" ~ beszel_agent_owner_email ~ \"')\") | urlencode)) if (beszel_agent_owner_email | length > 0) else '' }}"
+    method: GET
+    headers:
+      Authorization: "{{ beszel_agent_auth.json.token }}"
+    status_code: 200
+  register: beszel_agent_owner
+  delegate_to: localhost
+  become: false
+  no_log: true
+  tags:
+    - config
+
+- name: Assert an owner user was found
+  ansible.builtin.assert:
+    that:
+      - beszel_agent_owner.json['items'] | length > 0
+    fail_msg: >
+      No Beszel dashboard user found
+      {{ ('with email ' ~ beszel_agent_owner_email) if (beszel_agent_owner_email | length > 0) else '(no users exist)' }}.
+  tags:
+    - config
+
+- name: Find an existing system by name
+  ansible.builtin.uri:
+    url: "{{ beszel_agent_hub_url }}/api/collections/systems/records?filter={{ (\"(name='\" ~ beszel_agent_system_name ~ \"')\") | urlencode }}"
+    method: GET
+    headers:
+      Authorization: "{{ beszel_agent_auth.json.token }}"
+    status_code: 200
+  register: beszel_agent_system_lookup
+  delegate_to: localhost
+  become: false
+  tags:
+    - config
+
+- name: Create the system if missing
+  ansible.builtin.uri:
+    url: "{{ beszel_agent_hub_url }}/api/collections/systems/records"
+    method: POST
+    headers:
+      Authorization: "{{ beszel_agent_auth.json.token }}"
+    body_format: json
+    body:
+      name: "{{ beszel_agent_system_name }}"
+      host: "{{ beszel_agent_system_host }}"
+      port: "{{ beszel_agent_port | string }}"
+      users:
+        - "{{ beszel_agent_owner.json['items'][0].id }}"
+    status_code: 200
+  register: beszel_agent_system_create
+  when: beszel_agent_system_lookup.json['items'] | length == 0
+  delegate_to: localhost
+  become: false
+  tags:
+    - config
+
+- name: Resolve the system id
+  ansible.builtin.set_fact:
+    beszel_agent_system_id: >-
+      {{ beszel_agent_system_lookup.json['items'][0].id
+         if (beszel_agent_system_lookup.json['items'] | length > 0)
+         else beszel_agent_system_create.json.id }}
+  tags:
+    - config
+
+- name: Find an existing token for the system
+  ansible.builtin.uri:
+    url: "{{ beszel_agent_hub_url }}/api/collections/fingerprints/records?filter={{ (\"(system='\" ~ beszel_agent_system_id ~ \"')\") | urlencode }}"
+    method: GET
+    headers:
+      Authorization: "{{ beszel_agent_auth.json.token }}"
+    status_code: 200
+  register: beszel_agent_fp_lookup
+  delegate_to: localhost
+  become: false
+  no_log: true
+  tags:
+    - config
+
+# Deterministic token per node (UUIDv5 of the name) so re-creation is stable;
+# an existing record's token is reused as-is, keeping the run idempotent.
+- name: Create the token record if missing
+  ansible.builtin.uri:
+    url: "{{ beszel_agent_hub_url }}/api/collections/fingerprints/records"
+    method: POST
+    headers:
+      Authorization: "{{ beszel_agent_auth.json.token }}"
+    body_format: json
+    body:
+      system: "{{ beszel_agent_system_id }}"
+      token: "{{ (beszel_agent_system_name ~ '-beszel') | to_uuid }}"
+      fingerprint: ""
+    status_code: 200
+  register: beszel_agent_fp_create
+  when: beszel_agent_fp_lookup.json['items'] | length == 0
+  delegate_to: localhost
+  become: false
+  no_log: true
+  tags:
+    - config
+
+- name: Set the agent token for this node
+  ansible.builtin.set_fact:
+    beszel_agent_token: >-
+      {{ beszel_agent_fp_lookup.json['items'][0].token
+         if (beszel_agent_fp_lookup.json['items'] | length > 0)
+         else beszel_agent_fp_create.json.token }}
+  no_log: true
+  tags:
+    - config

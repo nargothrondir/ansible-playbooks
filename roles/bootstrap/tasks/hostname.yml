@@ -1,0 +1,19 @@
+---
+# The hostname doubles as the server's mesh identity: NetBird registers the
+# peer under it, so <hostname>.<netbird_dns_domain> becomes the node's private
+# DNS name (the address the panel connects to). Runs before the netbird role.
+- name: Set the system hostname
+  ansible.builtin.hostname:
+    name: "{{ bootstrap_hostname }}"
+  when: bootstrap_hostname | length > 0
+  tags:
+    - config
+
+- name: Map the hostname in /etc/hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s'
+    line: "127.0.1.1 {{ bootstrap_hostname }}"
+  when: bootstrap_hostname | length > 0
+  tags:
+    - config

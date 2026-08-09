@@ -1,0 +1,153 @@
+---
+# Read one secret from OpenBao into a fact. Include it once per secret:
+#
+#   - name: Fetch the Telegram bot token
+#     ansible.builtin.include_tasks:
+#       file: tasks/openbao-read.yml
+#       apply:
+#         delegate_to: localhost
+#         run_once: true
+#     vars:
+#       openbao_read_path: telegram
+#       openbao_read_field: bot_token
+#       openbao_read_into: telegram_bot_token
+#
+# Use `apply:` rather than putting delegate_to/run_once on the include itself —
+# that is the documented way to push keywords onto included tasks, and it does
+# not depend on inheritance rules that differ between Ansible versions.
+#
+# The delegation matters: the CONTROLLER reads the secret on behalf of the
+# play, once, and the target hosts never talk to OpenBao. They could not — the
+# API lives on a Docker network the panel owns, not on the mesh.
+#
+# Facts set under `run_once` land on the first host in the play. For a play
+# spanning several hosts, read them back as
+# `hostvars[ansible_play_hosts_all[0]].telegram_bot_token`, or do the fetch in
+# its own play against `controller` and reference
+# `hostvars['controller'].telegram_bot_token` afterwards — the explicit form,
+# and the clearer one when several plays need the same secret.
+#
+# The AppRole login happens on the FIRST include and is reused afterwards, so
+# reading five secrets costs one login rather than five. Whoever includes this
+# does not have to know that.
+#
+# Requires, from the inventory and the environment respectively:
+#   openbao_read_field     OMIT IT to receive the WHOLE secret as a dict
+#                          instead of one value — needed for a secret whose
+#                          shape is a table, such as hawser's host->token map.
+#
+#   openbao_read_optional  set true for a field that may legitimately be
+#                          absent; the fact is then set to an empty string
+#                          instead of failing. Default false — a typo in a
+#                          field name should be loud.
+#
+#   openbao_addr      group_vars/all — http://openbao:8200
+#   openbao_role_id   group_vars/all — not a secret
+#   OPENBAO_SECRET_ID a Semaphore Variable Group secret of type `env`
+#
+# The ansible-vault files remain the cold fallback until backups are real
+# (#7), so a playbook switched to this should keep working if the old variable
+# is still defined — switch one consumer at a time and verify.
+
+- name: Assert both halves of the AppRole credential are present
+  ansible.builtin.assert:
+    that:
+      - openbao_addr | default('') | length > 0
+      - openbao_role_id | default('') | length > 0
+      - lookup('env', 'OPENBAO_SECRET_ID') | length > 0
+    fail_msg: >-
+      Need openbao_addr and openbao_role_id from the inventory, and
+      OPENBAO_SECRET_ID from the environment. From Semaphore, attach the
+      Variable Group holding the secret to this template — an unattached group
+      is not injected, and looks exactly like a missing secret.
+  when: _openbao_token is not defined
+  tags:
+    - config
+
+# no_log because the body carries the secret_id and the response carries a
+# usable token.
+- name: Log in with the AppRole
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/auth/approle/login"
+    method: POST
+    body_format: json
+    body:
+      role_id: "{{ openbao_role_id }}"
+      secret_id: "{{ lookup('env', 'OPENBAO_SECRET_ID') }}"
+    status_code: [200]
+  register: _openbao_login
+  no_log: true
+  # Authenticating mints an ephemeral token and changes no configuration; the
+  # token expires on its own (token_ttl on the AppRole role).
+  changed_when: false
+  check_mode: false
+  when: _openbao_token is not defined
+  tags:
+    - config
+
+# Held as a fact so later includes skip the login above. It is a credential, so
+# nothing may print it — hence no_log here too, even though set_fact is local.
+- name: Remember the token for the rest of the play
+  ansible.builtin.set_fact:
+    _openbao_token: "{{ _openbao_login.json.auth.client_token }}"
+  no_log: true
+  when: _openbao_token is not defined
+  tags:
+    - config
+
+# KV v2 serves reads from <mount>/data/<path>, and the payload nests twice:
+# .json.data is the API envelope, .json.data.data is the secret. The double
+# `data` is not a typo.
+- name: "Read from OpenBao: {{ openbao_read_path }}"
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/{{ openbao_read_mount | default('infra') }}/data/{{ openbao_read_path }}"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ _openbao_token }}"
+    status_code: [200]
+  register: _openbao_read
+  no_log: true
+  changed_when: false
+  check_mode: false
+  tags:
+    - config
+
+# A missing field yields an empty string rather than an error, which would then
+# surface far away as an unexplained empty credential. Fail here, where the
+# path and the field name are still in hand.
+- name: "Assert the field is present: {{ openbao_read_path ~ '/' ~ (openbao_read_field | default('*')) }}"
+  ansible.builtin.assert:
+    that:
+      - openbao_read_field in (_openbao_read.json.data.data | default({}))
+    fail_msg: >-
+      {{ openbao_read_mount | default('infra') }}/{{ openbao_read_path }} has no
+      field '{{ openbao_read_field }}'. Write it with:
+      docker exec -it openbao bao kv put
+      {{ openbao_read_mount | default('infra') }}/{{ openbao_read_path }}
+      {{ openbao_read_field }}=...
+  when:
+    - openbao_read_field is defined
+    - not (openbao_read_optional | default(false) | bool)
+  tags:
+    - config
+
+# The dynamic key is the point of the whole file: the caller names the variable
+# it wants, and gets it as an ordinary fact.
+#
+# Two tasks rather than one conditional expression: a folded scalar carrying a
+# dict is a type-coercion trap, and the intent is clearer split.
+- name: "Set {{ openbao_read_into }}"
+  ansible.builtin.set_fact:
+    "{{ openbao_read_into }}": "{{ _openbao_read.json.data.data[openbao_read_field] | default('', true) }}"
+  no_log: true
+  when: openbao_read_field is defined
+  tags:
+    - config
+
+- name: "Set the whole secret into {{ openbao_read_into }}"
+  ansible.builtin.set_fact:
+    "{{ openbao_read_into }}": "{{ _openbao_read.json.data.data }}"
+  no_log: true
+  when: openbao_read_field is not defined
+  tags:
+    - config

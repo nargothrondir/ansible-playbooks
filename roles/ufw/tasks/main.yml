@@ -1,0 +1,74 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+    fail_msg: >
+      Unsupported OS: {{ ansible_facts['distribution'] }}
+      {{ ansible_facts['distribution_version'] }}.
+      Only Debian/Ubuntu are supported.
+  tags:
+    - install
+
+- name: Install ufw
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  tags:
+    - install
+    - ufw
+
+# Rules are laid down BEFORE the firewall is enabled, so the SSH allow below
+# is always in place when enforcement starts — enabling over SSH is safe.
+- name: Deny incoming traffic by default
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+  tags:
+    - config
+    - ufw
+
+- name: Allow outgoing traffic by default
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+  tags:
+    - config
+    - ufw
+
+- name: Allow public TCP ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: tcp
+    comment: "{{ item.comment }} (roles/ufw)"
+  loop: "{{ ufw_public_tcp }}"
+  loop_control:
+    label: "{{ item.port }}/tcp — {{ item.comment }}"
+  tags:
+    - config
+    - ufw
+
+- name: Allow mesh-only TCP ports on the NetBird interface
+  community.general.ufw:
+    rule: allow
+    direction: in
+    interface: "{{ ufw_mesh_interface }}"
+    port: "{{ item.port }}"
+    proto: tcp
+    comment: "{{ item.comment }} (roles/ufw, mesh only)"
+  loop: "{{ ufw_mesh_tcp }}"
+  loop_control:
+    label: "{{ item.port }}/tcp on {{ ufw_mesh_interface }} — {{ item.comment }}"
+  tags:
+    - config
+    - ufw
+
+- name: Enable the firewall
+  community.general.ufw:
+    state: enabled
+  tags:
+    - service
+    - ufw

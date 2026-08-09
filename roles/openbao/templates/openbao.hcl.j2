@@ -1,0 +1,39 @@
+# {{ ansible_managed }}
+
+ui = {{ openbao_ui | bool | lower }}
+
+# Integrated Raft: no external storage service, and it is what makes
+# `bao operator raft snapshot save` available for backups (#7).
+#
+# /openbao/file, not /openbao/data: the image declares this path, so Docker
+# seeds the named volume from it with the right ownership. A path the image
+# does not have yields a root-owned directory, and the server — which runs as
+# the unprivileged `openbao` user — cannot create its bolt file there.
+storage "raft" {
+  path    = "/openbao/file"
+  node_id = "{{ openbao_node_id }}"
+}
+
+# Binds every interface INSIDE the container; the published port is pinned to
+# {{ openbao_bind_address }} on the host, so this is not exposed.
+# TLS is terminated by the reverse proxy in front of the UI — this hop is
+# loopback and the container bridge, never the network.
+listener "tcp" {
+  address     = "0.0.0.0:{{ openbao_port }}"
+  tls_disable = 1
+
+  # BREAK-GLASS SWITCH. Normally true, which has been OpenBao's own default
+  # since 2.5.3, when the unauthenticated root-generation endpoints were
+  # deprecated. While it is true, `bao operator generate-root` answers 403 and
+  # there is NO way back to a root token once the last one is revoked. Flip it
+  # only for the recovery itself, then flip it back. See the role README.
+  disable_unauthed_generate_root_endpoints = {{ 'false' if openbao_allow_root_generation | bool else 'true' }}
+}
+
+api_addr     = "http://{{ openbao_bind_address }}:{{ openbao_port }}"
+cluster_addr = "http://{{ openbao_bind_address }}:{{ openbao_cluster_port }}"
+
+# See the role defaults for why this is required rather than chosen.
+disable_mlock = {{ openbao_disable_mlock | bool | lower }}
+
+log_level = "{{ openbao_log_level }}"

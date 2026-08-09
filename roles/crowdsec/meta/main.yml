@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: crowdsec
+  author: nargothrondir
+  description: >
+    Install CrowdSec and the nftables firewall bouncer, detect SSH attacks
+    only, and enforce progressive (exponential) bans locally. Central LAPI
+    (fleet-wide) wiring is included but inactive by default.
+  min_ansible_version: "2.15"
+  license: MIT
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+
+dependencies: []

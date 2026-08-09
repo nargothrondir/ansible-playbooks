@@ -1,0 +1,13 @@
+---
+# Additional sshd port for key-based automation over the NetBird mesh.
+# Mesh :22 belongs to NB-SSH (the dashboard's in-browser break-glass SSH) on
+# peers that enable it, so Ansible gets its own door; the ufw role opens this
+# port on the mesh interface only (ufw_mesh_tcp). Issue #30, step 1.
+# Sourced from the shared automation_ssh_port (group_vars/all) so the listener
+# and the firewall rule can never drift apart.
+ssh_hardening_mesh_port: "{{ automation_ssh_port | default(2200) }}"
+
+# The host's canonical public sshd port, kept explicitly in the drop-in (the
+# first Port directive replaces the implicit default 22). Override on hosts
+# that deliberately run sshd on a non-standard port.
+ssh_hardening_public_port: 22

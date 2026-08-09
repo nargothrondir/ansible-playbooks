@@ -1,0 +1,51 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+    fail_msg: >
+      Unsupported OS: {{ ansible_facts['distribution'] }}
+      {{ ansible_facts['distribution_version'] }}.
+      Only Debian/Ubuntu are supported.
+  tags:
+    - config
+
+- name: Deploy the sshd mesh-port drop-in
+  ansible.builtin.template:
+    src: mesh-port.conf.j2
+    dest: /etc/ssh/sshd_config.d/10-ansible-mesh-port.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: "reload sshd"
+  tags:
+    - config
+    - ssh
+
+# Runs before the reload handler fires (handlers run at play end), so a broken
+# merged config fails the play while the old sshd keeps serving connections.
+- name: Validate the merged sshd configuration
+  ansible.builtin.command: /usr/sbin/sshd -t
+  changed_when: false
+  tags:
+    - config
+    - ssh
+
+# "Green but broken" guard (#52): a drop-in can be silently ignored (no
+# Include directive in a provider's sshd_config; Ubuntu's socket activation
+# needs more than a reload) while sshd -t still passes. Apply the reload now
+# and prove the port actually listens.
+- name: Apply the pending sshd reload
+  ansible.builtin.meta: flush_handlers
+  tags:
+    - config
+    - ssh
+
+- name: Verify sshd listens on the mesh port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ ssh_hardening_mesh_port }}"
+    timeout: 10
+  tags:
+    - config
+    - ssh

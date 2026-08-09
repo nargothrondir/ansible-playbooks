@@ -1,0 +1,10 @@
+---
+- name: Converge
+  hosts: all
+  gather_facts: true
+  vars:
+    # Throwaway test key generated for this scenario — a public key, not a secret.
+    bootstrap_authorized_keys:
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOyDIedoLsHAnUHEReFEDf4nomZHW5JZFf3l/iD3xrdI molecule-test"
+  roles:
+    - role: bootstrap

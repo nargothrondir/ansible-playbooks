@@ -1,0 +1,10 @@
+name: ssh_progressive_ban
+filters:
+  - Alert.Remediation == true && Alert.GetScope() == "Ip" && Alert.GetScenario() contains "ssh"
+decisions:
+  - type: ban
+    duration: {{ crowdsec_ban_base_hours }}h
+# Exponential ban: base * 2^(prior decisions for this IP), capped past the
+# threshold. expr-lang '^' is exponentiation (not XOR); int() keeps %d happy.
+duration_expr: "GetDecisionsCount(Alert.GetValue()) > {{ crowdsec_ban_cap_threshold }} ? '{{ crowdsec_ban_cap }}' : Sprintf('%dh', int({{ crowdsec_ban_base_hours }} * (2 ^ GetDecisionsCount(Alert.GetValue()))))"
+on_success: break

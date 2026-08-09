@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: openbao
+  author: nargothrondir
+  description: >-
+    Deploy OpenBao (KV/secrets store, integrated Raft) on the panel host via
+    Docker Compose. Initialisation and unsealing are the operator's, never
+    automated.
+  min_ansible_version: "2.15"
+  license: MIT
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+
+dependencies: []

@@ -1,0 +1,10 @@
+---
+# WARNING: restarting OpenBao SEALS it. Every playbook that reads a secret then
+# fails until an operator supplies the unseal shares. That is inherent to the
+# manual-Shamir decision (#2), not a defect — but it means a config change is
+# an operational event, not a routine apply.
+- name: Restart OpenBao
+  community.docker.docker_compose_v2:
+    project_src: "{{ openbao_data_dir }}"
+    state: restarted
+  listen: "restart openbao"

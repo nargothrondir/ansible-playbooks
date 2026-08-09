@@ -1,0 +1,33 @@
+---
+# NODE side of central-LAPI mode (inactive by default; this file only runs when
+# crowdsec_central_lapi_enabled is true). The agent reports to the panel's LAPI
+# over the mesh instead of its bundled local one, so a signal caught on any
+# machine bans across the fleet.
+#
+# Activation also needs the PANEL side, which is intentionally out of this file:
+# `cscli machines add {{ crowdsec_central_lapi_login }}` (register the agent) and
+# a bouncer API key issued on the panel. Those credentials are supplied via vault
+# (crowdsec_central_lapi_password). See issue #31.
+- name: Assert central LAPI parameters are provided
+  ansible.builtin.assert:
+    that:
+      - crowdsec_central_lapi_url | length > 0
+      - crowdsec_central_lapi_password | length > 0
+    fail_msg: >
+      crowdsec_central_lapi_enabled is true but the LAPI URL or password is
+      empty — set crowdsec_central_lapi_url and the vaulted
+      crowdsec_central_lapi_password.
+  tags:
+    - config
+
+- name: Point the CrowdSec agent at the central LAPI
+  ansible.builtin.template:
+    src: local_api_credentials.yaml.j2
+    dest: /etc/crowdsec/local_api_credentials.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: "reload crowdsec"
+  tags:
+    - config

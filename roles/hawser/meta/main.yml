@@ -1,0 +1,18 @@
+---
+galaxy_info:
+  role_name: hawser
+  author: nargothrondir
+  description: Deploy the Hawser edge agent (for Dockhand) on a Docker host.
+  min_ansible_version: "2.15"
+  license: MIT
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+
+dependencies: []

@@ -1,0 +1,22 @@
+---
+# Pinned Dockhand image.
+dockhand_image: "fnsys/dockhand:v1.0.40"
+dockhand_container_name: dockhand
+dockhand_restart_policy: unless-stopped
+
+# Directory holding the compose file (data lives in a Docker named volume).
+dockhand_data_dir: /opt/dockhand
+
+# Host bind for the UI. Behind the Angie reverse proxy — keep it on loopback.
+# Port 3040 chosen to avoid the ports already used on the control node.
+dockhand_bind: "127.0.0.1:3040"
+dockhand_internal_port: 3000
+
+# Container user/group ids.
+dockhand_puid: 1000
+dockhand_pgid: 1000
+
+# Base64-encoded AES-256 key for credential encryption (44 chars).
+# Provide via ansible-vault (group_vars/control/vault.yml):
+#   dockhand_encryption_key: "<openssl rand -base64 32>"
+# Intentionally not defined here.

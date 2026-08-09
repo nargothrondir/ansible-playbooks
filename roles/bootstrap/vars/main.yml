@@ -1,0 +1,3 @@
+---
+# Internal constants — DO NOT override.
+_bootstrap_sudoers_path: "/etc/sudoers.d/{{ bootstrap_user }}"

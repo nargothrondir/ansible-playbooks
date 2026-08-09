@@ -1,0 +1,60 @@
+---
+# Pinned OpenBao image. Release tags carry a leading "v" (v2.6.1); image tags
+# do not.
+openbao_image: "ghcr.io/openbao/openbao:2.6.1"
+openbao_container_name: openbao
+openbao_restart_policy: unless-stopped
+
+openbao_data_dir: /opt/openbao
+
+# Published on loopback only — for `docker exec` and for the reverse proxy that
+# serves the UI. Container clients do NOT use this port; they reach the API by
+# service name over the network below.
+openbao_bind_address: "127.0.0.1"
+openbao_port: 8200
+
+# Shared Docker network for containers that must reach the API — today only
+# Semaphore, which reads secrets on behalf of playbooks. They address it as
+# http://{{ openbao_container_name }}:{{ openbao_port }}.
+#
+# Why a dedicated network rather than publishing on the bridge gateway and
+# using host.docker.internal: a port published on 127.0.0.1 is not reachable
+# from a container at all (the name would resolve and the connection would be
+# refused), and publishing on the gateway instead would expose the secret store
+# to EVERY container on the host. Only containers explicitly joined here can
+# reach it.
+#
+# Set empty to disable, leaving the API reachable on loopback only.
+openbao_network: openbao-net
+
+# Raft is single-node here. node_id must stay stable across restarts, or the
+# node rejoins as a different peer.
+openbao_node_id: "{{ inventory_hostname }}"
+openbao_cluster_port: 8201
+
+openbao_ui: true
+openbao_log_level: info
+
+# REQUIRED, not a preference. The official image ships no `setcap` and runs as
+# the unprivileged `openbao` user, so the process cannot lock memory even with
+# --cap-add=IPC_LOCK; leaving mlock enabled makes it fail to start.
+#
+# The cost: OpenBao's memory, which holds decrypted secrets while unsealed, may
+# be written to swap. Mitigate on the host — zram keeps swapped pages in RAM
+# (see the common role), and disk swap does not.
+openbao_disable_mlock: true
+
+# BREAK-GLASS. Leave false. OpenBao deprecated the unauthenticated
+# root-generation endpoints in 2.5.3 and disables them by default, so
+# `bao operator generate-root` answers 403 — meaning that once the last root
+# token is revoked, there is NO way back to one.
+#
+# The recovery is: set this true, apply the role (the container restarts and
+# comes back SEALED), unseal, run generate-root with a quorum of shares, then
+# set it back to false and apply again. Two restarts, two unseals.
+#
+# Kept false to match upstream: while true, anyone who can reach the API can
+# START a root-generation attempt without a token. They still cannot finish one
+# without K unseal shares, so the exposure is nuisance rather than compromise —
+# but it is exposure, and this API needs no permanent door.
+openbao_allow_root_generation: false

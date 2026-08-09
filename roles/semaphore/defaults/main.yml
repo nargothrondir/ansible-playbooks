@@ -1,0 +1,38 @@
+---
+# Semaphore container image (pin a specific release).
+semaphore_image: "semaphoreui/semaphore:v2.19.7"
+
+# Directory on the control node holding the compose file. Persistent data lives
+# in Docker named volumes (semaphore_data/config/tmp), not here.
+semaphore_data_dir: /opt/semaphore
+
+semaphore_container_name: semaphore
+semaphore_restart_policy: unless-stopped
+
+# Host bind for the published port. A reverse proxy on the host connects to
+# this address. Defaults to localhost only (not exposed publicly).
+semaphore_bind: "127.0.0.1:3000"
+semaphore_internal_port: 3000
+
+# Optional: attach the container to an EXISTING external Docker network (e.g.
+# your reverse proxy's network). Leave empty to only publish the host port.
+semaphore_external_network: ""
+
+# Admin account (non-secret parts).
+semaphore_admin_user: admin
+semaphore_admin_name: Admin
+semaphore_admin_email: admin@localhost
+
+# Database backend. "sqlite" is the embedded, zero-dependency default
+# (BoltDB is deprecated since Semaphore v2.16). Use mysql/postgres only for
+# HA or heavy multi-user setups.
+semaphore_db_dialect: sqlite
+
+# Path (inside the container) to the SQLite database file. Lives in the mounted
+# data volume so it persists across container recreation.
+semaphore_sqlite_db_file: /var/lib/semaphore/database.sqlite
+
+# Secrets — provide via ansible-vault (no defaults here):
+#   semaphore_admin_password
+#   semaphore_access_key_encryption   # base64-encoded 32 bytes:
+#                                     #   head -c 32 /dev/urandom | base64

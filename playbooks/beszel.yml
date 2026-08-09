@@ -1,0 +1,49 @@
+---
+# Register the nodes in the Beszel hub and install the monitoring agent
+# (WebSocket to the hub; no inbound port). The role auto-registers each node via
+# the hub API and issues its per-node token, so no manual UI step or per-node
+# vault entry is needed — only the shared hub key + superuser creds + owner
+# email. See roles/beszel_agent.
+#
+# The hub superuser credentials come from OpenBao (#2):
+#   infra/beszel   admin_email  admin_password
+#
+# The template needs the Variable Group carrying OPENBAO_SECRET_ID attached.
+# The ansible-vault entries (vault_beszel_admin_*) stay as the cold fallback
+# until backups are real (#7).
+#
+#   ansible-playbook -i ../infra-inventory/hosts.yml playbooks/beszel.yml --limit test
+
+# Read on the controller: the credentials are the same for every node, and the
+# nodes cannot reach OpenBao — its API is on a Docker network the panel owns,
+# not on the mesh.
+- name: Fetch the Beszel hub credentials
+  hosts: controller
+  gather_facts: false
+
+  tasks:
+    - name: Fetch the Beszel superuser credentials
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: beszel
+        openbao_read_into: _beszel_admin
+      tags:
+        - config
+
+- name: Register and install the Beszel agent on the nodes
+  hosts: fleet:!panel
+  gather_facts: true
+  become: true
+
+  vars:
+    # Override the role defaults, which read the vault entries. Both resolve to
+    # the same values; these come from OpenBao.
+    beszel_agent_admin_email: >-
+      {{ (hostvars['controller']._beszel_admin | default({})).admin_email
+         | default('') }}
+    beszel_agent_admin_password: >-
+      {{ (hostvars['controller']._beszel_admin | default({})).admin_password
+         | default('') }}
+
+  roles:
+    - beszel_agent

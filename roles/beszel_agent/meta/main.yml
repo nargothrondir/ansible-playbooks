@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: beszel_agent
+  author: nargothrondir
+  description: >
+    Install the Beszel monitoring agent as a binary + systemd service. The agent
+    dials the hub over WebSocket (HUB_URL + TOKEN) so no inbound port is opened;
+    the binary is installed once and Beszel self-updates it thereafter.
+  min_ansible_version: "2.15"
+  license: MIT
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+
+dependencies: []

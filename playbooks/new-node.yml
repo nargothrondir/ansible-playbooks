@@ -1,0 +1,146 @@
+---
+# Register a new node in the Remnawave panel via its API (issue #39, step 1).
+# Runs on the controller (CLI on the panel host); the panel then connects to
+# the node itself (SECRET_KEY payload is panel-wide, already on the node).
+#
+# Prerequisites on the target server: bootstrap + docker + hawser + the
+# remnanode stack deployed (site.yml -> provision.yml -> hawser.yml -> Dockhand).
+#
+# Required vars (see group_vars/control/):
+#   remnawave_panel_url   e.g. "https://panel.example.com" (no trailing slash)
+#   remnawave_api_token   from OpenBao (#2): infra/remnawave, field api_token
+#
+# Run (node_address defaults to <node_name>.<netbird_dns_domain>, the mesh name;
+# pass it explicitly only for nodes reached over a public address):
+#   ansible-playbook playbooks/new-node.yml --ask-vault-pass \
+#     -e node_name=lab -e node_country=DE -e node_profile=<profile-name>
+
+- name: Register a node in the Remnawave panel
+  hosts: controller
+  gather_facts: false
+
+  vars:
+    # Node connection port (remnanode NODE_PORT).
+    node_port: 2222
+    # Semaphore sends UNFILLED optional survey fields as EMPTY-STRING
+    # extra-vars, which outrank any var declaration — so defaults must be
+    # applied by inspecting the value, not by declaring a same-named var.
+    #
+    # _node_address default: the node's private mesh DNS name — the hostname
+    # set by bootstrap becomes the NetBird peer name (see roles/bootstrap), so
+    # the panel reaches the node over the mesh and its port needs no public
+    # exposure. Pass -e node_address (e.g. a public IP) to override.
+    _node_address: >-
+      {{ node_address if (node_address | default('') | length > 0)
+         else node_name | lower ~ '.' ~ netbird_dns_domain }}
+    _node_country: >-
+      {{ node_country if (node_country | default('') | length > 0) else 'XX' }}
+    _api_headers:
+      Authorization: "Bearer {{ _remnawave_api_token }}"
+      X-Forwarded-For: "127.0.0.1"
+      X-Forwarded-Proto: "https"
+
+  tasks:
+    - name: Assert required parameters are provided
+      ansible.builtin.assert:
+        that:
+          - node_name is defined and node_name | length >= 3
+          # Enforced at this shared layer: the name feeds the mesh DNS default
+          # (lowercased) while the panel keeps the entered case — mixed case
+          # desyncs the two and breaks node dedup (#52).
+          - node_name is match('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')
+          - _node_address | length >= 2
+          - node_profile is defined and node_profile | length > 0
+          - remnawave_panel_url is defined and remnawave_panel_url | length > 0
+        fail_msg: >
+          Required: -e node_name=<name> -e node_address=<ip-or-host>, plus
+          remnawave_panel_url in group_vars/control.
+
+    # Read the API token from OpenBao (#2). The vault entry stays in place as
+    # the cold fallback until backups are real (#7): reverting this switch is
+    # reverting the commit, not editing anything on a server.
+    - name: Fetch the Remnawave API token
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: remnawave
+        openbao_read_field: api_token
+        openbao_read_into: _remnawave_api_token
+      tags:
+        - config
+
+    # The create-node schema REQUIRES a configProfile binding
+    # (activeConfigProfileUuid + activeInbounds) — a node cannot exist detached.
+    - name: Fetch config profiles from the panel
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/config-profiles"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: profiles_result
+      no_log: true
+
+    - name: Resolve the requested config profile
+      ansible.builtin.set_fact:
+        node_profile_resolved: >-
+          {{ profiles_result.json.response.configProfiles
+             | selectattr('name', 'equalto', node_profile) | list | first | default({}) }}
+
+    - name: Assert the config profile exists
+      ansible.builtin.assert:
+        that:
+          - node_profile_resolved.uuid is defined
+        fail_msg: >-
+          Config profile "{{ node_profile }}" not found. Available:
+          {{ profiles_result.json.response.configProfiles | map(attribute='name') | list | join(', ') }}
+
+    - name: Fetch existing nodes from the panel
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/nodes"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: nodes_result
+      no_log: true
+
+    - name: Create the node via the panel API (only if it does not exist yet)
+      delegate_to: panel
+      when: node_name not in (nodes_result.json.response | map(attribute='name') | list)
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/nodes"
+        method: POST
+        # The panel's proxyCheckMiddleware destroys the socket unless the
+        # request looks like it came through an HTTPS reverse proxy
+        # (X-Forwarded-For present AND X-Forwarded-Proto: https) — so when
+        # calling the published app port directly, provide both.
+        headers: >-
+          {{ _api_headers
+             | combine({'Host': remnawave_panel_host}
+                       if (remnawave_panel_host | default('') | length > 0)
+                       else {}) }}
+        body_format: json
+        # Built as a Jinja dict so port stays a NUMBER — a templated YAML
+        # scalar would arrive as a string and fail the panel's Zod validation.
+        body: >-
+          {{ {'name': node_name,
+              'address': _node_address,
+              'port': node_port | int,
+              'countryCode': _node_country | upper,
+              'configProfile': {
+                'activeConfigProfileUuid': node_profile_resolved.uuid,
+                'activeInbounds': node_profile_resolved.inbounds | map(attribute='uuid') | list
+              }} }}
+        status_code: [200, 201]
+      register: new_node_result
+      no_log: true
+
+    - name: Show the registered node summary
+      ansible.builtin.debug:
+        msg: >-
+          Node "{{ node_name }}" ({{ _node_address }}:{{ node_port }})
+          {{ 'registered — the panel will now connect to it'
+             if (new_node_result is not skipped)
+             else 'already existed — left as is' }}.
+      tags:
+        - debug

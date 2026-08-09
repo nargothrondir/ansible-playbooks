@@ -1,0 +1,135 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+    fail_msg: >
+      Unsupported OS: {{ ansible_facts['distribution'] }}
+      {{ ansible_facts['distribution_version'] }}.
+      Only Debian/Ubuntu are supported.
+  tags:
+    - install
+
+# Self-sufficiency for standalone/DR runs: deb822_repository needs these on
+# the target. The common role pre-satisfies this in the pipeline (no-op here).
+- name: Install prerequisites for the NetBird repository
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - python3-debian
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  tags:
+    - install
+
+- name: Ensure the APT keyrings directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+  tags:
+    - install
+
+# Managed by an explicit task (not deb822's signed_by URL download) so a missing
+# keyring is recreated on the next run instead of breaking apt.
+- name: Download the NetBird APT signing key
+  ansible.builtin.get_url:
+    url: https://pkgs.netbird.io/debian/public.key
+    dest: /etc/apt/keyrings/netbird.asc
+    mode: "0644"
+  register: _netbird_key_download
+  until: _netbird_key_download is succeeded
+  retries: 3
+  delay: 5
+  tags:
+    - install
+
+- name: Add the NetBird APT repository (deb822)
+  ansible.builtin.deb822_repository:
+    name: netbird
+    types: deb
+    uris: https://pkgs.netbird.io/debian
+    suites: stable
+    components: main
+    architectures: "{{ netbird_apt_arch }}"
+    signed_by: /etc/apt/keyrings/netbird.asc
+    state: present
+  tags:
+    - install
+
+- name: Remove any legacy one-line NetBird repository files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/netbird.list
+    - /etc/apt/sources.list.d/wiretrustee.list
+  loop_control:
+    label: "{{ item }}"
+  tags:
+    - install
+
+- name: Install the NetBird agent
+  ansible.builtin.apt:
+    name: netbird
+    state: present
+    update_cache: true
+  tags:
+    - install
+    - netbird
+
+- name: Ensure the NetBird service is enabled and running
+  ansible.builtin.systemd_service:
+    name: netbird
+    state: started
+    enabled: true
+  tags:
+    - service
+    - netbird
+
+# Idempotent join (fetch-then-guard, CLAUDE.md §7.4): read status first, join
+# only when not already connected. Parse the JSON status (stable field) rather
+# than matching display text, which can be reworded/localized. The whole block
+# is skipped when no setup key is configured — there is nothing to join.
+- name: Get NetBird status (JSON)
+  ansible.builtin.command: netbird status --json
+  register: netbird_status
+  changed_when: false
+  failed_when: false
+  when: netbird_setup_key | length > 0
+  tags:
+    - config
+    - netbird
+
+# rc/stdout defaults keep --check mode alive (the command above is skipped
+# there, leaving the register without those keys); the '{' probe keeps a CLI
+# that ignores --json (plain-text stdout, rc 0) from crashing from_json —
+# unparseable status degrades to "not connected", i.e. join anyway.
+- name: Determine whether NetBird is already connected
+  ansible.builtin.set_fact:
+    netbird_connected: >-
+      {{ ((netbird_status.stdout | trim | from_json).management.connected | default(false))
+         if (netbird_status.rc | default(1) == 0
+             and (netbird_status.stdout | default('') | trim)[:1] == '{')
+         else false }}
+  when: netbird_setup_key | length > 0
+  tags:
+    - config
+    - netbird
+
+- name: Join the NetBird network (only if not already connected)
+  ansible.builtin.command: >-
+    netbird up --setup-key {{ netbird_setup_key }}
+    {{ ('--management-url ' ~ netbird_management_url) if (netbird_management_url | length > 0) else '' }}
+    {{ '--allow-server-ssh' if netbird_ssh_server | bool else '' }}
+  when:
+    - netbird_setup_key | length > 0
+    - not netbird_connected | default(false) | bool
+  # The pre-state fact is the change detector: this task only runs when the
+  # agent was not connected, so completing it IS the state change.
+  changed_when: not netbird_connected | bool
+  no_log: true
+  tags:
+    - config
+    - netbird

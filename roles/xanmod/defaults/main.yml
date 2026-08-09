@@ -1,0 +1,16 @@
+---
+# XanMod kernel CPU/PSABI variant. x64v3 suits modern CPUs (AVX2); lower to
+# x64v2/x64v1 for older hardware. Detect a host's max level with XanMod's
+# check_x86-64_psabi.sh if unsure.
+xanmod_variant: x64v3
+
+# Package to install (mainline build for the chosen variant).
+xanmod_package: "linux-xanmod-{{ xanmod_variant }}"
+
+# APT repository architecture (XanMod is amd64-only).
+xanmod_apt_arch: amd64
+
+# Reboot into the new kernel when it was just installed/updated. Off by default
+# so applying the role to a running node never reboots it uninvited; the
+# provisioning playbook turns it on for fresh nodes.
+xanmod_reboot: false

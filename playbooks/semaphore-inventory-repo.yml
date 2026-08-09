@@ -1,0 +1,471 @@
+---
+# Point Semaphore's inventory at the private inventory repository (issue #68) —
+# Semaphore configuration as code, via its own REST API.
+#
+# Designed to run FROM Semaphore itself (an ad-hoc template with no survey):
+# inside the Semaphore container its API is http://127.0.0.1:3000. Override
+# semaphore_api_url for a run from elsewhere.
+#
+# The Semaphore API token comes from OpenBao (#2): infra/semaphore, field
+# api_token. See playbooks/semaphore-survey.yml for how to create and store it.
+# The template needs the Variable Group carrying OPENBAO_SECRET_ID attached.
+#
+# REPORT-ONLY BY DEFAULT. With no arguments it changes nothing and prints every
+# repository, inventory and key in the project — run it that way FIRST, because
+# the names and ids below cannot be guessed from outside the panel:
+#
+#   ansible-playbook playbooks/semaphore-inventory-repo.yml
+#
+# Then apply, naming the entries the report showed:
+#
+#   ansible-playbook playbooks/semaphore-inventory-repo.yml \
+#     -e semaphore_repo_name="Inventory" \
+#     -e semaphore_inventory_name="Fleet" \
+#     -e semaphore_key_name="infra-inventory deploy key"
+#
+# If the new Repository and Inventory entries were instead created ALONGSIDE
+# the old ones, they are already correct and nothing above applies — what
+# remains is moving the templates onto the new entry, which is its own mode:
+#
+#   ansible-playbook playbooks/semaphore-inventory-repo.yml \
+#     -e semaphore_from_inventory="managed" \
+#     -e semaphore_to_inventory="infra-inventory"
+#
+# A template left behind on the old entry does not fail loudly — it keeps
+# running against whatever that entry still points at. Hence the count in the
+# report rather than a per-template click.
+#
+# Idempotent (fetch-then-guard, CLAUDE.md §6): each PUT is guarded by a
+# comparison against the fetched state and runs only when something actually
+# differs.
+
+- name: Point the Semaphore inventory at the private inventory repository
+  hosts: controller
+  gather_facts: false
+
+  vars:
+    semaphore_api_url: "http://127.0.0.1:3000"
+
+    # The desired end state.
+    semaphore_inventory_git_url: "git@github.com:nargothrondir/infra-inventory.git"
+    semaphore_inventory_git_branch: "main"
+    # Path of the inventory file WITHIN that repository. It lives at the root
+    # there, not under inventory/, so group_vars/ and host_vars/ stay siblings
+    # of hosts.yml — Ansible resolves them relative to the inventory file.
+    semaphore_inventory_file: "hosts.yml"
+
+    # Empty = report only. Supply all three to apply.
+    semaphore_repo_name: ""
+    semaphore_inventory_name: ""
+    semaphore_key_name: ""
+
+    # Move every template from one inventory entry to another. Independent of
+    # the three above: the target entries may already exist (created by hand),
+    # in which case switching the templates over is all that is left.
+    semaphore_from_inventory: ""
+    semaphore_to_inventory: ""
+
+    _api_headers:
+      Authorization: "Bearer {{ _semaphore_api_token }}"
+    _apply: >-
+      {{ (semaphore_repo_name | length > 0)
+         and (semaphore_inventory_name | length > 0)
+         and (semaphore_key_name | length > 0) }}
+    _switch: >-
+      {{ (semaphore_from_inventory | length > 0)
+         and (semaphore_to_inventory | length > 0) }}
+
+  tasks:
+    # Read the API token from OpenBao (#2). The vault entry stays in place as
+    # the cold fallback until backups are real (#7): reverting this switch is
+    # reverting the commit, not editing anything on a server.
+    - name: Fetch the Semaphore API token
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: semaphore
+        openbao_read_field: api_token
+        openbao_read_into: _semaphore_api_token
+      tags:
+        - config
+
+    # --- discovery ---------------------------------------------------------
+    # check_mode: false on every GET. They are read-only, and without it a
+    # --check run skips discovery and the guards below compare against nothing.
+
+    - name: Fetch Semaphore projects
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/projects"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _projects_result
+      check_mode: false
+      when: semaphore_project_id is not defined
+      tags:
+        - config
+
+    - name: Assert exactly one project exists
+      ansible.builtin.assert:
+        that:
+          - _projects_result.json | length == 1
+        fail_msg: >-
+          Expected exactly one Semaphore project, found
+          {{ _projects_result.json | length }} — pass -e semaphore_project_id
+          to disambiguate.
+      when: semaphore_project_id is not defined
+      tags:
+        - config
+
+    - name: Resolve the project id
+      ansible.builtin.set_fact:
+        _project_id: "{{ semaphore_project_id | default(_projects_result.json[0].id) }}"
+      tags:
+        - config
+
+    # sort and order are REQUIRED query parameters on the list endpoints.
+    - name: Fetch the project repositories
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/repositories?sort=name&order=asc"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _repos_result
+      check_mode: false
+      tags:
+        - config
+
+    - name: Fetch the project inventories
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/inventory?sort=name&order=asc"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _inventories_result
+      check_mode: false
+      tags:
+        - config
+
+    - name: Fetch the project keys
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/keys?sort=name&order=asc"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _keys_result
+      check_mode: false
+      tags:
+        - config
+
+    - name: Fetch the project templates
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _templates_result
+      check_mode: false
+      tags:
+        - config
+
+    # This report is the whole point of a no-argument run: the entry names and
+    # ids are not knowable from outside the panel, and the apply step needs
+    # them. It also drives the choice of which entry to name, so it is not a
+    # decorative debug task (CLAUDE.md §6).
+    - name: Report the current Semaphore wiring
+      ansible.builtin.debug:
+        msg: >-
+          repositories={{ _repos_result.json
+                          | map(attribute='name') | list }}
+          | inventories={{ _inventories_result.json
+                           | map(attribute='name') | list }}
+          | ssh keys={{ _keys_result.json
+                        | selectattr('type', 'equalto', 'ssh')
+                        | map(attribute='name') | list }}
+          | repositories used by templates (NEVER repoint these)={{
+              _repos_result.json
+              | selectattr('id', 'in',
+                           _templates_result.json
+                           | map(attribute='repository_id') | list)
+              | map(attribute='name') | list }}
+      tags:
+        - debug
+
+    # Which templates sit on which inventory. A template left behind on the old
+    # entry does not fail loudly — it keeps running against whatever that entry
+    # still points at, so the only way to catch one is to count them.
+    - name: Report which templates use which inventory
+      ansible.builtin.debug:
+        msg: >-
+          inventory '{{ item.name }}' (id {{ item.id }}, path {{ item.inventory }})
+          is used by {{ _templates_result.json
+                        | selectattr('inventory_id', 'equalto', item.id)
+                        | map(attribute='name') | list }}
+      loop: "{{ _inventories_result.json }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - debug
+
+    - name: Explain that nothing will change without arguments
+      ansible.builtin.debug:
+        msg: >-
+          Report-only run — nothing was changed. To repoint a repository entry,
+          re-run with -e semaphore_repo_name=... -e semaphore_inventory_name=...
+          -e semaphore_key_name=..., choosing a repository the line above does
+          NOT list as used by templates. To move every template onto another
+          inventory entry, re-run with -e semaphore_from_inventory=... and
+          -e semaphore_to_inventory=... instead.
+      when:
+        - not (_apply | bool)
+        - not (_switch | bool)
+      tags:
+        - debug
+
+    # --- resolve the named entries ----------------------------------------
+
+    - name: Resolve the named repository, inventory and key
+      ansible.builtin.set_fact:
+        _repo_stub: >-
+          {{ _repos_result.json
+             | selectattr('name', 'equalto', semaphore_repo_name)
+             | list | first | default({}) }}
+        _inv_stub: >-
+          {{ _inventories_result.json
+             | selectattr('name', 'equalto', semaphore_inventory_name)
+             | list | first | default({}) }}
+        _key: >-
+          {{ _keys_result.json
+             | selectattr('name', 'equalto', semaphore_key_name)
+             | list | first | default({}) }}
+      when: _apply | bool
+      tags:
+        - config
+
+    - name: Assert every named entry exists
+      ansible.builtin.assert:
+        that:
+          - _repo_stub.id is defined
+          - _inv_stub.id is defined
+          - _key.id is defined
+          - _key.type == 'ssh'
+        fail_msg: >-
+          Not all entries resolved — repository '{{ semaphore_repo_name }}',
+          inventory '{{ semaphore_inventory_name }}', ssh key
+          '{{ semaphore_key_name }}'. Run without arguments to list what exists.
+      when: _apply | bool
+      tags:
+        - config
+
+    # THE GUARD THAT MATTERS. Semaphore keeps the playbook repository and the
+    # inventory repository as two separate Repository entries, and they look
+    # identical in the API. Repointing the playbook one silently breaks every
+    # template in the project at once, which is exactly the failure this whole
+    # migration risks (#68). A template referencing the target is proof it is
+    # the wrong entry.
+    - name: Refuse to repoint a repository that any template uses for playbooks
+      ansible.builtin.assert:
+        that:
+          - _repo_stub.id not in (_templates_result.json | map(attribute='repository_id') | list)
+        fail_msg: >-
+          Repository '{{ semaphore_repo_name }}' (id {{ _repo_stub.id | default('?') }})
+          is the playbook source for
+          {{ _templates_result.json
+             | selectattr('repository_id', 'equalto', _repo_stub.id | default(-1))
+             | map(attribute='name') | list | join(', ') }}.
+          Repointing it would break those templates. Name the SEPARATE
+          repository entry that exists only to supply the inventory.
+      when: _apply | bool
+      tags:
+        - config
+
+    # --- apply -------------------------------------------------------------
+    # The list endpoint may omit fields; only the detail endpoint returns the
+    # full object that is safe to modify and PUT back (learned in #52, where
+    # merging against a list response wiped a template's survey).
+
+    - name: Fetch the full repository object
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/repositories/{{ _repo_stub.id }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _repo_result
+      check_mode: false
+      when: _apply | bool
+      tags:
+        - config
+
+    - name: Determine whether the repository already points at the inventory repo
+      ansible.builtin.set_fact:
+        _repo_desired:
+          git_url: "{{ semaphore_inventory_git_url }}"
+          git_branch: "{{ semaphore_inventory_git_branch }}"
+          ssh_key_id: "{{ _key.id | int }}"
+      when: _apply | bool
+      tags:
+        - config
+
+    - name: Repoint the repository at the private inventory repository
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/repositories/{{ _repo_stub.id }}"
+        method: PUT
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body: "{{ _repo_result.json | combine(_repo_desired) }}"
+        status_code: [200, 204]
+      no_log: true
+      # The when-guard is the change detector: the PUT runs only when the
+      # fetched state differs, so completing it IS the state change.
+      changed_when: _repo_result.json | combine(_repo_desired) != _repo_result.json
+      when:
+        - _apply | bool
+        - _repo_result.json | combine(_repo_desired) != _repo_result.json
+      tags:
+        - config
+
+    - name: Fetch the full inventory object
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/inventory/{{ _inv_stub.id }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _inv_result
+      check_mode: false
+      when: _apply | bool
+      tags:
+        - config
+
+    # Only the file path and the repository it comes from change. ssh_key_id
+    # and become_key_id are the credentials for reaching the MANAGED HOSTS, not
+    # for cloning the repository, and are deliberately left alone.
+    - name: Determine the desired inventory state
+      ansible.builtin.set_fact:
+        _inv_desired:
+          inventory: "{{ semaphore_inventory_file }}"
+          repository_id: "{{ _repo_stub.id | int }}"
+          type: file
+      when: _apply | bool
+      tags:
+        - config
+
+    - name: Point the inventory at hosts.yml in the inventory repository
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/inventory/{{ _inv_stub.id }}"
+        method: PUT
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body: "{{ _inv_result.json | combine(_inv_desired) }}"
+        status_code: [200, 204]
+      no_log: true
+      changed_when: _inv_result.json | combine(_inv_desired) != _inv_result.json
+      when:
+        - _apply | bool
+        - _inv_result.json | combine(_inv_desired) != _inv_result.json
+      tags:
+        - config
+
+    - name: Report the resulting wiring
+      ansible.builtin.debug:
+        msg: >-
+          Repository '{{ semaphore_repo_name }}' -> {{ semaphore_inventory_git_url }}
+          ({{ semaphore_inventory_git_branch }}), key '{{ semaphore_key_name }}';
+          inventory '{{ semaphore_inventory_name }}' -> {{ semaphore_inventory_file }}.
+          Verify with a read-only run BEFORE trusting it — a wrong layout makes
+          group_vars silently undefined while hosts still report ok:
+          playbooks/mesh-ssh-check.yml
+      when: _apply | bool
+      tags:
+        - debug
+
+    # --- move templates onto another inventory entry -----------------------
+    # Used when the target entries were created alongside the old ones rather
+    # than edited in place: the entries are then already correct and switching
+    # the templates over is the whole remaining migration.
+
+    - name: Resolve the source and target inventory entries
+      ansible.builtin.set_fact:
+        _from_inv: >-
+          {{ _inventories_result.json
+             | selectattr('name', 'equalto', semaphore_from_inventory)
+             | list | first | default({}) }}
+        _to_inv: >-
+          {{ _inventories_result.json
+             | selectattr('name', 'equalto', semaphore_to_inventory)
+             | list | first | default({}) }}
+      when: _switch | bool
+      tags:
+        - config
+
+    - name: Assert both inventory entries exist and differ
+      ansible.builtin.assert:
+        that:
+          - _from_inv.id is defined
+          - _to_inv.id is defined
+          - _from_inv.id != _to_inv.id
+        fail_msg: >-
+          Could not resolve '{{ semaphore_from_inventory }}' ->
+          '{{ semaphore_to_inventory }}'. Existing inventories:
+          {{ _inventories_result.json | map(attribute='name') | list | join(', ') }}.
+      when: _switch | bool
+      tags:
+        - config
+
+    - name: Determine which templates still use the source inventory
+      ansible.builtin.set_fact:
+        _switch_ids: >-
+          {{ _templates_result.json
+             | selectattr('inventory_id', 'equalto', _from_inv.id)
+             | map(attribute='id') | list }}
+        _switch_names: >-
+          {{ _templates_result.json
+             | selectattr('inventory_id', 'equalto', _from_inv.id)
+             | map(attribute='name') | list }}
+      when: _switch | bool
+      tags:
+        - config
+
+    # Named BEFORE the loop on purpose: the PUT below is no_log, so this is the
+    # only record of which templates were touched.
+    - name: Name the templates that will be moved
+      ansible.builtin.debug:
+        msg: >-
+          {{ _switch_ids | length }} template(s) on '{{ semaphore_from_inventory }}'
+          will move to '{{ semaphore_to_inventory }}':
+          {{ _switch_names | join(', ') if _switch_ids | length > 0
+             else 'none — already migrated' }}
+      when: _switch | bool
+      tags:
+        - debug
+
+    # The list endpoint returns a REDUCED template (and adds last_task, which is
+    # not part of the schema); only the detail endpoint is safe to PUT back.
+    - name: Fetch the full object of each template to move
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates/{{ item }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _tpl_details
+      check_mode: false
+      loop: "{{ _switch_ids | default([]) }}"
+      when: _switch | bool
+      tags:
+        - config
+
+    - name: Move the templates onto the target inventory
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates/{{ item.json.id }}"
+        method: PUT
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body: "{{ item.json | combine({'inventory_id': _to_inv.id | int}) }}"
+        status_code: [200, 204]
+      no_log: true
+      # Honest state reporting: the fetched template is compared against the
+      # target, so a template already on it would report unchanged. The loop is
+      # empty once every template has moved, which is what makes a re-run a
+      # no-op.
+      changed_when: item.json.inventory_id != (_to_inv.id | int)
+      loop: "{{ _tpl_details.results | default([]) }}"
+      tags:
+        - config

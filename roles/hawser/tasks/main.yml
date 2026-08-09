@@ -1,0 +1,50 @@
+---
+# The URL's host is checked for shape, not just presence. The inventory builds
+# it from a domain variable, and if that variable is defined but empty the
+# result is "wss://dockhand./api/hawser/connect" — syntactically valid,
+# non-empty, and pointing nowhere. A length check waves it through.
+- name: Assert Hawser connection settings are provided
+  ansible.builtin.assert:
+    that:
+      - hawser_dockhand_url | length > 0
+      - hawser_dockhand_url | urlsplit('hostname') | default('', true) | lower is match('^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$')
+      - hawser_token | length > 0
+    fail_msg: >
+      hawser requires hawser_dockhand_url (group_vars/all) with a usable host
+      and a per-host hawser_token (host_vars/<host>/vault.yml). A host ending
+      in a bare dot means the domain variable the URL is built from resolved to
+      an empty string.
+  tags:
+    - config
+
+- name: Ensure Hawser directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ hawser_dir }}"
+    - "{{ hawser_stacks_dir }}"
+  loop_control:
+    label: "{{ item }}"
+  tags:
+    - config
+
+- name: Deploy Hawser compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ hawser_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0600"
+  tags:
+    - config
+
+- name: Start Hawser
+  community.docker.docker_compose_v2:
+    project_src: "{{ hawser_dir }}"
+    state: present
+  tags:
+    - service

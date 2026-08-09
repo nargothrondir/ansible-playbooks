@@ -1,0 +1,11 @@
+---
+# Reboots into the freshly installed kernel — fires only when the install task
+# reported changed (a new kernel), and only when xanmod_reboot is enabled
+# (default off, so applying the role to a running node never reboots it
+# uninvited). No dependency on /var/run/reboot-required (absent on minimal
+# Debian). Notified via the "reboot for xanmod kernel" listen label.
+- name: Reboot into the new XanMod kernel
+  listen: "reboot for xanmod kernel"
+  ansible.builtin.reboot:
+    reboot_timeout: 600
+  when: xanmod_reboot | default(false) | bool

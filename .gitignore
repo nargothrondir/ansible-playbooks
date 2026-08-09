@@ -1,0 +1,30 @@
+# Ansible
+*.retry
+.vault_pass
+vault_pass.txt
+*.pyc
+__pycache__/
+
+# Credentials
+*.pem
+*.key
+id_rsa
+id_ed25519
+
+# Skill build output
+ansible-playbooks.skill
+
+# Claude Code worktree checkouts. `.claude/agents/` IS tracked, so this
+# directory must be excluded explicitly or `git add -A` would sweep in whole
+# working copies. Previously only in .git/info/exclude, which is local-only
+# and does not protect a fresh clone.
+.claude/worktrees/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp

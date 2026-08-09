@@ -1,0 +1,21 @@
+---
+# Deploy Dockhand (Docker management UI) on the control node.
+#
+# Needs dockhand_encryption_key from ansible-vault (group_vars/control/vault.yml):
+#   ansible-vault edit group_vars/control/vault.yml
+#     dockhand_encryption_key: "<openssl rand -base64 32>"
+#
+# Run:  ansible-playbook playbooks/dockhand.yml --ask-vault-pass
+#
+# NOT `hosts: control`. The `controller` host is ansible_connection: local,
+# which means "wherever Ansible runs" — the panel from its CLI, but the
+# Semaphore CONTAINER when a template runs it. This role installs software, so
+# targeting the group would deploy Dockhand inside that container and report
+# success (#96). Name the host instead.
+
+- name: Deploy Dockhand on the panel host
+  hosts: "{{ dockhand_target | default('panel') }}"
+  become: true
+  gather_facts: true
+  roles:
+    - role: dockhand

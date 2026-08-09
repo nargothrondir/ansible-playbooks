@@ -1,0 +1,13 @@
+---
+# Apply the CrowdSec role (SSH-only detection + progressive bans) to the nodes,
+# without a full reprovision. Excludes the panel, which runs its own manually
+# installed CrowdSec — adopting that is a separate step (#31).
+#
+# Test on the lab node (pl-1) first, then roll out:
+#   ansible-playbook -i ../infra-inventory/hosts.yml playbooks/crowdsec.yml --limit test
+- name: Deploy CrowdSec SSH protection to the nodes
+  hosts: fleet:!panel
+  gather_facts: true
+  become: true
+  roles:
+    - crowdsec

@@ -1,0 +1,18 @@
+---
+galaxy_info:
+  role_name: ufw
+  author: nargothrondir
+  description: Host firewall — deny by default, public 22/443, mesh-only ports on the NetBird interface
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+
+dependencies: []

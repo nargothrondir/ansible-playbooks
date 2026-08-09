@@ -1,0 +1,350 @@
+---
+# Create the OpenBao structure: KV v2 at infra/, a read-only policy, and the
+# AppRole that Semaphore will authenticate with (issue #2, phase 1).
+#
+# RUN IT FROM THE PANEL CLI, WITH A SHORT-LIVED BOOTSTRAP TOKEN — never with
+# the root token, and never with either stored in Semaphore. The root token
+# carries `policies ["root"]` and does not expire: it reads every secret,
+# rewrites every policy and can seal the store. A Semaphore Variable Group is
+# the wrong home for it, because anyone who can create a task there can print
+# an environment variable.
+#
+# Mint the bootstrap token first (as the operator, holding root):
+#
+#   docker exec -i openbao bao policy write openbao-bootstrap - <<'EOF'
+#   path "sys/mounts"                          { capabilities = ["read", "list"] }
+#   path "sys/mounts/infra"                    { capabilities = ["create", "update", "read"] }
+#   path "sys/policies/acl/infra-read"         { capabilities = ["create", "update", "read"] }
+#   path "sys/policies/acl/hawser-write"       { capabilities = ["create", "update", "read"] }
+#   path "sys/auth"                            { capabilities = ["read", "list"] }
+#   path "sys/auth/approle"                    { capabilities = ["create", "update", "read", "sudo"] }
+#   path "auth/approle/role/semaphore"         { capabilities = ["create", "update", "read"] }
+#   path "auth/approle/role/semaphore/role-id" { capabilities = ["read"] }
+#   EOF
+#
+#   docker exec -it openbao bao token create -policy=openbao-bootstrap -ttl=30m -field=token
+#
+# That token can build the structure and CANNOT READ A SINGLE SECRET — there is
+# no read capability on infra/data/* in the policy above. Leaked, it is worth
+# thirty minutes of structural changes rather than every credential forever.
+#
+# Then, on the panel:
+#
+#   read -rs BAO_TOKEN && export BAO_TOKEN
+#   ansible-playbook playbooks/openbao-setup.yml --ask-vault-pass -e ansible_connection=local
+#   unset BAO_TOKEN
+#
+# `-e ansible_connection=local` is REQUIRED from the panel CLI. The play targets
+# `panel`, which carries an ansible_host and ansible_user in the inventory, so
+# without it Ansible SSHes from the panel to itself as the `ansible` user — and
+# the operator's shell does not hold that key. Running from Semaphore does need
+# the SSH hop, so the override belongs on the command line, not in the play.
+#
+# `--ask-vault-pass` is also required, even though this playbook reads nothing
+# from the vault: group_vars carries an encrypted file, and Ansible decrypts it
+# while LOADING the inventory.
+#
+# `read -rs` does not echo and keeps the value out of shell history. The token
+# lives in one shell, dies with it, and expires regardless.
+#
+# The play targets `panel` so the uri tasks execute THERE and reach OpenBao on
+# loopback — identical whether Ansible was invoked from the panel CLI or from
+# Semaphore. The token is read by a lookup, which runs on the controller.
+#
+# WHAT THIS PLAYBOOK DELIBERATELY DOES NOT DO:
+#   - generate the AppRole secret_id (it is a secret; printing it here would put
+#     it in a log). The final task prints the wrapped-delivery command instead.
+#   - write any secret VALUES into KV. The operator copies those in.
+
+- name: Create the OpenBao structure and the Semaphore AppRole
+  hosts: "{{ openbao_setup_target | default('panel') }}"
+  become: false
+  gather_facts: false
+
+  vars:
+    openbao_api: "http://127.0.0.1:8200"
+    openbao_kv_mount: infra
+    openbao_policy_name: infra-read
+    openbao_write_policy_name: hawser-write
+    openbao_approle_name: semaphore
+
+    # Read-only, and scoped to the KV mount only. KV v2 serves reads from
+    # <mount>/data/<path>; metadata is separate and needed for listing.
+    openbao_policy_hcl: |
+      path "{{ openbao_kv_mount }}/data/*" {
+        capabilities = ["read"]
+      }
+      path "{{ openbao_kv_mount }}/metadata/*" {
+        capabilities = ["read", "list"]
+      }
+
+    # The one place the controller may WRITE, and it is a single exact path —
+    # no wildcard, so a mistake cannot reach another secret. Provisioning a node
+    # mints its Hawser token and has to persist it, or the next run would mint a
+    # different one and reconfigure the agent on every pass (#43-adjacent, and
+    # the same always-changed defect fixed in #122).
+    #
+    # `read` MUST be listed here even though infra-read already grants it on
+    # infra/data/*. Policies are not simply additive:
+    #
+    #   "If the same pattern appears in multiple policies, we take the union of
+    #    the capabilities. If different patterns appear in the applicable
+    #    policies, we take only the highest-priority match from those policies."
+    #
+    # An exact path outranks a glob, so this rule REPLACES infra-read's for
+    # infra/data/hawser rather than adding to it. Omitting `read` here therefore
+    # revoked read access to the hawser table the moment this policy was applied
+    # — every other secret kept working, because their paths match only the
+    # glob. Cost one failed provisioning run to learn.
+    #
+    # Writing this path REPLACES the whole secret — KV v2 has no per-field
+    # write — so whatever holds this capability must read the map, merge its own
+    # host in, and write the result back. The table is keyed by inventory
+    # hostname and shared by the entire fleet; a careless write drops every
+    # other node's token. That read-merge-write is also why `read` belongs here
+    # on its own merits, not only because of the precedence rule.
+    openbao_write_policy_hcl: |
+      path "{{ openbao_kv_mount }}/data/hawser" {
+        capabilities = ["create", "update", "read"]
+      }
+
+    # The lookup runs on the CONTROLLER, so this picks up the operator's shell.
+    _bao_token: "{{ lookup('env', 'BAO_TOKEN') }}"
+    _api_headers:
+      X-Vault-Token: "{{ _bao_token }}"
+
+  tasks:
+    - name: Assert a bootstrap token was supplied
+      ansible.builtin.assert:
+        that:
+          - _bao_token | length > 0
+        fail_msg: >-
+          BAO_TOKEN is empty. Mint a short-lived bootstrap token (see the header
+          of this file) and export it: `read -rs BAO_TOKEN && export BAO_TOKEN`.
+          Do not use the root token, and do not store either in Semaphore.
+      tags:
+        - config
+
+    # No no_log on the read-only GETs: the token travels in a header, which uri
+    # does not log, and the responses carry no secrets. Censoring them once made
+    # a wrong id undebuggable (#52).
+    - name: Fetch the enabled secret engines
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/mounts"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _mounts
+      check_mode: false
+      tags:
+        - config
+
+    # sys/mounts answers with the mounts both at the top level and under .data;
+    # .data is the documented shape, so prefer it and fall back.
+    #
+    # Each guard is computed once and used by BOTH `when` and `changed_when`, so
+    # the change report is a real comparison against fetched state rather than a
+    # blanket `changed_when: true` (CLAUDE.md §6).
+    - name: Determine whether the KV mount is missing
+      ansible.builtin.set_fact:
+        _need_mount: >-
+          {{ (openbao_kv_mount + '/')
+             not in (_mounts.json.data | default(_mounts.json, true)).keys() | list }}
+      tags:
+        - config
+
+    - name: Enable KV v2 at the infra mount
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/mounts/{{ openbao_kv_mount }}"
+        method: POST
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body:
+          type: kv
+          options:
+            version: "2"
+        status_code: [200, 204]
+      no_log: true
+      changed_when: _need_mount | bool
+      when: _need_mount | bool
+      tags:
+        - config
+
+    - name: Fetch the existing policy, if any
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/policies/acl/{{ openbao_policy_name }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200, 404]
+      register: _policy
+      check_mode: false
+      tags:
+        - config
+
+    - name: Determine whether the policy needs writing
+      ansible.builtin.set_fact:
+        _need_policy: >-
+          {{ _policy.status == 404
+             or (_policy.json.data.policy | default('')) != openbao_policy_hcl }}
+      tags:
+        - config
+
+    - name: Write the read-only policy
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/policies/acl/{{ openbao_policy_name }}"
+        method: PUT
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body:
+          policy: "{{ openbao_policy_hcl }}"
+        status_code: [200, 204]
+      no_log: true
+      changed_when: _need_policy | bool
+      when: _need_policy | bool
+      tags:
+        - config
+
+    # A second, narrow policy rather than widening infra-read. A policy called
+    # "infra-read" that can write would be a lie in the one place where lies are
+    # expensive, and two policies are what an audit of "who may write" should
+    # find.
+    - name: Fetch the existing write policy, if any
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/policies/acl/{{ openbao_write_policy_name }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200, 404]
+      register: _write_policy
+      check_mode: false
+      tags:
+        - config
+
+    - name: Determine whether the write policy needs writing
+      ansible.builtin.set_fact:
+        _need_write_policy: >-
+          {{ _write_policy.status == 404
+             or (_write_policy.json.data.policy | default('')) != openbao_write_policy_hcl }}
+      tags:
+        - config
+
+    - name: Write the narrow hawser write policy
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/policies/acl/{{ openbao_write_policy_name }}"
+        method: PUT
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body:
+          policy: "{{ openbao_write_policy_hcl }}"
+        status_code: [200, 204]
+      no_log: true
+      changed_when: _need_write_policy | bool
+      when: _need_write_policy | bool
+      tags:
+        - config
+
+    - name: Fetch the enabled auth methods
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/auth"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _auth
+      check_mode: false
+      tags:
+        - config
+
+    - name: Determine whether AppRole auth is missing
+      ansible.builtin.set_fact:
+        _need_approle: >-
+          {{ 'approle/'
+             not in (_auth.json.data | default(_auth.json, true)).keys() | list }}
+      tags:
+        - config
+
+    - name: Enable the AppRole auth method
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/auth/approle"
+        method: POST
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body:
+          type: approle
+        status_code: [200, 204]
+      no_log: true
+      changed_when: _need_approle | bool
+      when: _need_approle | bool
+      tags:
+        - config
+
+    - name: Fetch the AppRole role, if any
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/auth/approle/role/{{ openbao_approle_name }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200, 404]
+      register: _role
+      check_mode: false
+      tags:
+        - config
+
+    - name: Determine whether the AppRole role needs creating
+      ansible.builtin.set_fact:
+        _need_role: >-
+          {{ _role.status == 404
+             or (_role.json.data.token_policies | default([]) | sort)
+                != ([openbao_policy_name, openbao_write_policy_name] | sort) }}
+      tags:
+        - config
+
+    # token_ttl is short on purpose: a token minted during a playbook run
+    # expires on its own. secret_id_ttl is 0 (never) because nothing rotates it
+    # yet — a known cost recorded in #2, not an oversight.
+    - name: Create the Semaphore AppRole role
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/auth/approle/role/{{ openbao_approle_name }}"
+        method: POST
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body:
+          token_policies: ["{{ openbao_policy_name }}", "{{ openbao_write_policy_name }}"]
+          token_ttl: "20m"
+          token_max_ttl: "1h"
+          secret_id_ttl: 0
+          secret_id_num_uses: 0
+          bind_secret_id: true
+        status_code: [200, 204]
+      no_log: true
+      changed_when: _need_role | bool
+      when: _need_role | bool
+      tags:
+        - config
+
+    # role_id is NOT a secret (#2): it identifies the role, and authentication
+    # additionally requires the secret_id. Printing it is intended — it belongs
+    # in the inventory.
+    - name: Read the role_id
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/auth/approle/role/{{ openbao_approle_name }}/role-id"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _role_id
+      check_mode: false
+      tags:
+        - config
+
+    - name: Report the result and what the operator must do next
+      ansible.builtin.debug:
+        msg:
+          - "KV v2 at {{ openbao_kv_mount }}/ · policy {{ openbao_policy_name }} · AppRole {{ openbao_approle_name }}"
+          - "role_id = {{ _role_id.json.data.role_id }}  (not a secret — it belongs in the inventory)"
+          - "NEXT, as the operator. Generate the secret_id WRAPPED, so it is never printed in clear:"
+          - "  docker exec -it openbao bao write -wrap-ttl=5m -f auth/approle/role/{{ openbao_approle_name }}/secret-id"
+          - "  docker exec -it openbao bao unwrap <wrapping_token>"
+          - "A wrapping token unwraps exactly ONCE: if someone got there first, YOUR unwrap fails and you learn it leaked."
+          - "Put the secret_id in a Semaphore Variable Group as a secret env var (Key Store entries are connection credentials; playbooks cannot read them)."
+          - "Recovering root needs openbao_allow_root_generation=true, an apply, an unseal, generate-root, then the same again to turn it off — see the role README."
+          - "BEFORE revoking root: OpenBao DISABLES generate-root by default since 2.5.3, so recovery is NOT one command."
+          - "Then copy the secret VALUES into KV yourself: infra/telegram, infra/netbird, infra/remnawave, infra/semaphore, infra/beszel, infra/crowdsec, infra/hawser"
+      tags:
+        - debug

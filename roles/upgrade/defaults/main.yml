@@ -1,0 +1,19 @@
+---
+# apt upgrade strategy. "dist" maps to `apt full-upgrade` (handles
+# dependency and kernel changes). Use "safe" to avoid package removals.
+upgrade_apt_type: dist
+
+# Remove automatically-installed packages that are no longer required.
+upgrade_autoremove: true
+
+# Purge configuration files when autoremoving packages.
+upgrade_autoremove_purge: true
+
+# Reuse the apt cache if it was refreshed within this many seconds.
+upgrade_cache_valid_time: 3600
+
+# Reboot the host automatically when the system signals one is required.
+upgrade_reboot: true
+
+# Seconds to wait for the host to come back online after a reboot.
+upgrade_reboot_timeout: 600

@@ -1,0 +1,18 @@
+---
+galaxy_info:
+  role_name: ssh_hardening
+  author: nargothrondir
+  description: SSH hardening — a mesh-only sshd port for key-based automation (step 1 of issue 30)
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+
+dependencies: []

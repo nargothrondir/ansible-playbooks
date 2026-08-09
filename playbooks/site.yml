@@ -1,0 +1,28 @@
+---
+# End-to-end provisioning for freshly created servers, entirely over SSH keys,
+# with a SEPARATE key per identity:
+#   1. Connect as root with the ADMIN key and create the "ansible" user.
+#   2. Reconnect as the "ansible" user with the AUTOMATION key and upgrade.
+#
+# No passwords are stored. The admin public key must already be on root
+# (injected at VPS creation, or copied once with ssh-copy-id). SSH keys are
+# provided by ssh-agent (CLI) or Semaphore's Key Store — not hardcoded here.
+# Run with:  ssh-add ~/.ssh/admin_ed25519 ~/.ssh/ansible_ed25519
+#            ansible-playbook playbooks/site.yml
+
+- name: Bootstrap the automation user on freshly provisioned servers
+  hosts: new_vps
+  gather_facts: true
+  vars:
+    ansible_user: root
+  roles:
+    - role: bootstrap
+
+- name: Update and upgrade servers as the automation user
+  hosts: new_vps
+  gather_facts: true
+  become: true
+  vars:
+    ansible_user: "{{ bootstrap_user }}"
+  roles:
+    - role: upgrade

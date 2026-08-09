@@ -1,0 +1,19 @@
+---
+# Molecule scenario for the bootstrap role: converge on a clean Debian 13
+# container, prove idempotence, then verify the resulting state.
+driver:
+  name: docker
+
+platforms:
+  - name: bootstrap-debian13
+    image: debian:trixie
+    pre_build_image: true
+    command: sleep infinity
+
+provisioner:
+  name: ansible
+  env:
+    ANSIBLE_ROLES_PATH: ${MOLECULE_PROJECT_DIRECTORY}/..
+
+verifier:
+  name: ansible

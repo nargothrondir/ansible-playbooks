@@ -1,0 +1,124 @@
+---
+- name: Assert the target OS is supported
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+    fail_msg: >
+      Unsupported OS: {{ ansible_facts['distribution'] }}
+      {{ ansible_facts['distribution_version'] }}.
+      Only Debian/Ubuntu are supported.
+  tags:
+    - install
+
+- name: Ensure the OpenBao base directory exists
+  ansible.builtin.file:
+    path: "{{ openbao_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  tags:
+    - config
+
+# Mounted read-only into the container, which runs as the unprivileged
+# `openbao` user — hence world-readable rather than 0700. The file holds no
+# secrets: the unseal shares and the root token exist only where the operator
+# put them, never on disk here.
+- name: Ensure the OpenBao config directory exists
+  ansible.builtin.file:
+    path: "{{ openbao_data_dir }}/config"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags:
+    - config
+
+- name: Deploy the OpenBao server config
+  ansible.builtin.template:
+    src: openbao.hcl.j2
+    dest: "{{ openbao_data_dir }}/config/openbao.hcl"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: "restart openbao"
+  tags:
+    - config
+
+# Created here rather than by compose so the name is exactly openbao_network,
+# with no project prefix — the semaphore role joins it by that literal name.
+- name: Ensure the client network exists
+  community.docker.docker_network:
+    name: "{{ openbao_network }}"
+    state: present
+  when: openbao_network | length > 0
+  tags:
+    - config
+
+- name: Deploy the OpenBao compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ openbao_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0600"
+  tags:
+    - config
+
+# `state: present` starts what is missing and applies compose changes; it does
+# NOT restart a healthy container on every run, which matters here because a
+# restart seals the store.
+- name: Start OpenBao
+  community.docker.docker_compose_v2:
+    project_src: "{{ openbao_data_dir }}"
+    state: present
+  tags:
+    - service
+
+# Deliberately NOT automated: `bao operator init` prints the unseal shares and
+# the root token exactly once, and they must never pass through Ansible, a
+# Semaphore log, or this repository. The operator runs it. Re-running this role
+# against an initialised store is safe — nothing here touches init or unseal.
+#
+# Read over the API rather than `docker exec`: the exec races a container that
+# is still restarting and reports a Docker conflict instead of the real cause,
+# while the retry loop below turns a crash-looping container into a clear
+# failure. /v1/sys/health answers 503 when sealed and 501 when uninitialised;
+# the query parameters map both to 200, because both are states this role
+# exists to observe and report rather than fail on.
+#
+# The URL is one line on purpose — a folded scalar would join it with a space.
+- name: Wait for the OpenBao API and read its state
+  ansible.builtin.uri:
+    url: "http://{{ openbao_bind_address }}:{{ openbao_port }}/v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200"
+    method: GET
+    status_code: [200]
+  register: _openbao_health
+  retries: 10
+  delay: 3
+  until: _openbao_health.status | default(0) == 200
+  changed_when: false
+  check_mode: false
+  tags:
+    - debug
+
+- name: Explain what the operator must do next
+  ansible.builtin.debug:
+    msg: >-
+      {% set s = _openbao_health.json | default({}) %}
+      {% if not s.get('initialized', False) %}
+      OpenBao is NOT INITIALISED. Run `docker exec -it
+      {{ openbao_container_name }} bao operator init` yourself — it prints the
+      unseal shares and the root token once, and they must never reach Ansible,
+      a Semaphore log or this repository. Store the shares offline and apart
+      from any backup of the store.
+      {% elif s.get('sealed', True) %}
+      OpenBao is initialised but SEALED — the expected state after any restart.
+      Unseal with `docker exec -it {{ openbao_container_name }} bao operator
+      unseal`, repeated until the threshold is met. Playbooks that read secrets
+      fail until this is done.
+      {% else %}
+      OpenBao is initialised and unsealed.
+      {% endif %}
+  tags:
+    - debug

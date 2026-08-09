@@ -1,0 +1,36 @@
+---
+# Reusable setup key to join the mesh non-interactively. MUST be provided (a
+# secret) — defined in group_vars/all as "{{ vault_netbird_setup_key }}".
+netbird_setup_key: ""
+
+# Management server URL. Empty = NetBird cloud (default). Set this to the
+# self-hosted management endpoint once NetBird is self-hosted (issue #6).
+netbird_management_url: ""
+
+# Enable the NetBird embedded SSH server on join (--allow-server-ssh).
+#
+# ON BY DEFAULT because it is the fleet's break-glass. A CrowdSec ban, a bad
+# ufw rule or a broken sshd all shut the public door on :22; NB-SSH survives
+# every one of them, because it arrives over the mesh (whitelisted in
+# crowdsec_whitelist_cidrs) and does not go through the host's sshd at all.
+# This stopped being hypothetical the day the firewall bouncer started working.
+#
+# THE HOST FIREWALL MUST COOPERATE. NetBird intercepts SSH to :22 on the CLIENT
+# and redirects the stream to port 22022 on the peer, and it explicitly "does
+# not modify host OS firewalls" — so 22022 has to be open on the mesh interface
+# or this door is closed while looking open. See ufw_mesh_tcp in roles/ufw.
+#
+# Applied only when the peer actually JOINS — already-connected peers skip the
+# join task, so flipping this later needs a manual `netbird up` re-apply.
+#
+# root login (--enable-ssh-root) is deliberately NOT offered: log in as the
+# automation user and escalate (`netbird ssh ansible@<peer>` + sudo).
+#
+# --disable-ssh-auth is NEVER passed. It turns off per-user JWT authentication,
+# which would make mesh reachability alone sufficient for a shell — the one
+# property that makes this acceptable as a standing back door is that every
+# session is authorised against an identity.
+netbird_ssh_server: true
+
+# APT repository architecture.
+netbird_apt_arch: amd64

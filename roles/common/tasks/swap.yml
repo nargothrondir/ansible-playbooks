@@ -1,0 +1,156 @@
+---
+# Swap on a RAM-tight node: compress swap IN RAM with zram (a compressed RAM
+# swap device) and keep a disk file only as low-priority overflow. RAM is the
+# scarce resource here and disk is plentiful, so we want as much swap as possible
+# resident-compressed in RAM (zram, high priority) and the disk touched only on
+# true overflow (the file, low priority). The kernel's zswap is DISABLED: it caps
+# its pool and proactively writes cold pages to disk (the opposite of what we
+# want), and it cannot coexist with zram — it would double-compress pages headed
+# for zram. So zswap is turned off first, then zram + the overflow file come up.
+
+# --- 1. Disable zswap so it does not fight zram ------------------------------
+# Live via sysfs (immediate, no reboot) AND persisted on the GRUB cmdline for the
+# next boot. zswap is built into the XanMod kernel (not a module), so the cmdline
+# is the canonical persistence point.
+- name: Read the current zswap state
+  ansible.builtin.slurp:
+    src: /sys/module/zswap/parameters/enabled
+  register: common_zswap_state
+  failed_when: false
+  changed_when: false
+  tags:
+    - config
+
+- name: Turn zswap off now (sysfs)
+  ansible.builtin.shell: "echo N > /sys/module/zswap/parameters/enabled"  # noqa: command-instead-of-module — a one-off sysfs write, no module covers it
+  when:
+    - common_zswap_disable | bool
+    - common_zswap_state.content is defined
+  changed_when: (common_zswap_state.content | b64decode | trim) in ['1', 'Y']
+  tags:
+    - config
+
+# Debian (unlike Ubuntu) does not source /etc/default/grub.d/, so edit the main
+# file. The negative lookahead makes the append idempotent — it only fires when
+# zswap.enabled=0 is not already on the line.
+- name: Persist zswap disabled on the kernel cmdline
+  ansible.builtin.replace:
+    path: /etc/default/grub
+    regexp: '^(GRUB_CMDLINE_LINUX_DEFAULT="(?![^"]*zswap\.enabled=0)[^"]*)"'
+    replace: '\1 zswap.enabled=0"'
+  when: common_zswap_disable | bool
+  notify: "update grub"
+  tags:
+    - config
+
+# --- 2. zram: the primary, in-RAM compressed swap ----------------------------
+- name: Install systemd-zram-generator
+  ansible.builtin.apt:
+    name: systemd-zram-generator
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  tags:
+    - install
+
+- name: Configure the zram swap device
+  ansible.builtin.template:
+    src: zram-generator.conf.j2
+    dest: /etc/systemd/zram-generator.conf
+    owner: root
+    group: root
+    mode: "0644"
+  tags:
+    - config
+
+# Generate the unit from the config (daemon_reload) and bring the device up. This
+# activates a fresh zram with no reboot AND self-heals a device that is down, and
+# is a no-op when it is already active (idempotent). NOTE: a zram device cannot
+# be resized in place — if common_zram_size/algo CHANGE on a running host, this
+# keeps the current device up and the new size takes effect on the next reboot
+# (the generator re-reads the config at boot). Size auto-scales at boot anyway.
+- name: Ensure the zram swap device is generated and active
+  ansible.builtin.systemd_service:
+    name: dev-zram0.swap
+    state: started
+    daemon_reload: true
+  tags:
+    - config
+
+# --- 3. Disk swap file: low-priority overflow only ---------------------------
+- name: List active swap devices
+  ansible.builtin.command: swapon --show=NAME --noheadings
+  register: common_active_swaps
+  changed_when: false
+  tags:
+    - config
+
+- name: Compute the swap-file size (RAM x multiplier, capped)
+  ansible.builtin.set_fact:
+    common_swapfile_size_mb: >-
+      {{ [ansible_facts['memtotal_mb'] * common_swapfile_ram_multiplier,
+          common_swapfile_max_mb] | min }}
+  tags:
+    - config
+
+# dd (not fallocate): a fallocate'd file can have holes that swapon rejects
+# ("swapfile has holes"); dd writes a solid file that swapon always accepts.
+- name: Allocate the swap file
+  ansible.builtin.command: >-
+    dd if=/dev/zero of={{ common_swapfile_path }}
+    bs=1M count={{ common_swapfile_size_mb }}
+  args:
+    creates: "{{ common_swapfile_path }}"
+  tags:
+    - config
+
+- name: Secure the swap-file permissions
+  ansible.builtin.file:
+    path: "{{ common_swapfile_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  tags:
+    - config
+
+- name: Initialise the swap area on the file
+  ansible.builtin.command: "mkswap {{ common_swapfile_path }}"
+  when: common_swapfile_path not in (common_active_swaps.stdout | default(''))
+  changed_when: common_swapfile_path not in (common_active_swaps.stdout | default(''))
+  tags:
+    - config
+
+- name: Enable the swap file at low priority
+  ansible.builtin.command: >-
+    swapon --priority {{ common_swapfile_priority }} {{ common_swapfile_path }}
+  when: common_swapfile_path not in (common_active_swaps.stdout | default(''))
+  changed_when: common_swapfile_path not in (common_active_swaps.stdout | default(''))
+  tags:
+    - config
+
+- name: Persist the swap file in fstab (below zram)
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: "^{{ common_swapfile_path | regex_escape }}\\s"
+    line: "{{ common_swapfile_path }} none swap sw,pri={{ common_swapfile_priority }} 0 0"
+  tags:
+    - config
+
+# --- 4. VM tuning for a zram-primary setup -----------------------------------
+- name: Tune the VM for zram-primary swap
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value | string }}"
+    sysctl_file: /etc/sysctl.d/99-swap.conf
+    sysctl_set: true
+    reload: true
+    state: present
+  loop:
+    - { name: vm.swappiness, value: "{{ common_swappiness }}" }
+    - { name: vm.page-cluster, value: "{{ common_page_cluster }}" }
+    - { name: vm.watermark_boost_factor, value: "{{ common_watermark_boost_factor }}" }
+    - { name: vm.watermark_scale_factor, value: "{{ common_watermark_scale_factor }}" }
+  loop_control:
+    label: "{{ item.name }} = {{ item.value }}"
+  tags:
+    - config

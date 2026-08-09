@@ -1,0 +1,13 @@
+---
+profile: production
+
+warn_list: []
+
+skip_list:
+  - yaml[line-length]   # long Jinja2 expressions are acceptable
+
+exclude_paths:
+  - .git/
+  - molecule/
+
+use_default_rules: true

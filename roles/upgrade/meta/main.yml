@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  role_name: upgrade
+  author: nargothrondir
+  description: >
+    Update the apt cache, upgrade installed packages, autoremove obsolete
+    ones, and reboot the host if required.
+  min_ansible_version: "2.15"
+  license: MIT
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+
+dependencies: []

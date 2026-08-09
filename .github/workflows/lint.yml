@@ -1,0 +1,96 @@
+---
+# CI: ansible-lint and syntax-check must pass before merging (CLAUDE.md §8).
+# A failing job blocks the pipeline.
+name: Lint
+
+on:
+  # Documentation-only changes are skipped: none of these jobs can be affected
+  # by prose (ansible-lint reads Ansible files, actionlint reads workflows).
+  # Secret scanning deliberately does NOT skip docs — see security.yml.
+  # (listed twice on purpose: GitHub Actions does not support YAML anchors)
+  # `push` is restricted to main, `pull_request` covers everything else.
+  # Without the branches filter BOTH fire for a push to a branch with an open
+  # PR, so every job ran twice and every job is billed rounded UP to a full
+  # minute — duplication is the expensive kind of waste here, not slowness.
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+  pull_request:
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"   # weekly bit-rot check (Mon 06:00 UTC)
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ansible-lint:
+    name: ansible-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      # The changed_when guard moved to the Guards workflow, which collects all
+      # CLAUDE.md checks in one place and runs without a paths filter.
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install Ansible and ansible-lint
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible-core ansible-lint
+
+      - name: Install required collections
+        run: ansible-galaxy collection install -r requirements.yml
+
+      - name: Run ansible-lint
+        run: ansible-lint
+
+  syntax-check:
+    name: syntax-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install Ansible
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible-core
+
+      - name: Install required collections
+        run: ansible-galaxy collection install -r requirements.yml
+
+      - name: Syntax-check playbooks
+        run: |
+          for pb in playbooks/*.yml; do
+            echo "== $pb =="
+            ansible-playbook --syntax-check "$pb"
+          done
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Lint workflow files
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color

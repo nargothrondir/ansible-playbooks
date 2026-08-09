@@ -1,0 +1,16 @@
+---
+# Internal constants (CLAUDE.md §6): not meant to be overridden from the
+# inventory, so they live here rather than in defaults/.
+
+# The name the firewall bouncer registers under. Fixed rather than per-host,
+# because every existing node already carries this one — renaming would orphan
+# their registrations.
+#
+# It becomes ambiguous the day crowdsec_central_lapi_enabled is turned on:
+# bouncer names must be unique per LAPI, and a shared central LAPI would see
+# every node claiming the same name. Decide it there (#31), not by renaming
+# under a fleet that is working.
+_crowdsec_bouncer_name: crowdsec-firewall-bouncer
+
+# Shipped by the crowdsec-firewall-bouncer-nftables package.
+_crowdsec_bouncer_config: /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml

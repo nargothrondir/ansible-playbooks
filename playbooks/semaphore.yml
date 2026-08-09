@@ -1,0 +1,23 @@
+---
+# Deploy Semaphore (Ansible web UI) on the control node via Docker Compose.
+#
+# Secrets come from ansible-vault (group_vars/control/vault.yml):
+#   ansible-vault create group_vars/control/vault.yml
+#     semaphore_admin_password: "<strong password>"
+#     semaphore_access_key_encryption: "<base64 32 bytes>"  # head -c 32 /dev/urandom | base64
+#
+# Run from the panel CLI:  ansible-playbook playbooks/semaphore.yml --ask-vault-pass
+#
+# CLI only, and for two independent reasons. Applying this role restarts
+# Semaphore, and a task cannot restart the container it is running inside
+# (#96, #83). Separately, `hosts: control` would have aimed at that container
+# rather than the panel: `controller` is ansible_connection: local, meaning
+# "wherever Ansible runs". Naming the host fixes the aim; it does not make
+# running this from a template a good idea.
+
+- name: Deploy Semaphore on the panel host
+  hosts: "{{ semaphore_target | default('panel') }}"
+  become: true
+  gather_facts: true
+  roles:
+    - role: semaphore

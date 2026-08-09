@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  role_name: common
+  author: nargothrondir
+  description: >
+    Install baseline packages (sudo, curl, wget, ...) that some provider
+    images ship without.
+  min_ansible_version: "2.15"
+  license: MIT
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+
+dependencies: []

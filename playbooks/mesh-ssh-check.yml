@@ -1,0 +1,71 @@
+---
+# Verify that Ansible reaches hosts over the NetBird mesh (#8 groundwork):
+# connect to <peer>.<netbird_dns_domain>:22 as the automation user with the
+# normal SSH key — the exact path automation will use once the inventory
+# switches to mesh names. No NB-SSH / JWT involved: this is classic sshd
+# through the WireGuard tunnel, so the peers' NB-SSH flag must stay OFF
+# (enabling it intercepts mesh :22 and breaks key auth — tested 2026-07-11).
+#
+# mesh_targets: comma-separated NetBird peer names (see the dashboard / the
+# panel node addresses), e.g. "node-a" or "node-a,node-b,panel".
+#
+# Run (Semaphore template "Mesh SSH Check" — attach the vault password! — or):
+#   ansible-playbook playbooks/mesh-ssh-check.yml -e mesh_targets=node-a,node-b
+
+- name: Build in-memory hosts for the mesh SSH check
+  hosts: controller
+  gather_facts: false
+  vars:
+    # default(..., true) also covers Semaphore's empty-string survey values.
+    _mesh_targets: >-
+      {{ (mesh_targets | default('pl-1', true)) | split(',') | map('trim')
+         | select | list }}
+  tasks:
+    - name: Assert at least one target peer is given
+      ansible.builtin.assert:
+        that:
+          - _mesh_targets | length > 0
+        fail_msg: "Pass -e mesh_targets=<peer>[,<peer>...] (NetBird peer names)."
+
+    - name: Register the mesh addresses as in-memory hosts
+      ansible.builtin.add_host:
+        name: "mesh-{{ item }}"
+        groups: _mesh_check
+        ansible_host: "{{ item }}.{{ netbird_dns_domain }}"
+        ansible_user: "{{ bootstrap_user }}"
+        # Default 22 works only on peers WITHOUT NB-SSH (it intercepts mesh
+        # :22); pass -e mesh_ssh_port=2200 to test the automation door opened
+        # by roles/ssh_hardening. Value-inspected: Semaphore sends unfilled
+        # survey fields as empty strings that outrank play vars.
+        ansible_port: >-
+          {{ mesh_ssh_port if (mesh_ssh_port | default('') | string | length > 0)
+             else 22 }}
+        # NetBird DNS returns AAAA records and glibc prefers them, but the
+        # Semaphore container has no IPv6 route (docker bridge is v4-only) —
+        # ssh then dies with "Network unreachable". The mesh IPv4 (100.x)
+        # routes through the host fine, so pin the address family.
+        ansible_ssh_common_args: "-o AddressFamily=inet"
+      loop: "{{ _mesh_targets }}"
+      loop_control:
+        label: "{{ item }}.{{ netbird_dns_domain }}"
+
+- name: Verify SSH over the NetBird mesh
+  hosts: _mesh_check
+  gather_facts: false
+  tasks:
+    - name: Ping over the mesh (sshd + automation key + python)
+      ansible.builtin.ping:
+
+    - name: Read the remote hostname
+      ansible.builtin.command: hostname
+      register: mesh_hostname
+      changed_when: false
+
+    - name: Show the mesh connection summary
+      ansible.builtin.debug:
+        msg: >-
+          OK: {{ ansible_host }}:{{ ansible_port }} answered as
+          "{{ mesh_hostname.stdout }}" (user {{ ansible_user }}, key auth,
+          over the mesh).
+      tags:
+        - debug

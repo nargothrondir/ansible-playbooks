@@ -1,0 +1,183 @@
+---
+# Update managed servers and report the result to Telegram.
+#
+# Telegram credentials come from ansible-vault (see group_vars/all/):
+#   ansible-vault create group_vars/all/vault.yml
+#     bot_token         (required)
+#     chat_id           (required)
+#     updates_topic_id  (optional; without it the report goes to General)
+#
+# Topics are per SOURCE, not one shared thread — infra/telegram carries
+# updates_topic_id (this playbook), provisioning_topic_id (provision-node.yml)
+# and ci_topic_id (mirrored into the GitHub Actions secret TELEGRAM_TOPIC_ID
+# for ci-alert.yml). Each is optional and falls back rather than failing.
+#
+#   docker exec -it openbao bao kv put infra/telegram bot_token=... chat_id=...
+#
+# The ansible-vault entries (vault_telegram_*) are deliberately left in place as
+# the cold fallback until backups are real (#7).
+#
+# Run:  ansible-playbook playbooks/update.yml --ask-vault-pass
+
+- name: Update managed servers
+  hosts: managed
+  gather_facts: true
+  become: true
+  vars:
+    ansible_user: "{{ bootstrap_user }}"
+
+  tasks:
+    - name: Upgrade the host, capturing failures for the report
+      block:
+        - name: Run the upgrade role
+          ansible.builtin.include_role:
+            name: upgrade
+
+        - name: Record a successful upgrade
+          ansible.builtin.set_fact:
+            update_status: ok
+            update_reboot_needed: "{{ upgrade_reboot_required.stat.exists | default(false) }}"
+            # Actually rebooted only when the role is allowed to (panel has
+            # upgrade_reboot: false and must be rebooted manually). upgrade_reboot
+            # is the upgrade role's default, out of scope here at play level, so
+            # mirror that default (true) — only host_vars overrides (panel) apply.
+            update_rebooted: >-
+              {{ (upgrade_reboot_required.stat.exists | default(false))
+                 and (upgrade_reboot | default(true) | bool) }}
+            # Two-pass parse: security-suite lines first (marked 🛡), then the rest.
+            # Lines already rewritten by the first pass no longer match the second.
+            update_packages: >-
+              {{ upgrade_upgradable.stdout_lines | default([])
+                 | difference(['Listing...'])
+                 | map('regex_replace',
+                        '^([^/]+)/\S*security\S*\s+(\S+)\s+\S+\s+\[upgradable from:\s+([^\]]+)\].*$',
+                        '\g<1>: \g<3> → \g<2> 🛡')
+                 | map('regex_replace',
+                        '^([^/]+)/\S+\s+(\S+)\s+\S+\s+\[upgradable from:\s+([^\]]+)\].*$',
+                        '\g<1>: \g<3> → \g<2>')
+                 | map('regex_replace', '~\S*', '') | list }}
+      rescue:
+        - name: Record a failed upgrade
+          ansible.builtin.set_fact:
+            update_status: failed
+            update_error: >-
+              {{ (ansible_failed_result.msg | default('') | trim)
+                 or (ansible_failed_result | to_json | truncate(400)) }}
+
+# Reporting runs on the controller, independently of the managed hosts, so the
+# Telegram report is sent even if every managed host is unreachable.
+#
+# `controller`, not `localhost`: the same machine and the same local connection,
+# but IMPLICIT LOCALHOST IS NOT IN THE INVENTORY and therefore gets no
+# group_vars — including openbao_addr and openbao_role_id, without which the
+# secret cannot be fetched.
+- name: Report update results to Telegram
+  hosts: controller
+  gather_facts: false
+  vars:
+    _report_hosts: "{{ groups['managed'] | default([]) }}"
+
+  tasks:
+    # Read from OpenBao rather than ansible-vault (#2). The vault entries stay
+    # in place as the cold fallback until backups are real (#7) — reverting is
+    # reverting this commit, not editing anything on a server.
+    #
+    # No `apply:` with delegate_to/run_once here: this play already runs on a
+    # single host, and that host is the controller.
+    #
+    # No openbao_read_field: all three values live in one secret, so read it
+    # once as a dict. Naming a field per include cost one GET per field for the
+    # same path — the AppRole login is reused across includes, the reads were
+    # not — and left the three fields free to disagree if the secret were
+    # rewritten between them.
+    - name: Fetch the Telegram secret
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: telegram
+        openbao_read_into: _telegram
+      tags:
+        - config
+
+    # A whole-secret read has no field name to assert on, so the presence check
+    # moves here. Without it a missing bot_token would arrive as an empty
+    # string and the report would vanish with the play still green — the
+    # failure mode of #117.
+    #
+    # updates_topic_id is deliberately not required: without it the report goes
+    # to the group's General topic. `bao kv put` replaces a secret wholesale,
+    # so that field is one careless write away from disappearing — tolerated
+    # rather than required.
+    - name: Assert the Telegram secret carries what the report needs
+      ansible.builtin.assert:
+        that:
+          - _telegram.bot_token | default('') | length > 0
+          - _telegram.chat_id | default('') | length > 0
+        fail_msg: >-
+          infra/telegram is missing bot_token or chat_id. Write the whole
+          secret in one call: bao kv put replaces it wholesale, so a per-field
+          write silently drops the other fields.
+      tags:
+        - config
+
+    # Noteworthy = any failure/unreachable, any packages, or a reboot. A quiet
+    # "all ok, nothing to do" report is still sent daily as a heartbeat, but
+    # without a sound (disable_notification) — noise only when something happened.
+    - name: Determine whether the report is noteworthy
+      ansible.builtin.set_fact:
+        update_noteworthy: >-
+          {{ (_report_hosts | map('extract', hostvars)
+              | map(attribute='update_status', default='missing')
+              | reject('eq', 'ok') | list | length > 0)
+             or (_report_hosts | map('extract', hostvars)
+                 | map(attribute='update_packages', default=[])
+                 | flatten | length > 0)
+             or (_report_hosts | map('extract', hostvars)
+                 | map(attribute='update_reboot_needed', default=false)
+                 | select | list | length > 0) }}
+
+    - name: Compose the Telegram update report
+      ansible.builtin.set_fact:
+        # HTML parse_mode (see notify_telegram): host names are bold, package
+        # lines monospaced. All dynamic content is escaped (| e) so an odd
+        # character in an apt error can't break the whole message. Hosts with
+        # nothing to report are collapsed into a single "no updates" line.
+        update_report: |-
+          🖥 <b>Update report</b> — {{ _report_hosts | length }} host(s)
+          {% set ns = namespace(quiet=[]) %}
+          {% for h in _report_hosts %}
+          {%- set hv = hostvars[h] %}
+          {%- if hv.update_status | default('') == 'ok'
+                and (hv.update_packages | default([]) | length == 0)
+                and not (hv.update_reboot_needed | default(false)) %}
+          {%- set ns.quiet = ns.quiet + [h] %}
+          {%- endif %}
+          {%- endfor %}
+          {% if ns.quiet | length > 0 %}✅ {{ ns.quiet | join(', ') }} — no updates
+          {% endif %}
+          {%- for h in _report_hosts if h not in ns.quiet %}
+          {%- set hv = hostvars[h] %}
+          {% if hv.update_status | default('') == 'ok' -%}
+          {% set pkgs = hv.update_packages | default([]) -%}
+          {% set reboot_note = ' · 🔄 rebooted' if hv.update_rebooted | default(false)
+               else (' · ⏳ reboot required (manual)' if hv.update_reboot_needed | default(false) else '') -%}
+          📦 <b>{{ h }}</b>: {{ pkgs | length }} pkg(s){{ reboot_note }}
+          {% for p in pkgs[:15] %}<code>   • {{ p | e }}</code>
+          {% endfor %}{% if pkgs | length > 15 %}   • …and {{ pkgs | length - 15 }} more
+          {% endif %}{% elif hv.update_status | default('') == 'failed' -%}
+          ⚠️ <b>{{ h }}</b>: FAILED — {{ hv.update_error | default('unknown error') | e }}
+          {% else -%}
+          ❓ <b>{{ h }}</b>: no result (unreachable?)
+          {% endif %}
+          {%- endfor %}
+
+    - name: Send the report to Telegram
+      ansible.builtin.include_role:
+        name: notify_telegram
+      vars:
+        notify_telegram_bot_token: "{{ _telegram.bot_token }}"
+        notify_telegram_chat_id: "{{ _telegram.chat_id }}"
+        notify_telegram_message_thread_id: "{{ _telegram.updates_topic_id | default('') }}"
+        notify_telegram_message: "{{ update_report }}"
+        notify_telegram_silent: "{{ not update_noteworthy }}"
+        notify_telegram_parse_mode: HTML
+      when: _report_hosts | length > 0

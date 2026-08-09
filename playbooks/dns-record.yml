@@ -1,0 +1,99 @@
+---
+# Ensure a DNS record points at a host, so provisioning has no manual DNS step
+# left (#43). The zone is on Cloudflare and the token lives in OpenBao at
+# infra/cloudflare, field dns_token.
+#
+# Usable two ways, which is why it is a playbook rather than a task file:
+#
+#   1. Imported by provision-node.yml, where it inherits the survey values —
+#      node_name becomes the label and node_ip the address.
+#   2. Standalone, as its own Semaphore template or from the CLI, to point a
+#      name at an address without provisioning anything:
+#
+#        ansible-playbook playbooks/dns-record.yml \
+#          -e dns_record_name=lab-1 -e dns_record_value=203.0.113.10
+#
+# Semaphore: attach the Variable Group holding OPENBAO_SECRET_ID — the token is
+# read from OpenBao, and an unattached group looks exactly like a missing
+# secret.
+#
+# WHY hosts: controller — this play only talks to an API, so its target really
+# is the machine running Ansible. That is the case `hosts: control` gets wrong
+# (#96) and the reason spec-guard 12 forbids the group but not this host.
+
+- name: Ensure the DNS record exists
+  hosts: "{{ dns_target | default('controller') }}"
+  gather_facts: false
+
+  vars:
+    # Inherited from the pipeline's survey when imported, overridable when run
+    # standalone. Named separately so neither use has to know about the other.
+    _dns_name: "{{ dns_record_name | default(node_name | default('')) }}"
+    _dns_value: "{{ dns_record_value | default(node_ip | default('')) }}"
+    _dns_type: "{{ dns_record_type | default('A') }}"
+    # The zone is the single literal occurrence of the domain, in
+    # group_vars/all (#118) — so a rotation does not have to be remembered here.
+    _dns_zone: "{{ dns_zone | default(infra_domain | default('')) }}"
+
+  tasks:
+    - name: Assert the record is fully specified
+      ansible.builtin.assert:
+        that:
+          - _dns_name | length > 0
+          - _dns_value | length > 0
+          - _dns_zone | length > 0
+        fail_msg: >-
+          Need a label and an address: pass dns_record_name/dns_record_value
+          when running standalone, or node_name/node_ip when imported by the
+          provisioning pipeline. The zone comes from infra_domain in
+          group_vars/all.
+      tags:
+        - config
+
+    - name: Fetch the Cloudflare DNS token
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: cloudflare
+        openbao_read_field: dns_token
+        openbao_read_into: _cloudflare_dns_token
+      tags:
+        - config
+
+    # proxied: false is not a preference. Cloudflare's proxy terminates TLS at
+    # their edge, and a reality node needs the client's TLS to reach it intact
+    # — an orange-clouded record simply breaks the node.
+    #
+    # solo: true gives upsert semantics: "deletes all other records with the
+    # same record name and type". A node has one address, and a forgotten
+    # second A record would send half the clients to a dead host.
+    #
+    # no_log because the token is passed as a module argument.
+    # One Jinja expression, at the very end: ansible-lint's name[template]
+    # rejects anything else, and the full record is reported by the debug task
+    # below anyway.
+    - name: "Ensure the DNS record for {{ _dns_name }}"
+      community.general.cloudflare_dns:
+        api_token: "{{ _cloudflare_dns_token }}"
+        zone: "{{ _dns_zone }}"
+        record: "{{ _dns_name }}"
+        type: "{{ _dns_type }}"
+        value: "{{ _dns_value }}"
+        proxied: false
+        solo: true
+        state: present
+      register: _dns_result
+      no_log: true
+      tags:
+        - config
+
+    # The register above is no_log, so nothing here can print the token; the
+    # names and the address are not secret and are what an operator needs to
+    # see to confirm the right record was touched.
+    - name: Report the record
+      ansible.builtin.debug:
+        msg: >-
+          {{ _dns_type }} {{ _dns_name }}.{{ _dns_zone }} -> {{ _dns_value }}
+          ({{ 'changed' if _dns_result.changed else 'already correct' }}).
+          Proxying is off, as a reality node requires.
+      tags:
+        - debug

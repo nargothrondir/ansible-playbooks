@@ -1,0 +1,32 @@
+---
+# Deploy OpenBao on the panel host (issue #2, phase 1).
+#
+#   ansible-playbook playbooks/openbao.yml
+#   ansible-playbook playbooks/openbao.yml -e openbao_target=test   # lab first
+#
+# TARGET IS `panel`, NOT `control`. The `controller` host is
+# `ansible_connection: local`, which means "wherever Ansible is running" — the
+# Semaphore CONTAINER when a template runs it, not the panel host. Targeting
+# `control` from Semaphore deploys into that container; it failed only because
+# the container has no sudo, and would otherwise have looked like a success.
+# Playbooks that use `hosts: control` are run from the panel CLI (see #96).
+#
+# This playbook only DEPLOYS. `bao operator init` and `bao operator unseal` are
+# run by the operator: init prints the unseal shares and the root token exactly
+# once, and they must never pass through Ansible, a Semaphore log or this
+# repository. Re-running against an initialised store is safe.
+#
+# Engines, policies and the AppRole are configured separately, through the API,
+# by a playbook that takes a privileged token for a single run — never by hand
+# in the UI.
+#
+# After every restart OpenBao comes back SEALED, and playbooks that read
+# secrets fail until it is unsealed. That is the accepted cost of the
+# manual-Shamir decision recorded in #2.
+
+- name: Deploy OpenBao
+  hosts: "{{ openbao_target | default('panel') }}"
+  become: true
+
+  roles:
+    - openbao

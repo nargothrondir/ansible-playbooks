@@ -1,0 +1,60 @@
+---
+# Deploy the Hawser edge agent on remote managed hosts.
+#
+# Per-host tokens live in OpenBao (#2) as ONE secret whose fields are inventory
+# hostnames — the same shape the ansible-vault mapping had, so the two forms
+# stay interchangeable while both exist:
+#
+#   infra/hawser   fi=<token>  de=<token>  kz=<token>  ru=<token>
+#
+# `bao kv put` REPLACES a secret wholesale, so adding a node means writing the
+# whole table again, not appending a field. The recipe for that — building the
+# JSON from the vault file without the values touching the screen — is in
+# roles/openbao/README.md.
+#
+# Hosts with no field in the table (the control node, managed locally over the
+# Docker socket) get an empty token and are skipped.
+#
+# The Dockhand endpoint is a plain inventory variable, not a secret:
+# hawser_dockhand_url in group_vars/all.
+#
+# The template needs the Variable Group carrying OPENBAO_SECRET_ID attached.
+# The ansible-vault mapping (hawser_host_tokens) stays as the cold fallback
+# until backups are real (#7).
+
+# Read on the controller, in its own play, because the table serves every host
+# and the target hosts cannot reach OpenBao at all — its API is on a Docker
+# network the panel owns, not on the mesh.
+- name: Fetch the Hawser token table
+  hosts: controller
+  gather_facts: false
+
+  tasks:
+    # No openbao_read_field: this secret IS the table, and the whole thing is
+    # wanted rather than one value out of it.
+    - name: Fetch the per-host Hawser tokens
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: hawser
+        openbao_read_into: _hawser_tokens
+      tags:
+        - config
+
+- name: Deploy Hawser edge agents
+  hosts: fleet
+  become: true
+  gather_facts: true
+
+  vars:
+    ansible_user: "{{ bootstrap_user }}"
+    # Overrides the group_vars definition that reads the vault mapping. Both
+    # resolve to the same value; this one comes from OpenBao.
+    hawser_token: >-
+      {{ (hostvars['controller']._hawser_tokens | default({}))[inventory_hostname]
+         | default('') }}
+
+  tasks:
+    - name: Deploy Hawser on hosts with a token configured
+      ansible.builtin.include_role:
+        name: hawser
+      when: hawser_token | default('') | length > 0

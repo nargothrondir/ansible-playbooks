@@ -1,0 +1,131 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+    fail_msg: >
+      Unsupported OS: {{ ansible_facts['distribution'] }}
+      {{ ansible_facts['distribution_version'] }}.
+      Only Debian/Ubuntu are supported.
+  tags:
+    - install
+
+- name: Update apt package cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: "{{ upgrade_cache_valid_time }}"
+  tags:
+    - install
+
+# Installed BEFORE the upgrade, because the reboot decision at the end of this
+# role depends on it and because its apt hook should be configured before the
+# big upgrade runs, not after.
+- name: Install needrestart to detect a stale running kernel
+  ansible.builtin.apt:
+    name: needrestart
+    state: present
+  when: upgrade_reboot | bool
+  tags:
+    - install
+
+# needrestart hooks itself into apt and its default restart mode is
+# interactive. A prompt inside an Ansible-driven apt run is not a question, it
+# is a hang — so pin it to list-only. This role decides what to do with the
+# verdict, and the reboot it may trigger restarts every service anyway.
+- name: Keep needrestart from prompting during apt runs
+  ansible.builtin.copy:
+    content: |
+      # Managed by Ansible — roles/upgrade. Do not edit by hand.
+      $nrconf{restart} = 'l';
+    dest: /etc/needrestart/conf.d/50-ansible-no-prompt.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: upgrade_reboot | bool
+  tags:
+    - config
+
+- name: Get list of upgradable packages
+  ansible.builtin.command: apt list --upgradable  # noqa: command-instead-of-module — no module lists upgradable packages
+  register: upgrade_upgradable
+  changed_when: false
+  tags:
+    - install
+
+- name: Show upgradable packages before upgrade
+  ansible.builtin.debug:
+    var: upgrade_upgradable.stdout_lines
+  tags:
+    - debug
+
+- name: Perform package upgrade
+  ansible.builtin.apt:
+    upgrade: "{{ upgrade_apt_type }}"
+  tags:
+    - install
+
+- name: Remove unused packages
+  ansible.builtin.apt:
+    autoremove: true
+    purge: "{{ upgrade_autoremove_purge }}"
+  when: upgrade_autoremove
+  tags:
+    - install
+
+# /var/run/reboot-required is an UBUNTU convention. The hook that creates it
+# ships in update-notifier-common, which minimal Debian neither installs nor
+# pulls in — so on this fleet (Debian 13) the file never appears and this check
+# answered "no reboot needed" on every host, every run, whatever had just been
+# installed. One provisioning run upgraded the kernel, glibc, systemd and
+# OpenSSL and still skipped the reboot.
+#
+# It looked like it worked because the panel is Ubuntu, where the marker does
+# appear. The marker is therefore kept as one of two signals rather than
+# dropped: it is correct where it exists.
+- name: Check the Ubuntu reboot-required marker
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: upgrade_reboot_marker
+  changed_when: false
+  tags:
+    - service
+
+# The signal that works on both families. Batch mode emits NEEDRESTART-KSTA:
+#   0 unknown or failed to detect      1 no pending upgrade
+#   2 ABI compatible upgrade pending   3 version upgrade pending
+# (upstream README.batch.md). 2 counts as needing a reboot — an ABI-compatible
+# security kernel is still a kernel this host is not running.
+#
+# -k keeps it to the kernel. NEEDRESTART-SVC lists services wanting a restart
+# after a library upgrade; deciding to bounce a service on a node serving users
+# is a different question from rebooting, and a reboot covers them anyway.
+- name: Ask needrestart whether the running kernel is stale
+  ansible.builtin.command: needrestart -b -k
+  register: upgrade_needrestart
+  changed_when: false
+  when: upgrade_reboot | bool
+  tags:
+    - service
+
+# KSTA 0 means needrestart could not tell. It is not treated as "reboot": the
+# marker above still gets its say, and inventing a reboot from a failed
+# detection would be worse than the defect being fixed.
+- name: Determine whether a reboot is required
+  ansible.builtin.set_fact:
+    upgrade_kernel_status: >-
+      {{ upgrade_needrestart.stdout_lines | default([])
+         | select('match', '^NEEDRESTART-KSTA:')
+         | map('regex_replace', '^NEEDRESTART-KSTA:\s*', '')
+         | list | first | default('0') | int }}
+  when: upgrade_reboot | bool
+  tags:
+    - service
+
+- name: Reboot host if required
+  ansible.builtin.reboot:
+    reboot_timeout: "{{ upgrade_reboot_timeout }}"
+  when:
+    - upgrade_reboot | bool
+    - upgrade_reboot_marker.stat.exists or upgrade_kernel_status | default(0) | int >= 2
+  tags:
+    - service

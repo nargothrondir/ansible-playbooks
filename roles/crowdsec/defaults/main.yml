@@ -1,0 +1,33 @@
+---
+# CrowdSec role (issue #31). SSH-only detection with progressive (exponential)
+# bans, enforced locally by the nftables firewall bouncer.
+
+# Collections to install. SSH only: the reality/camouflage 443 access log is
+# deliberately NOT ingested, so nothing can ever drive a ban on 443 (a ban there
+# would be a behavioural fingerprint). Add an http collection only together with
+# a no-decision profile if 443 visibility is ever wanted.
+crowdsec_collections:
+  - crowdsecurity/sshd
+
+# Progressive ban: base_hours doubled per prior decision for the same IP, capped.
+# Ladder (prior-decision count): 0->1h, 1->2h, 2->4h ... 7->128h, >threshold->cap.
+# GetDecisionsCount decays as decisions expire, so a quiet IP resets over time.
+crowdsec_ban_base_hours: 1
+crowdsec_ban_cap: "168h"          # one-week ceiling
+crowdsec_ban_cap_threshold: 7     # prior-decision count above which the cap wins
+
+# Anti-lockout whitelist: sources CrowdSec must NEVER act on. MUST include the
+# Netbird mesh range so the panel<->node LAPI path and admin access can never
+# produce a ban — the cost of a self-lockout is higher with escalating bans.
+crowdsec_whitelist_cidrs:
+  - "100.64.0.0/10"   # Netbird CGNAT mesh — confirm against the actual range
+
+# --- Central LAPI (fleet-wide) — laid in but INACTIVE by default -------------
+# When false (default) the node runs standalone: its own local LAPI, banning on
+# its own SSH detections. When true, the node registers with and reports to the
+# panel's LAPI over the mesh so a signal caught on any machine bans across the
+# fleet. Flip on later without re-architecting; credentials come from vault then.
+crowdsec_central_lapi_enabled: false
+crowdsec_central_lapi_url: ""                       # e.g. https://control.example.com:8080
+crowdsec_central_lapi_login: "{{ inventory_hostname }}"
+crowdsec_central_lapi_password: ""                  # vault_crowdsec_lapi_password when activated

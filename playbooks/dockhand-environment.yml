@@ -1,0 +1,290 @@
+---
+# Ensure a Dockhand environment exists for a host, and hand back its Hawser
+# token — removing the last credential an operator had to copy by hand into the
+# provisioning survey.
+#
+# Two API objects, not one. The ENVIRONMENT is the host record; the TOKEN lives
+# in its own table and is created through /api/hawser/tokens. Tokens are stored
+# hashed, and only a prefix is ever returned.
+#
+# Usable two ways, like dns-record.yml:
+#   1. imported by provision-node.yml, inheriting node_name;
+#   2. standalone, to create an environment without provisioning anything:
+#        ansible-playbook playbooks/dockhand-environment.yml -e node_name=lab-1
+#
+# ROTATION. Normally the token stored in OpenBao is reused, which is what keeps
+# re-runs idempotent. To replace one that leaked or is suspect:
+#
+#   ansible-playbook playbooks/dockhand-environment.yml \
+#     -e node_name=node-a -e dockhand_force_rotate=true
+#
+# That mints a new token, stores it and issues it in Dockhand — which REVOKES
+# the old one and drops the agent's connection. The node keeps serving traffic,
+# but Dockhand cannot manage it until the hawser role is re-run to hand the new
+# token to the agent:
+#
+#   ansible-playbook playbooks/hawser.yml --limit node-a
+#
+# So rotate one host at a time, and expect a gap between the two commands.
+#
+# Requires the hawser-write policy on the AppRole, or the OpenBao write below
+# is denied.
+#
+# WHY delegate_to: panel — Dockhand publishes its UI on the panel's LOOPBACK
+# (dockhand_bind, 127.0.0.1:3040), which is unreachable from the Semaphore
+# container. Running the request ON the panel is what new-node.yml already does
+# for the Remnawave API, and it costs nothing: no shared Docker network, no
+# container restarts. Going through the public domain does NOT work by design —
+# Angie answers 403 on /api/ from outside, which is correct and should stay.
+
+- name: Ensure the Dockhand environment exists
+  hosts: "{{ dockhand_env_target | default('controller') }}"
+  gather_facts: false
+
+  vars:
+    # Dockhand's environments are named in upper case by convention, while
+    # node_name must stay lower case — it becomes a hostname, a mesh DNS label
+    # and the panel's node name. The environment name is cosmetic: the agent
+    # pairs by token, not by name. So uppercase it here and keep the convention.
+    _env_name: "{{ dockhand_environment_name | default((node_name | default('')) | upper, true) }}"
+    _dockhand_api: "{{ dockhand_api_url | default('http://127.0.0.1:3040') }}"
+    # The OpenBao key stays lower case: infra/hawser is keyed by inventory
+    # hostname, which is what the hawser role looks itself up by.
+    _token_key: "{{ node_name | default('') }}"
+
+  tasks:
+    # The SHAPE of node_name is checked HERE, not only in provision-node.yml.
+    # That playbook asserts the same pattern, but one play LATER — and this play
+    # has already written to infra/hawser by then. A run with a mistyped name
+    # therefore seeds a junk key into a fleet-wide secret and only afterwards
+    # aborts, which is exactly how a "PL-1" key ended up beside "pl-1", each
+    # holding a different token for the same host.
+    #
+    # Deliberately NOT normalised with | lower. The same name becomes a system
+    # hostname and a mesh DNS label elsewhere, both of which the OS lowercases;
+    # quietly accepting mixed case here would desync the three instead of
+    # failing loudly. And _env_name IS normalised (| upper), so without this the
+    # environment matches on any case while the OpenBao key does not — the
+    # asymmetry that made the playbook mint a second token for a host that
+    # already had one, revoking the live one in the process.
+    - name: Assert the node is named
+      ansible.builtin.assert:
+        that:
+          - _token_key is match('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')
+          - _env_name | length > 0
+        fail_msg: >-
+          node_name is required and must be a DNS label — lowercase letters,
+          digits and hyphens, starting and ending alphanumeric. It names the
+          OpenBao key and, uppercased, the Dockhand environment. Pass it as a
+          survey variable, or with -e node_name=<name> when running this
+          playbook standalone.
+      tags:
+        - config
+
+    - name: Fetch the Dockhand API token
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: dockhand
+        openbao_read_field: api_token
+        openbao_read_into: _dockhand_api_token
+      tags:
+        - config
+
+    - name: Fetch the fleet's Hawser tokens
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: hawser
+        openbao_read_into: _hawser_tokens
+      tags:
+        - config
+
+    # no_log on every Dockhand call: the Authorization header is part of the
+    # module arguments, and Ansible prints those on failure and at -vvv.
+    - name: List the Dockhand environments
+      ansible.builtin.uri:
+        url: "{{ _dockhand_api }}/api/environments"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _dockhand_api_token }}"
+        status_code: [200]
+      register: _dockhand_envs
+      delegate_to: panel
+      no_log: true
+      changed_when: false
+      check_mode: false
+      tags:
+        - config
+
+    - name: Locate the environment and this host's stored token
+      ansible.builtin.set_fact:
+        _env_match: >-
+          {{ _dockhand_envs.json | selectattr('name', 'equalto', _env_name)
+             | list | first | default({}) }}
+        _stored_token: "{{ _hawser_tokens[_token_key] | default('', true) }}"
+      no_log: true
+      tags:
+        - config
+
+    # Reuse before generate: a token already in OpenBao belongs to this host and
+    # is very likely already configured on it. Minting a fresh one every run
+    # would reconfigure the agent every pass — the always-changed defect of #122.
+    #
+    # dockhand_force_rotate is the deliberate exception, for a token that leaked
+    # or is suspect. It costs the agent's connection until hawser.yml re-runs,
+    # so it is opt-in per host rather than a default — see the header.
+    #
+    # ascii_letters+digits is a subset of base64url, the alphabet Dockhand
+    # expects from a supplied token.
+    - name: Mint a Hawser token when there is none, or rotation was requested
+      ansible.builtin.set_fact:
+        _stored_token: "{{ lookup('password', '/dev/null length=64 chars=ascii_letters,digits') }}"
+        _token_is_new: true
+      no_log: true
+      when: _stored_token | length == 0 or dockhand_force_rotate | default(false) | bool
+      tags:
+        - config
+
+    # KV v2 has no per-field write: this REPLACES the whole secret, so the map
+    # is read above and merged here. Writing just this host would drop every
+    # other node's token — see the hawser-write policy comment in
+    # openbao-setup.yml.
+    - name: Store the new token in OpenBao
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/infra/data/hawser"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ _openbao_token }}"
+        body_format: json
+        body:
+          data: "{{ _hawser_tokens | combine({_token_key: _stored_token}) }}"
+        status_code: [200, 204]
+      no_log: true
+      when: _token_is_new | default(false) | bool
+      tags:
+        - config
+
+    # host/port/protocol are sent even though an edge agent dials out and needs
+    # none of them: existing edge environments carry host "edge-agent", port
+    # 2375, protocol http, so matching what the UI writes keeps API-created and
+    # UI-created environments indistinguishable.
+    #
+    # hawserToken is deliberately NOT sent. The environment record has no usable
+    # token field — that is what /api/hawser/tokens is for. Passing it here is
+    # accepted and dropped, which is how the first provisioned node ended up
+    # with an environment reporting "No token generated yet" while its agent
+    # held a token nobody else knew about.
+    - name: "Create the Dockhand environment {{ _env_name }}"
+      ansible.builtin.uri:
+        url: "{{ _dockhand_api }}/api/environments"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ _dockhand_api_token }}"
+        body_format: json
+        body:
+          name: "{{ _env_name }}"
+          connectionType: hawser-edge
+          host: edge-agent
+          port: 2375
+          protocol: http
+          collectActivity: true
+          collectMetrics: true
+        status_code: [200, 201]
+      register: _env_created
+      delegate_to: panel
+      no_log: true
+      when: not _env_match
+      tags:
+        - config
+
+    - name: Resolve the environment id
+      ansible.builtin.set_fact:
+        _env_id: "{{ _env_match.id | default(_env_created.json.id) | int }}"
+      no_log: true
+      tags:
+        - config
+
+    - name: List the Hawser tokens
+      ansible.builtin.uri:
+        url: "{{ _dockhand_api }}/api/hawser/tokens"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _dockhand_api_token }}"
+        status_code: [200]
+      register: _dockhand_tokens
+      delegate_to: panel
+      no_log: true
+      changed_when: false
+      check_mode: false
+      tags:
+        - config
+
+    # Tokens are hashed, so only tokenPrefix comes back — and that is enough to
+    # answer the question that matters: is the token Dockhand holds for this
+    # environment the one we have stored? A prefix is a substring of its own
+    # token, so `in` decides it. Substring rather than strict prefix keeps the
+    # expression readable; a collision inside a 64-character random token is not
+    # a scenario worth defending against.
+    - name: Determine whether Dockhand already holds this host's token
+      ansible.builtin.set_fact:
+        _token_ok: >-
+          {{ (_dockhand_tokens.json
+              | selectattr('environmentId', 'equalto', _env_id | int)
+              | selectattr('isActive')
+              | map(attribute='tokenPrefix') | list
+              | select('in', _stored_token) | list | length) > 0 }}
+      no_log: true
+      tags:
+        - config
+
+    # Issuing a token REVOKES every other active token for this environment and
+    # closes the agent's current connection — the server does that deliberately,
+    # so the old agent cannot fight the new one for the connection slot. That is
+    # why this is guarded rather than run every time.
+    #
+    # The body is built as a Jinja dict so environmentId stays a NUMBER: the
+    # endpoint rejects it otherwise, and a templated YAML scalar would arrive as
+    # a string (the same trap already documented in new-node.yml).
+    - name: Issue the Hawser token in Dockhand
+      ansible.builtin.uri:
+        url: "{{ _dockhand_api }}/api/hawser/tokens"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ _dockhand_api_token }}"
+        body_format: json
+        body: >-
+          {{ {'name': _env_name,
+              'environmentId': _env_id | int,
+              'rawToken': _stored_token} }}
+        status_code: [200, 201]
+      delegate_to: panel
+      no_log: true
+      changed_when: not _token_ok | bool
+      when: not _token_ok | bool
+      tags:
+        - config
+
+    # The point of the whole playbook: downstream plays read this instead of a
+    # survey field an operator pasted by hand.
+    - name: Publish the token for the roles that need it
+      ansible.builtin.set_fact:
+        hawser_token: "{{ _stored_token }}"
+      no_log: true
+      tags:
+        - config
+
+    # The minted/reused distinction is reported rather than collapsed: run #211
+    # said "issued from the value in OpenBao" about a token it had generated
+    # eleven seconds earlier, which is how a stray uppercase key went unnoticed.
+    # A report that cannot tell reuse from a fresh mint hides exactly the event
+    # worth seeing — a live token being replaced.
+    - name: Report without revealing anything
+      ansible.builtin.debug:
+        msg: >-
+          Dockhand environment {{ _env_name }}
+          {{ 'already existed' if _env_match else 'created' }};
+          its token was
+          {{ 'already registered' if _token_ok
+             else ('freshly minted and issued' if _token_is_new | default(false) | bool
+                   else 'issued from the value in OpenBao') }}.
+      tags:
+        - debug

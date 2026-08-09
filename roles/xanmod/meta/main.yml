@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  role_name: xanmod
+  author: nargothrondir
+  description: >
+    Install the XanMod performance kernel from the official XanMod APT
+    repository (a reboot is required to boot into it).
+  min_ansible_version: "2.15"
+  license: MIT
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - noble
+
+dependencies: []

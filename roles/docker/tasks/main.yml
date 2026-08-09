@@ -1,0 +1,94 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+    fail_msg: >
+      Unsupported OS: {{ ansible_facts['distribution'] }}
+      {{ ansible_facts['distribution_version'] }}.
+      Only Debian/Ubuntu are supported.
+  tags:
+    - install
+
+- name: Install prerequisites for the Docker repository
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - python3-debian
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  tags:
+    - install
+
+- name: Ensure the APT keyrings directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+  tags:
+    - install
+
+# The key is managed by an explicit task (not deb822's signed_by URL download)
+# so a missing keyring is recreated on the next run instead of breaking apt.
+- name: Download the Docker APT signing key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+  register: _docker_key_download
+  until: _docker_key_download is succeeded
+  retries: 3
+  delay: 5
+  tags:
+    - install
+
+- name: Add the Docker APT repository (deb822)
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: deb
+    uris: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}"
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: stable
+    architectures: "{{ docker_apt_arch }}"
+    signed_by: /etc/apt/keyrings/docker.asc
+    state: present
+  tags:
+    - install
+
+- name: Remove the legacy one-line Docker repository file
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/docker.list
+    state: absent
+  tags:
+    - install
+
+- name: Install Docker Engine and the Compose plugin
+  ansible.builtin.apt:
+    name: "{{ docker_packages }}"
+    state: present
+    update_cache: true
+  tags:
+    - install
+    - docker
+
+- name: Ensure the Docker service is enabled and running
+  ansible.builtin.systemd_service:
+    name: docker
+    state: started
+    enabled: true
+  tags:
+    - service
+    - docker
+
+- name: Add users to the docker group
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: docker
+    append: true
+  loop: "{{ docker_users }}"
+  loop_control:
+    label: "{{ item }}"
+  tags:
+    - config
+    - docker

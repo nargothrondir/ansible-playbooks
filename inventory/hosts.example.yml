@@ -1,0 +1,57 @@
+---
+# Example inventory — the group layout the playbooks and roles expect.
+#
+# The real inventory (addresses, host names, group_vars, host_vars and the
+# ansible-vault files) lives in a SEPARATE PRIVATE repository; Semaphore
+# already clones it independently of this one. This file exists so the public
+# repository still documents the structure the code depends on.
+#
+# Addresses use RFC 5737 documentation ranges (203.0.113.0/24) and never
+# resolve to anything real. Copy this to hosts.yml in the private inventory and
+# fill in actual values.
+all:
+  children:
+    # Freshly rented servers PENDING bootstrap: a host lives here only until
+    # playbooks/site.yml has run, then moves to "managed" (or "lab") and is
+    # removed from this group. Normally empty; provision-node.yml also joins
+    # its in-memory target here to inherit these vars.
+    new_vps:
+      hosts: {}
+      vars:
+        ansible_user: root
+
+    # Bootstrapped hosts under daily management (upgrade + Telegram report).
+    managed:
+      hosts:
+        node-a:
+          ansible_host: 203.0.113.11
+        node-b:
+          ansible_host: 203.0.113.12
+        # The control server itself. Reached over the mesh: from inside the
+        # Semaphore container "localhost" would be the container, so the host
+        # is addressed like any other remote server.
+        panel:
+          ansible_host: 203.0.113.10
+      vars:
+        ansible_user: ansible
+
+    # Experimental/disposable hosts (provision.yml target). Not in "managed":
+    # no daily updates or Telegram reporting.
+    lab:
+      hosts:
+        test:
+          ansible_host: 203.0.113.90
+      vars:
+        ansible_user: ansible
+
+    # Parent group: every host Dockhand can reach (managed fleet + lab
+    # experiments). Holds the Hawser vars/vault (group_vars/fleet/).
+    fleet:
+      children:
+        managed:
+        lab:
+
+    control:
+      hosts:
+        controller:
+          ansible_connection: local

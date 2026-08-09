@@ -1,0 +1,397 @@
+---
+# One-click node provisioning for Semaphore (issue #39): survey variables drive
+# everything, and the target server is built in memory with add_host — so no
+# inventory edit/commit is needed between renting the VPS and running the task.
+#
+# Semaphore template "Provision Node" — survey variables:
+#   node_ip        (required)        admin IP of the freshly rented VPS (root + admin key);
+#                                    used only for SSH — the panel never sees it
+#   node_name      (required, >=3)   DNS-safe short name (lowercase letters, digits,
+#                                    hyphens); becomes the system hostname, the NetBird
+#                                    peer name, the panel node name and the
+#                                    Dockhand/Hawser environment name
+#   node_address   (optional)        address the panel connects to; defaults to the mesh
+#                                    DNS name <node_name>.<netbird_dns_domain>
+#   node_country   (optional)        ISO-2 country code (e.g. PL); defaults to XX
+#   node_profile   (required)        config profile name; created if it does not exist
+#   profile_domain (optional)        reality domain / SNI; REQUIRED only when the
+#                                    profile must be created (new country)
+#
+# hawser_token is NO LONGER a survey field: dockhand-environment.yml creates the
+# Dockhand environment and mints the token itself, storing it in OpenBao. Pass
+# -e hawser_token=... only to override that.
+#
+# Prerequisites (manual, tracked in #39): the VPS is rented with the admin key
+# on root. That is the whole manual list — the workload stack is deployed by
+# the last play, so there is no second click any more (#136).
+#
+# A full run takes roughly twenty minutes and reports to Telegram when it
+# finishes. Failures do NOT reach Telegram from here — see the last play.
+#
+# Everything is idempotent: the profile/host/node are created only if missing, so
+# the whole task is safe to re-run.
+
+# Read on the controller, before anything else: the target does not exist yet,
+# and even once it does it cannot reach OpenBao — the API is on a Docker
+# network the panel owns, not on the mesh.
+- name: Fetch the NetBird setup key
+  hosts: controller
+  gather_facts: false
+
+  tasks:
+    # Recorded here because this is the first thing the run does. Both this
+    # play and the report at the end target `controller`, so the fact carries
+    # across without a hostvars lookup. UTC on purpose: the panel, the nodes
+    # and the operator do not share a timezone, and a duration computed across
+    # a DST boundary in local time is wrong once a year.
+    - name: Note when the run started
+      ansible.builtin.set_fact:
+        provision_started_at: "{{ now(utc=true, fmt='%Y-%m-%d %H:%M:%S') }}"
+        provision_started_epoch: "{{ now(utc=true, fmt='%s') }}"
+      tags:
+        - config
+
+    - name: Fetch the NetBird setup key from OpenBao
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: netbird
+        openbao_read_field: setup_key
+        openbao_read_into: _netbird_setup_key
+      tags:
+        - config
+
+# Before the target is built, because the in-memory host below carries the
+# token: the environment is created (or found) on the panel and the token comes
+# back as a fact on `controller`.
+- name: Ensure the Dockhand environment exists
+  ansible.builtin.import_playbook: dockhand-environment.yml
+
+- name: Build the target server as an in-memory host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    # An explicit -e hawser_token wins; otherwise take what the play above
+    # produced. Resolved once here so the assert and add_host cannot disagree.
+    _hawser_token: >-
+      {{ hawser_token | default(hostvars['controller'].hawser_token | default(''), true) }}
+  tasks:
+    - name: Assert survey parameters are provided
+      ansible.builtin.assert:
+        that:
+          - node_ip is defined and node_ip | length > 0
+          - node_name is defined and node_name | length >= 3
+          # The name becomes a hostname, a mesh DNS label AND the panel node
+          # name. The panel keeps whatever case is entered while hostname/DNS
+          # are lowercased, so mixed case would desync the three and break
+          # dedup on re-runs — require lowercase input outright.
+          - node_name is match('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')
+          - node_profile is defined and node_profile | length > 0
+          # hawser_token is asserted against the play above rather than the
+          # survey: it now comes from dockhand-environment.yml, and an empty one
+          # means that play found neither a stored token nor a way to make one.
+          - _hawser_token | length > 0
+        fail_msg: >
+          Required survey vars: node_ip, node_name (>=3, DNS-safe: lowercase
+          letters, digits, hyphens), node_profile. hawser_token is produced by
+          dockhand-environment.yml — an empty one means that play did not run
+          or could not reach Dockhand.
+
+    # Guardrail: a mistyped node_ip must never re-provision a production
+    # machine (a real near-miss — a serving node's address was entered by
+    # accident and only a rejected root key stopped the run). Checks the whole
+    # fleet (managed + lab). Residual gap: addresses the inventory does not contain
+    # (e.g. the panel's PUBLIC IP — its inventory address is the mesh IP)
+    # cannot be caught here.
+    - name: Assert the target is not an existing fleet host
+      ansible.builtin.assert:
+        that:
+          - node_ip not in (groups['fleet'] | default([])
+                            | map('extract', hostvars, 'ansible_host') | list)
+        fail_msg: >-
+          node_ip {{ node_ip }} belongs to an existing FLEET host — refusing
+          to re-provision it via the one-click pipeline.
+
+    # Joined to new_vps (bootstrap_authorized_keys) and fleet (hawser vars) so
+    # the roles below inherit the right group_vars. hawser_token is set as a
+    # host var here, overriding the fleet mapping keyed by inventory_hostname.
+    - name: Register the new server as an in-memory host
+      ansible.builtin.add_host:
+        name: "{{ node_name }}"
+        groups:
+          - _provision_target
+          - new_vps
+          - fleet
+        ansible_host: "{{ node_ip }}"
+        ansible_user: root
+        hawser_token: "{{ _hawser_token }}"
+
+# Early on purpose, and only after the asserts above have validated node_name
+# and node_ip: the record then propagates while the kernel installs, so it is
+# resolvable by the time anyone asks for a certificate. A record pointing at a
+# host whose provisioning later fails is harmless — the next run overwrites it.
+- name: Point the node's name at its address
+  ansible.builtin.import_playbook: dns-record.yml
+
+- name: Bootstrap the automation user
+  hosts: _provision_target
+  gather_facts: true
+  remote_user: root
+  vars:
+    # The hostname becomes the NetBird peer name, and thus the mesh DNS name
+    # the panel connects to (see new-node.yml). Set before the netbird role runs.
+    bootstrap_hostname: "{{ node_name | lower }}"
+  roles:
+    - bootstrap
+
+# SPLIT IN TWO ON PURPOSE. Handlers run at the END of a play, so while these
+# roles were one play the xanmod reboot landed in the MIDDLE of the handler
+# run: hawser, crowdsec, ufw and beszel_agent were installed and started on the
+# OLD kernel, the machine rebooted, systemd started them again, and then their
+# handlers restarted them a second time for good measure.
+#
+# Nothing broke — `reboot` waits for the host to return — but the services that
+# were configured were not the services that ended up running, which is a
+# miserable thing to debug, and every one of them started twice.
+#
+# Now the kernel reboot closes the first play, and everything below is
+# installed once, on the kernel it will actually run under.
+- name: Provision the base system, the mesh and the kernel
+  hosts: _provision_target
+  gather_facts: true
+  become: true
+  vars:
+    ansible_user: "{{ bootstrap_user }}"
+    # Let the xanmod role reboot the fresh node into the new kernel (its handler
+    # fires only when the kernel was actually installed/updated). A fresh node
+    # has nothing to disrupt, and it now happens at the end of THIS play rather
+    # than halfway through the agents.
+    xanmod_reboot: true
+    # Disarm the upgrade role's own mid-run reboot: re-runs happen on serving
+    # nodes, and a fresh node is rebooted by the xanmod handler / the final
+    # post_tasks check anyway (#52).
+    upgrade_reboot: false
+    # From OpenBao (#2), fetched by the first play. Overrides the group_vars
+    # definition that reads the vault entry; both resolve to the same value.
+    netbird_setup_key: "{{ hostvars['controller']._netbird_setup_key | default('') }}"
+  pre_tasks:
+    # The node is registered in the panel by its mesh DNS name, so a missing
+    # setup key must fail loudly HERE — otherwise the netbird role skips the
+    # join silently and the panel is fed a name that never resolves (#52).
+    - name: Assert the NetBird setup key is available
+      ansible.builtin.assert:
+        that:
+          - netbird_setup_key | default('') | length > 0
+        fail_msg: >-
+          netbird_setup_key is empty. It comes from OpenBao (infra/netbird,
+          field setup_key), so check that the Variable Group carrying
+          OPENBAO_SECRET_ID is attached to this template. Without the mesh join
+          the panel would be registered against a dead DNS name.
+  roles:
+    # Ordered deliberately: patch the base first; open the automation SSH door;
+    # lay the baseline (incl. deb822 prerequisites for the repo roles); join the
+    # mesh as early as possible — the panel will address this node by its mesh
+    # name; then Docker, which hawser needs in the next play; then the kernel,
+    # whose handler ends this play with a reboot.
+    - upgrade
+    - ssh_hardening
+    - common
+    - netbird
+    - docker
+    - xanmod
+
+# Second play, so it starts after the reboot above. Everything here is
+# installed once, on the final kernel, and started once.
+- name: Install the agents and lock the node down
+  hosts: _provision_target
+  gather_facts: true
+  become: true
+  vars:
+    ansible_user: "{{ bootstrap_user }}"
+    # Docker volumes the workload's compose file declares as `external` and
+    # therefore will not create itself. Kept as a list so a second workload
+    # does not need a second task — override to change what a node carries.
+    provision_workload_volumes: "{{ workload_volumes | default(['angie-acme']) }}"
+  roles:
+    - hawser
+    # SSH-only detection + progressive bans; its nftables bouncer coexists with
+    # ufw's own tables. Central LAPI is inactive by default (standalone node).
+    - crowdsec
+    # Locks the node down, so it stays LAST: the mesh interface exists by now
+    # and SSH stays allowed, which is what keeps the Semaphore connection alive.
+    - ufw
+    # Monitoring agent — after the firewall: it dials the hub outbound (no
+    # inbound port) and depends on the hub API to auto-register, so if the hub
+    # is unreachable only this step fails and the node is otherwise fully
+    # provisioned (re-runnable). Needs the vault superuser creds.
+    - beszel_agent
+
+  # Final reboot, idempotent — and normally a no-op now. The kernel reboot
+  # happens at the end of the PREVIOUS play, so by here the host is already
+  # running the newest kernel it has and needrestart reports nothing pending.
+  # This remains because the roles in THIS play install packages too, and one of
+  # them may pull a kernel the earlier play could not have known about. Handlers
+  # are flushed first so a service restart is not left pending across it.
+  post_tasks:
+    # The workload stack declares this volume `external: true`, which means
+    # Docker refuses to create it and the deploy fails with
+    # `external volume "angie-acme" not found`. The compose file says "create
+    # once per host" in a comment, and on the nodes provisioned before this
+    # pipeline existed someone did — by hand, once, and then forgot.
+    #
+    # It is external on purpose: it holds the ACME account key and the issued
+    # certificates, so keeping it outside the stack's lifecycle protects that
+    # state from a stack removal, and Let's Encrypt rate limits make re-issuing
+    # expensive. The volume is therefore created here rather than the flag
+    # dropped.
+    #
+    # Proper long-term home is a `remnanode` role (§12: each workload SHOULD
+    # keep an Ansible role able to bring it up on a bare host). Until that
+    # exists this is the honest place: the node is in front of us and Docker is
+    # already installed.
+    - name: Create the volumes the workload stack expects to find
+      community.docker.docker_volume:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ provision_workload_volumes }}"
+      tags:
+        - config
+
+    - name: Flush pending handlers before the final reboot check
+      ansible.builtin.meta: flush_handlers
+
+    # Both signals, for the reason spelled out in roles/upgrade: the marker is
+    # an Ubuntu convention and never appears on Debian, so on this fleet it
+    # alone would answer "no" forever. needrestart is present by now — the
+    # upgrade role installed it in the previous play.
+    - name: Check the Ubuntu reboot-required marker
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: provision_reboot_marker
+      # Same tag as the dependent reboot task, or a --tags service run would
+      # reference an unregistered variable (#52).
+      tags:
+        - service
+
+    - name: Ask needrestart whether the running kernel is stale
+      ansible.builtin.command: needrestart -b -k
+      register: provision_needrestart
+      changed_when: false
+      tags:
+        - service
+
+    - name: Reboot to finish provisioning (only if required)
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+      when: >-
+        provision_reboot_marker.stat.exists
+        or (provision_needrestart.stdout_lines | default([])
+            | select('match', '^NEEDRESTART-KSTA:')
+            | map('regex_replace', '^NEEDRESTART-KSTA:\s*', '')
+            | list | first | default('0') | int) >= 2
+      tags:
+        - service
+
+# Ensure the config profile (+ squad + host) exists — created if missing, so a
+# new country needs no separate step (requires profile_domain then).
+- name: Ensure the config profile exists
+  ansible.builtin.import_playbook: new-profile.yml
+
+# Register the node in the panel, bound to node_profile. node_address defaults
+# to the mesh DNS name (the peer joined in the play above, so the name resolves
+# by now). Both imported plays are idempotent — safe to re-run.
+- name: Register the node in the Remnawave panel
+  ansible.builtin.import_playbook: new-node.yml
+
+# Last: the workload container. The panel must know the node first, because
+# SECRET_KEY is minted from the panel's CA, and the node must be provisioned
+# first, because the stack is deployed onto it (#136).
+- name: Deploy the node's workload stack
+  ansible.builtin.import_playbook: dockhand-stack.yml
+
+# Last of all, and deliberately only on success: a full provisioning run takes
+# about twenty minutes, and the operator should not have to watch it.
+#
+# ONLY SUCCESS. A play at the end of a playbook does not run when an earlier
+# play failed, so this can never report a failure — that is Semaphore's job,
+# because it is the thing that knows a task died and where. Do not add a
+# rescue here to fake it: the plays before this one are imported playbooks,
+# and a failure inside them should stop the run loudly rather than be caught
+# and summarised.
+- name: Report the finished node to Telegram
+  hosts: controller
+  gather_facts: false
+
+  tasks:
+    - name: Fetch the Telegram secret
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: telegram
+        openbao_read_into: _telegram
+      tags:
+        - config
+
+    - name: Assert the Telegram secret carries what the report needs
+      ansible.builtin.assert:
+        that:
+          - _telegram.bot_token | default('') | length > 0
+          - _telegram.chat_id | default('') | length > 0
+        fail_msg: >-
+          infra/telegram is missing bot_token or chat_id. Write the whole
+          secret in one call: bao kv put replaces it wholesale, so a per-field
+          write silently drops the other fields.
+      tags:
+        - config
+
+    # Built from the survey and the inventory rather than from facts the
+    # imported plays left behind: fewer couplings, and every value here is one
+    # the operator can check by eye against what they typed.
+    # Whole minutes and seconds rather than a float: this number is read by a
+    # human deciding whether the run behaved normally, not by anything that
+    # needs precision.
+    - name: Measure how long the run took
+      ansible.builtin.set_fact:
+        _finished_at: "{{ now(utc=true, fmt='%Y-%m-%d %H:%M:%S') }}"
+        _elapsed: "{{ (now(utc=true, fmt='%s') | int) - (provision_started_epoch | int) }}"
+      tags:
+        - config
+
+    - name: Render the duration
+      ansible.builtin.set_fact:
+        _duration: "{{ (_elapsed | int // 60) ~ 'm ' ~ (_elapsed | int % 60) ~ 's' }}"
+      tags:
+        - config
+
+    - name: Compose the provisioning report
+      ansible.builtin.set_fact:
+        provision_report: |-
+          ✅ <b>Node provisioned</b> — <b>{{ node_name }}</b>
+          🌍 {{ node_country | default('XX') | upper }} · profile <code>{{ node_profile }}</code>
+          🔗 mesh <code>{{ node_name }}.{{ netbird_dns_domain }}</code>
+          🌐 <code>{{ node_name }}.{{ infra_domain }}</code> → <code>{{ node_ip }}</code>
+          📦 Dockhand <code>{{ node_name | upper }}</code> · stack <code>{{ node_name }}</code> deployed
+          🕒 {{ provision_started_at }} → {{ _finished_at }} UTC ({{ _duration }})
+          Panel, DNS, mesh, monitoring and the workload are all in place.
+      tags:
+        - config
+
+    - name: Send the report to Telegram
+      ansible.builtin.include_role:
+        name: notify_telegram
+      vars:
+        notify_telegram_bot_token: "{{ _telegram.bot_token }}"
+        notify_telegram_chat_id: "{{ _telegram.chat_id }}"
+        # Its own topic. Provisioning a node and the nightly upgrade sweep are
+        # different events with different readers, and both landed in the same
+        # thread because only one topic id had ever been stored.
+        #
+        # Falls back to the updates topic rather than to General: until
+        # provisioning_topic_id exists in OpenBao, the report keeps going where
+        # it goes today instead of scattering into the group root.
+        notify_telegram_message_thread_id: >-
+          {{ _telegram.provisioning_topic_id
+             | default(_telegram.updates_topic_id | default(''), true) }}
+        notify_telegram_message: "{{ provision_report }}"
+        notify_telegram_parse_mode: HTML
+      tags:
+        - config

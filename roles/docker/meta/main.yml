@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  role_name: docker
+  author: nargothrondir
+  description: >
+    Install Docker Engine and the Compose plugin from the official Docker APT
+    repository, enable the service and grant users docker CLI access.
+  min_ansible_version: "2.15"
+  license: MIT
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+
+dependencies: []

@@ -1,0 +1,36 @@
+---
+- name: Assert at least one SSH public key is provided
+  ansible.builtin.assert:
+    that:
+      - bootstrap_authorized_keys | length > 0
+    fail_msg: >
+      bootstrap_authorized_keys is empty. The automation user is key-only,
+      so at least one SSH public key must be provided before bootstrapping.
+  tags:
+    - config
+
+- name: Ensure automation user exists (key-only, password locked)
+  ansible.builtin.user:
+    name: "{{ bootstrap_user }}"
+    shell: "{{ bootstrap_user_shell }}"
+    groups: "{{ bootstrap_user_groups }}"
+    append: true
+    create_home: true
+    password_lock: true
+    state: present
+  tags:
+    - config
+
+- name: Authorize SSH public keys for automation user
+  ansible.posix.authorized_key:
+    user: "{{ bootstrap_user }}"
+    key: "{{ item }}"
+    state: present
+  loop: "{{ bootstrap_authorized_keys }}"
+  loop_control:
+    label: "{{ item | truncate(30) }}"
+  # Skip in check mode: on a fresh host the user is only simulated, so
+  # authorized_key has no real account to write to (§13.1 — keep --check clean).
+  when: not ansible_check_mode
+  tags:
+    - config

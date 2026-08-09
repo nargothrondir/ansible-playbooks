@@ -1,0 +1,15 @@
+---
+# Docker Engine packages from the official Docker APT repository.
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+# APT repository architecture (all fleet hosts are x86_64).
+docker_apt_arch: amd64
+
+# Users added to the "docker" group (docker CLI without sudo).
+docker_users:
+  - "{{ bootstrap_user | default('ansible') }}"

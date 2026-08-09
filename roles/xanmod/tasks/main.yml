@@ -1,0 +1,76 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+    fail_msg: >
+      Unsupported OS: {{ ansible_facts['distribution'] }}
+      {{ ansible_facts['distribution_version'] }}.
+      Only Debian/Ubuntu are supported.
+  tags:
+    - install
+
+# Self-sufficiency for standalone/DR runs: deb822_repository needs these on
+# the target. The common role pre-satisfies this in the pipeline (no-op here).
+- name: Install prerequisites for the XanMod repository
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - python3-debian
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  tags:
+    - install
+
+- name: Ensure the APT keyrings directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+  tags:
+    - install
+
+# Managed by an explicit task (not deb822's signed_by URL download) so a missing
+# keyring is recreated on the next run instead of breaking apt.
+- name: Download the XanMod APT signing key
+  ansible.builtin.get_url:
+    url: https://dl.xanmod.org/archive.key
+    dest: /etc/apt/keyrings/xanmod.asc
+    mode: "0644"
+  register: _xanmod_key_download
+  until: _xanmod_key_download is succeeded
+  retries: 3
+  delay: 5
+  tags:
+    - install
+
+- name: Add the XanMod APT repository (deb822)
+  ansible.builtin.deb822_repository:
+    name: xanmod
+    types: deb
+    uris: http://deb.xanmod.org
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: main
+    architectures: "{{ xanmod_apt_arch }}"
+    signed_by: /etc/apt/keyrings/xanmod.asc
+    state: present
+  tags:
+    - install
+
+- name: Remove any legacy one-line XanMod repository file
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/xanmod-release.list
+    state: absent
+  tags:
+    - install
+
+- name: Install the XanMod kernel
+  ansible.builtin.apt:
+    name: "{{ xanmod_package }}"
+    state: present
+    update_cache: true
+  notify: "reboot for xanmod kernel"
+  tags:
+    - install
+    - xanmod

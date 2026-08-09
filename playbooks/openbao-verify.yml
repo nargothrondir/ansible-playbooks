@@ -1,0 +1,150 @@
+---
+# Prove the whole secret-delivery chain before a single real secret depends on
+# it: AppRole login -> token -> read from KV -> the value is what was written.
+#
+# RUN IT FROM SEMAPHORE, not from the panel CLI. The point is to exercise the
+# client that will actually read secrets in production — the Semaphore
+# container — over the network it reaches OpenBao on. `openbao_addr` is the
+# in-network service name, which does not resolve anywhere else.
+#
+# Semaphore template:
+#   Playbook         playbooks/openbao-verify.yml
+#   Repository       the playbook repository
+#   Inventory        the fleet inventory
+#   Variable Groups  the group holding OPENBAO_SECRET_ID
+#   Vaults           the ansible-vault password (group_vars decrypt at load)
+#
+# Prepare the throwaway key once, as the operator:
+#   docker exec -it openbao bao kv put infra/selftest value=hello
+#
+# KV v2 serves reads from <mount>/data/<path>, hence the mount and the path are
+# separate variables — building that URL with a regex backreference inside a
+# YAML string is a silent-breakage waiting to happen.
+#
+# From the panel CLI it can still be run for debugging, but only against the
+# loopback publish and with the secret in the shell:
+#   read -rs OPENBAO_SECRET_ID && export OPENBAO_SECRET_ID
+#   ansible-playbook playbooks/openbao-verify.yml -e ansible_connection=local \
+#     -e openbao_addr=http://127.0.0.1:8200 --ask-vault-pass
+#
+# WHY `hosts: controller` IS RIGHT HERE, unlike in playbooks/openbao.yml:
+# `controller` is ansible_connection: local, meaning "wherever Ansible runs".
+# For a role that installs software that is a trap (#96) — but here it is
+# exactly the target: the client under test IS the machine running Ansible.
+
+- name: Verify the OpenBao AppRole path end to end
+  hosts: "{{ openbao_verify_target | default('controller') }}"
+  gather_facts: false
+
+  vars:
+    # A throwaway key, not a real secret. Proving the chain on infra/telegram
+    # would mean a failure prints part of a live credential.
+    openbao_verify_mount: "infra"
+    openbao_verify_path: "selftest"
+    openbao_verify_field: "value"
+    openbao_verify_expected: "hello"
+
+    # role_id comes from the inventory (it is not a secret). secret_id comes
+    # from the environment, which is how a Semaphore Variable Group delivers a
+    # secret of type `env`; Key Store entries are connection credentials and
+    # cannot be read from a playbook.
+    _secret_id: "{{ lookup('env', 'OPENBAO_SECRET_ID') }}"
+
+  tasks:
+    - name: Assert both halves of the AppRole credential are present
+      ansible.builtin.assert:
+        that:
+          - openbao_role_id | default('') | length > 0
+          - _secret_id | length > 0
+        fail_msg: >-
+          Need openbao_role_id (inventory) and OPENBAO_SECRET_ID (environment).
+          From Semaphore, attach the Variable Group that holds the secret to
+          this template — an unattached group is not injected.
+      tags:
+        - config
+
+    # no_log because the request body carries the secret_id and the response
+    # carries a usable token.
+    - name: Log in with the AppRole
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/auth/approle/login"
+        method: POST
+        body_format: json
+        body:
+          role_id: "{{ openbao_role_id }}"
+          secret_id: "{{ _secret_id }}"
+        status_code: [200]
+      register: _login
+      no_log: true
+      # Authenticating mints an ephemeral token; it changes no configuration,
+      # and the token expires on its own (token_ttl on the AppRole role).
+      changed_when: false
+      check_mode: false
+      tags:
+        - config
+
+    - name: Assert a token came back
+      ansible.builtin.assert:
+        that:
+          - _login.json.auth.client_token | default('') | length > 0
+        fail_msg: "Login returned no client_token."
+      tags:
+        - config
+
+    # KV v2 reads live under <mount>/data/<path>, and the payload nests twice:
+    # .json.data is the API envelope, .json.data.data is the secret itself.
+    # The double `data` is not a typo.
+    - name: Read the throwaway key
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/{{ openbao_verify_mount }}/data/{{ openbao_verify_path }}"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ _login.json.auth.client_token }}"
+        status_code: [200]
+      register: _read
+      no_log: true
+      changed_when: false
+      check_mode: false
+      tags:
+        - config
+
+    # The comparison happens against the registered variable, so the value is
+    # never printed — including on failure, where Ansible reports the
+    # expression rather than what it evaluated to.
+    - name: Assert the value round-tripped intact
+      ansible.builtin.assert:
+        that:
+          - (_read.json.data.data[openbao_verify_field] | default('')) == openbao_verify_expected
+        fail_msg: >-
+          {{ openbao_verify_mount }}/{{ openbao_verify_path }} did not contain
+          the expected value at field '{{ openbao_verify_field }}'. Write it:
+          docker exec -it openbao bao kv put
+          {{ openbao_verify_mount }}/{{ openbao_verify_path }}
+          {{ openbao_verify_field }}={{ openbao_verify_expected }}
+      tags:
+        - config
+
+    # Tidy rather than necessary — the token expires on its own — but it is the
+    # pattern real playbooks should copy: hand the token back when done.
+    - name: Revoke the token this run minted
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/auth/token/revoke-self"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ _login.json.auth.client_token }}"
+        status_code: [204]
+      no_log: true
+      changed_when: false
+      check_mode: false
+      tags:
+        - config
+
+    - name: Report what was proven
+      ansible.builtin.debug:
+        msg: >-
+          AppRole login, KV read and value match all succeeded against
+          {{ openbao_addr }} from {{ inventory_hostname }}. The chain is
+          proven: role_id from the inventory + secret_id from the environment
+          reach a secret. Real values can now be migrated.
+      tags:
+        - debug

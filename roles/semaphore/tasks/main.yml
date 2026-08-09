@@ -1,0 +1,49 @@
+---
+- name: Assert Semaphore secrets are provided
+  ansible.builtin.assert:
+    that:
+      - semaphore_admin_password | default('') | length > 0
+      - semaphore_access_key_encryption | default('') | length > 0
+    fail_msg: >
+      semaphore requires semaphore_admin_password and
+      semaphore_access_key_encryption (provide them via ansible-vault).
+  tags:
+    - config
+
+- name: Assert the access key encryption is a base64-encoded 32-byte key
+  ansible.builtin.assert:
+    that:
+      - (semaphore_access_key_encryption | length) == 44
+    fail_msg: >
+      semaphore_access_key_encryption must be a base64-encoded 32-byte key
+      (44 characters). Generate one with: openssl rand -base64 32
+  tags:
+    - config
+
+- name: Ensure Semaphore base directory exists
+  ansible.builtin.file:
+    path: "{{ semaphore_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  tags:
+    - config
+
+- name: Deploy Semaphore compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ semaphore_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  tags:
+    - config
+
+- name: Start Semaphore
+  community.docker.docker_compose_v2:
+    project_src: "{{ semaphore_data_dir }}"
+    state: present
+  tags:
+    - service

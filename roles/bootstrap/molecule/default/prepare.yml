@@ -1,0 +1,12 @@
+---
+# The plain debian image has no Python (needed by Ansible modules) and no sudo
+# (needed for the sudo group and visudo validation). Install them via raw.
+- name: Prepare
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Install python3 and sudo
+      ansible.builtin.raw: >
+        apt-get update &&
+        apt-get install -y --no-install-recommends python3 sudo
+      changed_when: true  # spec-ok: molecule creates the container empty, so this install always changes state — honest, not a mask

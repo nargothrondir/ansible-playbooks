@@ -1,0 +1,56 @@
+---
+# CI: real role tests with Molecule — converge on a clean Debian container,
+# idempotence (second run must report zero changes), then verify assertions.
+name: Molecule
+
+on:
+  # `push` is restricted to main, `pull_request` covers everything else.
+  # Without the branches filter BOTH fire for a push to a branch with an open
+  # PR, so every job ran twice and every job is billed rounded UP to a full
+  # minute — duplication is the expensive kind of waste here, not slowness.
+  push:
+    branches: [main]
+    paths:
+      - "roles/bootstrap/**"
+      - "requirements.yml"
+      - ".github/workflows/molecule.yml"
+  pull_request:
+    paths:
+      - "roles/bootstrap/**"
+      - "requirements.yml"
+      - ".github/workflows/molecule.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "45 6 * * 1"   # weekly bit-rot check (Mon 06:45 UTC)
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap:
+    name: molecule (bootstrap)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install Molecule and Ansible
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible-core molecule "molecule-plugins[docker]"
+
+      - name: Install required collections
+        run: ansible-galaxy collection install -r requirements.yml
+
+      - name: Run molecule test
+        run: molecule test
+        working-directory: roles/bootstrap
+        env:
+          ANSIBLE_FORCE_COLOR: "1"
+          PY_COLORS: "1"

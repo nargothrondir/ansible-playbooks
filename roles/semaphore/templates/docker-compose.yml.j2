@@ -1,0 +1,36 @@
+# {{ ansible_managed }}
+---
+services:
+  semaphore:
+    image: "{{ semaphore_image }}"
+    container_name: "{{ semaphore_container_name }}"
+    restart: "{{ semaphore_restart_policy }}"
+    ports:
+      - "{{ semaphore_bind }}:{{ semaphore_internal_port }}"
+    environment:
+      SEMAPHORE_DB_DIALECT: "{{ semaphore_db_dialect }}"
+{% if semaphore_db_dialect == 'sqlite' %}
+      SEMAPHORE_DB_HOST: "{{ semaphore_sqlite_db_file }}"
+{% endif %}
+      SEMAPHORE_ADMIN: "{{ semaphore_admin_user }}"
+      SEMAPHORE_ADMIN_PASSWORD: "{{ semaphore_admin_password }}"
+      SEMAPHORE_ADMIN_NAME: "{{ semaphore_admin_name }}"
+      SEMAPHORE_ADMIN_EMAIL: "{{ semaphore_admin_email }}"
+      SEMAPHORE_ACCESS_KEY_ENCRYPTION: "{{ semaphore_access_key_encryption }}"
+    volumes:
+      - "semaphore_data:/var/lib/semaphore"
+      - "semaphore_config:/etc/semaphore"
+      - "semaphore_tmp:/tmp/semaphore"
+{% if semaphore_external_network | length > 0 %}
+    networks:
+      - {{ semaphore_external_network }}
+
+networks:
+  {{ semaphore_external_network }}:
+    external: true
+{% endif %}
+
+volumes:
+  semaphore_data:
+  semaphore_config:
+  semaphore_tmp:

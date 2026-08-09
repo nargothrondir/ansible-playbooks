@@ -1,0 +1,44 @@
+---
+- name: Assert the encryption key is a base64-encoded 32-byte key
+  ansible.builtin.assert:
+    that:
+      - dockhand_encryption_key | default('') | length == 44
+    fail_msg: >
+      dockhand_encryption_key must be a base64-encoded 32-byte key (44 chars).
+      Generate one with: openssl rand -base64 32
+  tags:
+    - config
+
+- name: Get the docker group gid (for socket access)
+  ansible.builtin.getent:
+    database: group
+    key: docker
+  tags:
+    - config
+
+- name: Ensure Dockhand base directory exists
+  ansible.builtin.file:
+    path: "{{ dockhand_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  tags:
+    - config
+
+- name: Deploy Dockhand compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ dockhand_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0600"
+  tags:
+    - config
+
+- name: Start Dockhand
+  community.docker.docker_compose_v2:
+    project_src: "{{ dockhand_data_dir }}"
+    state: present
+  tags:
+    - service

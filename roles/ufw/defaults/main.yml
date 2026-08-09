@@ -1,0 +1,34 @@
+---
+# Public TCP ports allowed from anywhere. 22 stays public while Ansible
+# connects over the public IP (revisit after #6/#8); 443 is the product (xray).
+# "comment" shows up in `ufw status` — name the service, not the mechanics.
+ufw_public_tcp:
+  - port: 22
+    comment: SSH
+  - port: 443
+    comment: HTTPS
+
+# TCP ports reachable ONLY from the mesh interface (see ufw_mesh_interface).
+# Bound to the interface, NOT to a peer IP: mesh IPs regenerate on the NetBird
+# self-host migration (#6), and WHO inside the mesh may connect is enforced by
+# NetBird ACLs — the host firewall only says "mesh only" (council verdict, #49).
+ufw_mesh_tcp:
+  - port: 2222
+    comment: Remnanode service port
+  # sshd's automation door (roles/ssh_hardening): key-based Ansible over the
+  # mesh; mesh :22 belongs to NB-SSH on peers that enable it. The port comes
+  # from the shared automation_ssh_port (group_vars/all) so the firewall rule
+  # and the sshd listener can never drift apart.
+  - port: "{{ automation_ssh_port | default(2200) }}"
+    comment: Ansible SSH
+  # NB-SSH's native endpoint. NetBird intercepts SSH to :22 on the CLIENT and
+  # redirects the stream here, and it "does not modify host OS firewalls" — so
+  # nothing but this rule opens the port. Without it the break-glass path fails
+  # closed and silently, which would be discovered while locked out. Harmless
+  # when netbird_ssh_server is false: nothing listens, and the rule is
+  # mesh-only regardless.
+  - port: 22022
+    comment: NetBird SSH (break-glass)
+
+# The NetBird (WireGuard) mesh interface.
+ufw_mesh_interface: wt0

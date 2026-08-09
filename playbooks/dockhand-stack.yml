@@ -1,0 +1,345 @@
+---
+# Deploy the node's workload stack from the pipeline — the "second click" that
+# used to be done by hand in Dockhand after provisioning (#136).
+#
+# The compose file lives in the docker-stacks repository; Dockhand deploys it as
+# a From-Git stack and keeps it in sync by POLLING, never by inbound webhook
+# (CLAUDE.md §12, #24). webhookEnabled stays false.
+#
+# Usable two ways, like dns-record.yml and dockhand-environment.yml:
+#   1. imported by provision-node.yml, inheriting node_name;
+#   2. standalone:  -e node_name=lab-1
+#
+# WHY delegate_to: panel — Dockhand and the Remnawave panel both answer on the
+# panel's loopback, unreachable from the Semaphore container. Running the
+# requests on the panel is what new-node.yml already does.
+
+- name: Deploy the node's workload stack
+  hosts: "{{ dockhand_stack_target | default('controller') }}"
+  gather_facts: false
+
+  vars:
+    _stack_name: "{{ node_name | default('') }}"
+    _env_name: "{{ (node_name | default('')) | upper }}"
+    _dockhand_api: "{{ dockhand_api_url | default('http://127.0.0.1:3040') }}"
+    # Matched by the SLUG at the end of the repository URL, not by Dockhand's
+    # display name. The display name is free text a human chose — ours reads
+    # "Docker Compose stacks deployed via Dockhand" — and renaming it must not
+    # break provisioning. The slug is the repository's actual identity, and
+    # matching on the tail of the URL keeps the account out of this file.
+    _repo_slug: "{{ dockhand_stack_repo | default('docker-stacks') }}"
+    _compose_path: "{{ dockhand_stack_compose | default('remnanode/docker-compose.yml') }}"
+    # Reality camouflage: the decoy site served on 443 to anything that is not a
+    # valid reality client. The compose file already reads ${CAMO_SITE} and
+    # falls back to `converter`, so never setting it made every node serve the
+    # SAME page — precisely what the mechanism exists to prevent.
+    #
+    # The list mirrors the directories in docker-stacks remnanode/www/. It is
+    # carried here rather than discovered: the controller has no checkout of
+    # that repository, Dockhand is what clones it. A name that is not there
+    # fails the deploy loudly (the bind sets create_host_path: false), which is
+    # better than mounting an empty directory and serving a blank page.
+    #
+    # 503-1 and 503-2 exist there but are left out of the pool — a node
+    # permanently serving a maintenance page looks broken, and looking broken is
+    # itself a distinguishing mark. Add them via dockhand_stack_camo_sites to
+    # use them anyway.
+    _camo_sites: >-
+      {{ dockhand_stack_camo_sites
+         | default(['10gag', 'YouTube', 'converter', 'convertit', 'downloader',
+                    'filecloud', 'games-site', 'modmanager', 'speedtest']) }}
+    # Seeded with the node name, so the pick is arbitrary ACROSS nodes but
+    # stable FOR one: a re-run cannot land on a different site and redeploy the
+    # stack for nothing. The write below is guarded on absence as well — this is
+    # the second lock, not the only one.
+    _camo_site: "{{ _camo_sites | random(seed=_stack_name) }}"
+
+  tasks:
+    - name: Assert the node is named
+      ansible.builtin.assert:
+        that:
+          - _stack_name | length > 0
+          - _stack_name is match('^[a-z0-9][a-z0-9_-]*$')
+        fail_msg: >-
+          node_name is required and must be lowercase — Dockhand rejects a stack
+          name that is not. Pass it as a survey variable, or with
+          -e node_name=<name> when running this playbook standalone.
+      tags:
+        - config
+
+    - name: Fetch the Dockhand API token
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: dockhand
+        openbao_read_field: api_token
+        openbao_read_into: _dockhand_api_token
+      tags:
+        - config
+
+    - name: Fetch the Remnawave API token
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: remnawave
+        openbao_read_field: api_token
+        openbao_read_into: _remnawave_api_token
+      tags:
+        - config
+
+    - name: Fetch the Cloudflare DNS token
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: cloudflare
+        openbao_read_field: dns_token
+        openbao_read_into: _cloudflare_dns_token
+      tags:
+        - config
+
+    # no_log on every call that carries a bearer token: headers are part of the
+    # module arguments, which Ansible prints on failure and at -vvv.
+    - name: List the Dockhand environments
+      ansible.builtin.uri:
+        url: "{{ _dockhand_api }}/api/environments"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _dockhand_api_token }}"
+        status_code: [200]
+      register: _dockhand_envs
+      delegate_to: panel
+      no_log: true
+      changed_when: false
+      check_mode: false
+      tags:
+        - config
+
+    - name: List the registered git repositories
+      ansible.builtin.uri:
+        url: "{{ _dockhand_api }}/api/git/repositories"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _dockhand_api_token }}"
+        status_code: [200]
+      register: _dockhand_repos
+      delegate_to: panel
+      no_log: true
+      changed_when: false
+      check_mode: false
+      tags:
+        - config
+
+    - name: Resolve the environment and the repository
+      ansible.builtin.set_fact:
+        _env_id: >-
+          {{ _dockhand_envs.json | selectattr('name', 'equalto', _env_name)
+             | map(attribute='id') | list | first | default('') }}
+        # Matches .../<slug> and .../<slug>.git, whether the remote is ssh or
+        # https, and ignores whatever the repository is called in the UI.
+        _repo_id: >-
+          {{ _dockhand_repos.json
+             | selectattr('url', 'search', '/' ~ _repo_slug ~ '(\.git)?$')
+             | map(attribute='id') | list | first | default('') }}
+      no_log: true
+      tags:
+        - config
+
+    # Both must exist already: the environment is created by
+    # dockhand-environment.yml earlier in the pipeline, and the repository is
+    # registered once by hand for the whole fleet. Failing here names which.
+    - name: Assert the environment and repository were found
+      ansible.builtin.assert:
+        that:
+          - _env_id | string | length > 0
+          - _repo_id | string | length > 0
+        fail_msg: >-
+          Dockhand has no environment named {{ _env_name }}, or no git
+          repository whose URL ends with /{{ _repo_slug }}. The environment
+          comes from dockhand-environment.yml; the repository is registered
+          once in Dockhand for the whole fleet, and is matched by the slug in
+          its URL rather than by its display name. Override the slug with
+          -e dockhand_stack_repo=<slug>.
+      tags:
+        - config
+
+    # No "does it exist" query: Dockhand answers 409 when the name is already
+    # taken on this environment, which is a more reliable existence check than
+    # anything we could compute, and one round trip fewer.
+    #
+    # autoUpdate with a schedule is the polling delivery §12 requires; the
+    # webhook stays off, and the endpoint would demand a secret for it anyway.
+    - name: "Ensure the From-Git stack exists for {{ _env_name }}"
+      ansible.builtin.uri:
+        url: "{{ _dockhand_api }}/api/git/stacks"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ _dockhand_api_token }}"
+        body_format: json
+        body: >-
+          {{ {'stackName': _stack_name,
+              'environmentId': _env_id | int,
+              'repositoryId': _repo_id | int,
+              'composePath': _compose_path,
+              'autoUpdate': true,
+              'autoUpdateSchedule': 'daily',
+              'webhookEnabled': false} }}
+        status_code: [200, 201, 409]
+      register: _stack_created
+      delegate_to: panel
+      no_log: true
+      changed_when: _stack_created.status in [200, 201]
+      tags:
+        - config
+
+    - name: Read the stack's environment variables
+      ansible.builtin.uri:
+        url: "{{ _dockhand_api }}/api/stacks/{{ _stack_name }}/env?env={{ _env_id | int }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _dockhand_api_token }}"
+        status_code: [200]
+      register: _stack_env
+      delegate_to: panel
+      no_log: true
+      changed_when: false
+      check_mode: false
+      tags:
+        - config
+
+    # The VALUES are kept too, not just the key names. A secret is preserved by
+    # sending '***' back, but that mechanism is for secrets only — a non-secret
+    # whose value was chosen once (CAMO_SITE) has to be echoed verbatim, or the
+    # next run overwrites it with a different choice.
+    - name: Note which variables are already set
+      ansible.builtin.set_fact:
+        _existing_keys: >-
+          {{ (_stack_env.json.variables | default(_stack_env.json) | default([]))
+             | map(attribute='key') | list }}
+        _existing_env: >-
+          {{ (_stack_env.json.variables | default(_stack_env.json) | default([]))
+             | items2dict(key_name='key', value_name='value') }}
+      no_log: true
+      tags:
+        - config
+
+    # SECRET_KEY is minted by the panel, and GET /api/keygen mints a NEW one on
+    # every call — it is not a lookup. So it is fetched only when the stack does
+    # not have one yet; calling it every run would rewrite the value and force a
+    # redeploy each time, which is the always-changed defect of #122.
+    #
+    # It is deliberately NOT stored in OpenBao. Nothing binds a payload to a
+    # particular node (they share the panel's CA and JWT key), so it is
+    # regenerable at any moment — putting it in the secret store would add a
+    # value to back up that nothing needs backing up.
+    - name: Mint a node SECRET_KEY from the panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/keygen"
+        method: GET
+        headers: >-
+          {{ {'Authorization': 'Bearer ' ~ _remnawave_api_token,
+              'X-Forwarded-For': '127.0.0.1',
+              'X-Forwarded-Proto': 'https'}
+             | combine({'Host': remnawave_panel_host}
+                       if (remnawave_panel_host | default('') | length > 0)
+                       else {}) }}
+        status_code: [200]
+      register: _keygen
+      delegate_to: panel
+      no_log: true
+      changed_when: false
+      when: "'SECRET_KEY' not in _existing_keys"
+      tags:
+        - config
+
+    # The field was RENAMED between panel versions: 2.8.x returns
+    # `response.pubKey`, 3.x returns `response.secretKey`. Both carry the same
+    # node payload — the response model is constructed from the same value — so
+    # accept either rather than pinning the playbook to one panel version.
+    - name: Resolve the minted key from whichever field this panel uses
+      ansible.builtin.set_fact:
+        _secret_key: >-
+          {{ _keygen.json.response.secretKey
+             | default(_keygen.json.response.pubKey | default(''), true) }}
+      no_log: true
+      when: "'SECRET_KEY' not in _existing_keys"
+      tags:
+        - config
+
+    # A rename we did not anticipate must stop the run here, where the cause is
+    # obvious, rather than write an empty SECRET_KEY into the stack and leave a
+    # node that starts and immediately refuses to work.
+    - name: Assert the panel returned a key
+      ansible.builtin.assert:
+        that:
+          - _secret_key | default('') | length > 0
+        fail_msg: >-
+          GET /api/keygen returned neither `secretKey` nor `pubKey`. The field
+          has been renamed again — check the panel version's contract before
+          guessing.
+      when: "'SECRET_KEY' not in _existing_keys"
+      tags:
+        - config
+
+    # A secret sent back as '***' keeps its stored value — that is the server's
+    # own mechanism, and it is what lets this PUT be a full list without ever
+    # re-sending a credential it already holds.
+    - name: Write the stack's environment variables
+      ansible.builtin.uri:
+        url: "{{ _dockhand_api }}/api/stacks/{{ _stack_name }}/env?env={{ _env_id | int }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ _dockhand_api_token }}"
+        body_format: json
+        body: >-
+          {{ {'variables': [
+              {'key': 'ACME_DOMAIN', 'value': infra_domain, 'isSecret': false},
+              {'key': 'NODE_NAME', 'value': _stack_name, 'isSecret': false},
+              {'key': 'CAMO_SITE',
+               'value': _existing_env.get('CAMO_SITE') | default(_camo_site, true),
+               'isSecret': false},
+              {'key': 'CF_API_TOKEN',
+               'value': ('***' if 'CF_API_TOKEN' in _existing_keys else _cloudflare_dns_token),
+               'isSecret': true},
+              {'key': 'SECRET_KEY',
+               'value': ('***' if 'SECRET_KEY' in _existing_keys
+                         else _secret_key),
+               'isSecret': true}]} }}
+        status_code: [200]
+      register: _env_written
+      delegate_to: panel
+      no_log: true
+      changed_when: _stack_created.status in [200, 201]
+                    or 'SECRET_KEY' not in _existing_keys
+                    or 'CF_API_TOKEN' not in _existing_keys
+                    or 'ACME_DOMAIN' not in _existing_keys
+                    or 'NODE_NAME' not in _existing_keys
+                    or 'CAMO_SITE' not in _existing_keys
+      tags:
+        - config
+
+    # Only when something actually changed. A deploy pulls images and recreates
+    # containers, so triggering it on every run would restart a working node for
+    # nothing.
+    - name: Deploy the stack
+      ansible.builtin.uri:
+        url: "{{ _dockhand_api }}/api/git/stacks/{{ _stack_created.json.id | default('') }}/deploy"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ _dockhand_api_token }}"
+        status_code: [200, 201, 202]
+      delegate_to: panel
+      no_log: true
+      changed_when: true  # spec-ok: a deploy always acts; it is guarded by `when` below
+      when: _env_written.changed | bool and (_stack_created.json.id | default('')) | string | length > 0
+      tags:
+        - config
+
+    - name: Report without revealing anything
+      ansible.builtin.debug:
+        msg: >-
+          Stack {{ _stack_name }} on {{ _env_name }}:
+          {{ 'created' if _stack_created.status in [200, 201] else 'already existed' }};
+          SECRET_KEY {{ 'minted' if 'SECRET_KEY' not in _existing_keys else 'kept' }};
+          camouflage page
+          {{ _existing_env.get('CAMO_SITE') | default(_camo_site, true) }}
+          ({{ 'assigned' if 'CAMO_SITE' not in _existing_keys else 'kept' }});
+          polling auto-update on, webhook off.
+      tags:
+        - debug

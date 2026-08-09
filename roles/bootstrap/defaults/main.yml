@@ -1,0 +1,27 @@
+---
+# System hostname to set (empty = leave unchanged). The hostname becomes the
+# NetBird peer name, so <hostname>.<netbird_dns_domain> is the node's mesh DNS
+# name. Must be a valid DNS label (lowercase letters, digits, hyphens).
+bootstrap_hostname: ""
+
+# Name of the automation user to create.
+bootstrap_user: ansible
+
+# Login shell for the automation user.
+bootstrap_user_shell: /bin/bash
+
+# Supplementary groups for the automation user.
+# Membership in "sudo" is what makes the sudoers drop-in effective.
+bootstrap_user_groups:
+  - sudo
+
+# SSH public keys authorized for the automation user.
+# REQUIRED: the user is key-only (its password is locked), so at least one
+# public key must be provided, e.g. in group_vars/new_vps.yml:
+#   bootstrap_authorized_keys:
+#     - "ssh-ed25519 AAAA... ansible@controller"
+# A public key is not a secret and may be stored in plaintext.
+bootstrap_authorized_keys: []
+
+# Grant passwordless sudo (NOPASSWD:ALL) to the automation user.
+bootstrap_passwordless_sudo: true

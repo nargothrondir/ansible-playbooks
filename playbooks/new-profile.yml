@@ -1,0 +1,262 @@
+---
+# Ensure a config profile (+ squad membership + subscription host) exists in the
+# Remnawave panel (issue #39). Idempotent: creates only what is missing, so it
+# is safe to re-run and to import from provision-node.yml.
+#
+# A profile = the "entry" for one camouflage domain (reality keys + serverNames
+# + fallback dest); nodes are capacity added UNDER a profile.
+#
+# The panel generates the reality keypair (GET /api/system/tools/x25519/generate);
+# the shortId is generated locally — no manual crypto.
+#
+# Required vars (group_vars/control/, token via vault):
+#   remnawave_panel_url   group_vars/control
+#   the API token          from OpenBao (#2): infra/remnawave, field api_token
+#
+# Run:
+#   ansible-playbook playbooks/new-profile.yml --ask-vault-pass \
+#     -e profile_name=Poland -e profile_domain=pl.example.com
+
+- name: Ensure a config profile exists in the Remnawave panel
+  hosts: controller
+  gather_facts: false
+
+  vars:
+    # Called standalone with -e profile_name; from provision-node.yml it reuses
+    # node_profile. profile_domain is only needed when the profile must be created.
+    profile_name: "{{ node_profile | default('') }}"
+    profile_inbound_tag: "{{ profile_name }}"
+    host_port: 443
+    # WARP routes IP-check domains through a "warp" interface. OFF by default: a
+    # bare node has none, and enabling it there times clients out (lab, 2026-07-08).
+    profile_use_warp: false
+    _api_headers:
+      Authorization: "Bearer {{ _remnawave_api_token }}"
+      X-Forwarded-For: "127.0.0.1"
+      X-Forwarded-Proto: "https"
+
+  tasks:
+    - name: Assert required parameters are provided
+      ansible.builtin.assert:
+        that:
+          - profile_name | length >= 2
+          - remnawave_panel_url | default('') | length > 0
+        fail_msg: >
+          Required: profile_name (>=2), plus remnawave_panel_url in
+          group_vars/control.
+
+    # Read the API token from OpenBao (#2). The vault entry stays in place as
+    # the cold fallback until backups are real (#7): reverting this switch is
+    # reverting the commit, not editing anything on a server.
+    - name: Fetch the Remnawave API token
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: remnawave
+        openbao_read_field: api_token
+        openbao_read_into: _remnawave_api_token
+      tags:
+        - config
+
+    - name: Fetch config profiles from the panel
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/config-profiles"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: profiles_result
+      no_log: true
+
+    - name: Resolve any existing profile with this name
+      ansible.builtin.set_fact:
+        existing_profile: >-
+          {{ profiles_result.json.response.configProfiles
+             | selectattr('name', 'equalto', profile_name) | list | first | default({}) }}
+
+    - name: Assert a domain is given when the profile must be created
+      ansible.builtin.assert:
+        that:
+          - profile_domain is defined and profile_domain | length > 0
+        fail_msg: "Profile '{{ profile_name }}' does not exist — provide -e profile_domain to create it."
+      when: existing_profile.uuid is not defined
+
+    # --- Create the profile only when it is missing ---
+    - name: Generate a reality keypair via the panel
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/system/tools/x25519/generate"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: keypair_result
+      no_log: true
+      when: existing_profile.uuid is not defined
+
+    - name: Generate a reality shortId
+      ansible.builtin.set_fact:
+        # 16 random hex chars generated in pure Python (the password lookup) —
+        # no external openssl, which the Semaphore container does not ship.
+        profile_short_id: "{{ lookup('ansible.builtin.password', '/dev/null length=16 chars=hexdigits') | lower }}"
+        profile_private_key: "{{ keypair_result.json.response.keypairs[0].privateKey }}"
+      no_log: true
+      when: existing_profile.uuid is not defined
+
+    - name: Create the config profile via the panel API
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/config-profiles"
+        method: POST
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body: >-
+          {{ {'name': profile_name,
+              'config': lookup('template', 'templates/xray-reality-profile.json.j2') | from_json} }}
+        status_code: [200, 201]
+      register: created_profile
+      no_log: true
+      when: existing_profile.uuid is not defined
+
+    - name: Resolve the effective profile uuid and its inbounds
+      ansible.builtin.set_fact:
+        profile_uuid: >-
+          {{ existing_profile.uuid if existing_profile.uuid is defined
+             else created_profile.json.response.uuid }}
+        profile_inbounds: >-
+          {{ existing_profile.inbounds | default([]) if existing_profile.uuid is defined
+             else created_profile.json.response.inbounds | default([]) }}
+
+    - name: Assert the profile has at least one inbound
+      ansible.builtin.assert:
+        that:
+          - profile_inbounds | length > 0
+        fail_msg: "Config profile '{{ profile_name }}' has no inbounds."
+
+    - name: Resolve the inbound uuid
+      ansible.builtin.set_fact:
+        profile_inbound_uuid: "{{ profile_inbounds[0].uuid }}"
+
+    # --- Ensure the inbound is in a squad (visibility) ---
+    - name: Fetch internal squads from the panel
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/internal-squads"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: squads_result
+      no_log: true
+
+    # Membership is checked across ALL squads first: on re-runs (and in the
+    # one-click pipeline, which never passes squad_name) an inbound that is
+    # already visible somewhere must not re-trigger squad resolution — otherwise
+    # the ambiguity assert below would fail every rerun once a 2nd squad exists.
+    - name: Determine whether the inbound is already in a squad
+      ansible.builtin.set_fact:
+        squad_member: >-
+          {{ profile_inbound_uuid in
+             (squads_result.json.response.internalSquads
+              | map(attribute='inbounds') | flatten | map(attribute='uuid') | list) }}
+        _squad_names: >-
+          {{ squads_result.json.response.internalSquads
+             | map(attribute='name') | list | join(', ') }}
+
+    - name: Resolve the target squad (by name, or the only one)
+      ansible.builtin.set_fact:
+        target_squad: >-
+          {{ (squads_result.json.response.internalSquads
+              | selectattr('name', 'equalto', squad_name) | list | first | default({}))
+             if (squad_name | default('') | length > 0)
+             else (squads_result.json.response.internalSquads | first | default({})) }}
+      when: not squad_member | bool
+
+    - name: Assert the target squad is unambiguous
+      ansible.builtin.assert:
+        that:
+          - target_squad.uuid is defined
+          # Refuse to guess when more than one squad exists and none was named,
+          # otherwise the inbound would attach to an arbitrary squad silently.
+          - (squad_name | default('') | length > 0)
+            or (squads_result.json.response.internalSquads | length == 1)
+        fail_msg: >-
+          {{ 'No internal squads exist — create one in the panel first.'
+             if _squad_names | length == 0
+             else "Squad '" ~ squad_name ~ "' not found. Available: " ~ _squad_names ~ "."
+             if squad_name | default('') | length > 0
+             else 'Multiple squads exist — pass -e squad_name=<name>. Available: ' ~ _squad_names ~ '.' }}
+      when: not squad_member | bool
+
+    - name: Add the inbound to the squad (only if not already a member)
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/internal-squads"
+        method: PATCH
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body: >-
+          {{ {'uuid': target_squad.uuid,
+              'inbounds': ((target_squad.inbounds | map(attribute='uuid') | list) + [profile_inbound_uuid]) | unique} }}
+        status_code: [200, 201]
+      no_log: true
+      when: not squad_member | bool
+
+    # --- Ensure the subscription host exists (presentation) ---
+    - name: Fetch subscription hosts from the panel
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/hosts"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: hosts_result
+      no_log: true
+
+    # Match on the inbound the host serves (a stable UUID), NOT the remark — the
+    # panel decorates remarks with a flag emoji ("🇵🇱 Poland"), so a remark
+    # comparison never matches and creates duplicate hosts.
+    - name: Determine whether the subscription host is missing
+      ansible.builtin.set_fact:
+        # default('') keeps a host with a null/absent inbound from injecting an
+        # Undefined into the list — membership tests raise on those under
+        # Ansible's strict undefined.
+        host_missing: >-
+          {{ profile_inbound_uuid not in
+             (hosts_result.json.response
+              | map(attribute='inbound.configProfileInboundUuid', default='') | list) }}
+
+    - name: Assert a domain is available when the host must be created
+      ansible.builtin.assert:
+        that:
+          - profile_domain is defined and profile_domain | length > 0
+        fail_msg: >-
+          Subscription host for '{{ profile_name }}' is missing and must be created,
+          but no domain is known — pass -e profile_domain.
+      when: host_missing | bool
+
+    - name: Create the subscription host (only if none serves this inbound)
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/hosts"
+        method: POST
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body: >-
+          {{ {'inbound': {
+                'configProfileUuid': profile_uuid,
+                'configProfileInboundUuid': profile_inbound_uuid},
+              'remark': profile_name,
+              'address': profile_domain,
+              'port': host_port | int,
+              'sni': profile_domain} }}
+        status_code: [200, 201]
+      no_log: true
+      when: host_missing | bool
+
+    - name: Show the profile summary
+      ansible.builtin.debug:
+        msg: >-
+          Profile "{{ profile_name }}" ready (uuid {{ profile_uuid }},
+          {{ 'created' if existing_profile.uuid is not defined else 'already existed' }});
+          inbound {{ 'already in a squad' if squad_member | bool
+                     else 'added to squad "' ~ target_squad.name | default('?') ~ '"' }}; host ensured.
+      tags:
+        - debug

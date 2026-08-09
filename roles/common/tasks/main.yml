@@ -1,0 +1,152 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+    fail_msg: >
+      Unsupported OS: {{ ansible_facts['distribution'] }}
+      {{ ansible_facts['distribution_version'] }}.
+      Only Debian/Ubuntu are supported.
+  tags:
+    - install
+
+# Covers EVERY apt operation on this host — in this role, in the repository
+# roles that run later, and in anything written after this. Retrying at the
+# transport level beats sprinkling `until:` across fourteen apt tasks in eight
+# roles: one place to read, one place to change, and it applies to tasks that do
+# not exist yet.
+#
+# Provisioning takes about twenty minutes across five APT sources; a single
+# mirror hiccup used to end the whole run.
+- name: Make apt retry a failed download instead of failing the run
+  ansible.builtin.copy:
+    content: |
+      // Managed by Ansible — roles/common. Do not edit by hand.
+      Acquire::Retries "3";
+    dest: /etc/apt/apt.conf.d/80-retries
+    owner: root
+    group: root
+    mode: "0644"
+  tags:
+    - install
+    - common
+
+- name: Install baseline packages
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  tags:
+    - install
+    - common
+
+- name: Enable TCP BBR congestion control and fq qdisc
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-bbr.conf
+    sysctl_set: true
+    reload: true
+    state: present
+  loop:
+    - { name: net.core.default_qdisc, value: fq }
+    - { name: net.ipv4.tcp_congestion_control, value: bbr }
+  loop_control:
+    label: "{{ item.name }} = {{ item.value }}"
+  when: common_bbr_enabled | bool
+  tags:
+    - config
+    - common
+
+- name: Enable reactive TCP MTU probing
+  ansible.posix.sysctl:
+    name: net.ipv4.tcp_mtu_probing
+    value: "{{ common_tcp_mtu_probing | string }}"
+    sysctl_file: /etc/sysctl.d/99-net.conf
+    sysctl_set: true
+    reload: true
+    state: present
+  tags:
+    - config
+    - common
+
+- name: Tune connection-handling limits for many concurrent clients
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-net.conf
+    sysctl_set: true
+    reload: true
+    state: present
+  loop:
+    - { name: net.ipv4.tcp_max_syn_backlog, value: "{{ common_tcp_max_syn_backlog }}" }
+    - { name: net.ipv4.ip_local_port_range, value: "{{ common_ip_local_port_range }}" }
+  loop_control:
+    label: "{{ item.name }} = {{ item.value }}"
+  tags:
+    - config
+    - common
+
+# systemd-sysctl applies /etc/sysctl.d very early — PID 204 on a Debian 13
+# boot — and nothing has loaded nf_conntrack by then, so
+# /proc/sys/net/netfilter/nf_conntrack_max does not exist and the line is
+# skipped. The unit still exits 0, because a missing key is not an error to
+# it. Docker brings netfilter up later, the module loads, and the key appears
+# holding the KERNEL DEFAULT.
+#
+# That is the whole of #76: the task below set the cap, the next boot threw it
+# away, and Ansible reported changed forever while the node ran at 7680 —
+# precisely the limit this is here to lift. Loading the module at boot fixes
+# the ordering, because systemd-modules-load.service runs before
+# systemd-sysctl.service.
+#
+# Two tasks rather than community.general.modprobe with persistent: present.
+# That option would do both in one, but its idempotency is undocumented, and
+# an always-changed task is the defect being fixed — not a risk worth taking
+# here. A file compared by content and a modprobe compared against
+# /proc/modules are both honest about state.
+- name: Load nf_conntrack at boot, before sysctl settings are applied
+  ansible.builtin.copy:
+    content: "nf_conntrack\n"
+    dest: /etc/modules-load.d/nf_conntrack.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: common_nf_conntrack_max | int > 0
+  tags:
+    - config
+    - common
+
+# Covers this run: the file above only takes effect at the next boot, and the
+# sysctl below needs the key to exist now.
+- name: Ensure nf_conntrack is loaded for this run
+  community.general.modprobe:
+    name: nf_conntrack
+    state: present
+  when: common_nf_conntrack_max | int > 0
+  tags:
+    - config
+    - common
+
+# The node forwards (Docker/netfilter), so conntrack is active; the default cap
+# (~7680 on 1GB) is low for a growing client base and a full table silently
+# drops NEW connections. Skipped when set to 0 (leave the kernel default).
+- name: Raise the nf_conntrack table cap
+  ansible.posix.sysctl:
+    name: net.netfilter.nf_conntrack_max
+    value: "{{ common_nf_conntrack_max | string }}"
+    sysctl_file: /etc/sysctl.d/99-net.conf
+    sysctl_set: true
+    reload: true
+    state: present
+  when: common_nf_conntrack_max | int > 0
+  tags:
+    - config
+    - common
+
+- name: Configure swap (zram primary + disk overflow, zswap off)
+  ansible.builtin.import_tasks: swap.yml
+  when: common_swap_enabled | bool
+  tags:
+    - config

@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  role_name: netbird
+  author: nargothrondir
+  description: >
+    Install the NetBird agent from the official APT repository and join the
+    mesh non-interactively with a setup key (cloud or self-hosted).
+  min_ansible_version: "2.15"
+  license: MIT
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+
+dependencies: []

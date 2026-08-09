@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  role_name: semaphore
+  author: nargothrondir
+  description: >
+    Deploy Semaphore (Ansible web UI) on the control node via Docker Compose,
+    behind an existing reverse proxy.
+  min_ansible_version: "2.15"
+  license: MIT
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+
+dependencies: []

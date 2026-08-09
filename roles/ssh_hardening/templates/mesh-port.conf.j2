@@ -1,0 +1,5 @@
+# Managed by Ansible — roles/ssh_hardening. Do not edit by hand.
+# Both ports must be listed explicitly: the first Port directive replaces the
+# implicit default of 22, while multiple Port lines accumulate.
+Port {{ ssh_hardening_public_port }}
+Port {{ ssh_hardening_mesh_port }}

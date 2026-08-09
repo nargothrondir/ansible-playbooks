@@ -1,0 +1,8 @@
+name: local/mesh-whitelist
+description: "Never act on the Netbird mesh or admin IPs"
+whitelist:
+  reason: "trusted mesh / admin"
+  cidr:
+{% for cidr in crowdsec_whitelist_cidrs %}
+    - "{{ cidr }}"
+{% endfor %}

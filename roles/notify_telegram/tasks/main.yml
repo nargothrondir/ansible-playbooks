@@ -1,0 +1,35 @@
+---
+- name: Assert Telegram settings are provided
+  ansible.builtin.assert:
+    that:
+      - notify_telegram_bot_token | length > 0
+      - notify_telegram_chat_id | length > 0
+      - notify_telegram_message | length > 0
+    fail_msg: >
+      notify_telegram requires notify_telegram_bot_token, notify_telegram_chat_id
+      and notify_telegram_message to be set.
+
+- name: Send a message to Telegram
+  vars:
+    _notify_telegram_body: >-
+      {{ {'chat_id': notify_telegram_chat_id,
+          'text': notify_telegram_message,
+          'disable_notification': notify_telegram_silent | bool}
+         | combine(
+             {'message_thread_id': notify_telegram_message_thread_id | int}
+             if (notify_telegram_message_thread_id | string | length > 0)
+             else {}
+           )
+         | combine(
+             {'parse_mode': notify_telegram_parse_mode}
+             if (notify_telegram_parse_mode | length > 0)
+             else {}
+           ) }}
+  ansible.builtin.uri:
+    url: "https://api.telegram.org/bot{{ notify_telegram_bot_token }}/sendMessage"
+    method: POST
+    body_format: json
+    body: "{{ _notify_telegram_body }}"
+    status_code: 200
+  changed_when: false
+  no_log: true

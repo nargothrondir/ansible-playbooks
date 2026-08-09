@@ -1,0 +1,29 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+    fail_msg: >
+      Unsupported OS: {{ ansible_facts['distribution'] }}
+      {{ ansible_facts['distribution_version'] }}.
+      Only Debian/Ubuntu are supported.
+  tags:
+    - install
+
+- name: Install CrowdSec from the APT repository
+  ansible.builtin.import_tasks: install.yml
+  tags:
+    - install
+
+- name: Configure SSH-only detection, whitelist and progressive bans
+  ansible.builtin.import_tasks: config.yml
+  tags:
+    - config
+
+# Central LAPI (fleet-wide) — only runs when explicitly enabled. Off by default,
+# so the node stays standalone (local LAPI) until we activate the mesh reporting.
+- name: Wire the node to the panel's central LAPI over the mesh
+  ansible.builtin.import_tasks: central.yml
+  when: crowdsec_central_lapi_enabled | bool
+  tags:
+    - config

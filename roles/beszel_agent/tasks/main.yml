@@ -1,0 +1,121 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+    fail_msg: >
+      Unsupported OS: {{ ansible_facts['distribution'] }}
+      {{ ansible_facts['distribution_version'] }}.
+      Only Debian/Ubuntu are supported.
+  tags:
+    - install
+
+# Checked BEFORE registration: register.yml builds every API URL from this
+# value, so an empty one would fail several tasks later with a confusing
+# "invalid URL" rather than naming the missing variable.
+#
+# The host is checked for shape, not just presence. The inventory builds this
+# URL from a domain variable, and if that variable is defined but empty the
+# result is "https://beszel." — a syntactically valid URL, non-empty, that
+# resolves to nothing. A length check waves it through.
+- name: Assert the hub URL is configured
+  ansible.builtin.assert:
+    that:
+      - beszel_agent_hub_url | length > 0
+      - beszel_agent_hub_url | urlsplit('hostname') | default('', true) | lower is match('^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$')
+    fail_msg: >
+      beszel_agent_hub_url is empty or carries no usable host — set the hub URL
+      in the inventory (group_vars). It is deliberately not defaulted in the
+      role: a real hostname there would be published with the repository. A
+      host ending in a bare dot means the domain variable this URL is built
+      from resolved to an empty string.
+  tags:
+    - config
+
+# Obtain this node's per-node token from the hub API (idempotent). Disable with
+# beszel_agent_register: false to provide beszel_agent_token yourself.
+- name: Register the system in the hub and get its token
+  ansible.builtin.import_tasks: register.yml
+  when: beszel_agent_register | bool
+  tags:
+    - config
+
+- name: Assert the Beszel agent key and token are provided
+  ansible.builtin.assert:
+    that:
+      - beszel_agent_key | length > 0
+      - beszel_agent_token | length > 0
+    fail_msg: >
+      beszel_agent_key must be set (the hub's public key, group_vars), and
+      beszel_agent_token must be provided — either by auto-registration
+      (beszel_agent_register) or set yourself.
+  tags:
+    - config
+
+- name: Create the beszel system user
+  ansible.builtin.user:
+    name: "{{ beszel_agent_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    home: "{{ beszel_agent_dir }}"
+  tags:
+    - install
+
+- name: Add the beszel user to the docker group (read /var/run/docker.sock)
+  ansible.builtin.user:
+    name: "{{ beszel_agent_user }}"
+    groups: docker
+    append: true
+  when: beszel_agent_docker_group | bool
+  tags:
+    - install
+
+- name: Ensure the install directory exists
+  ansible.builtin.file:
+    path: "{{ beszel_agent_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags:
+    - install
+
+# Install once (creates guard): Beszel self-updates the binary afterwards, so the
+# role must not re-download and fight it. The static build works on any libc.
+- name: Install the Beszel agent binary
+  ansible.builtin.unarchive:
+    src: "https://github.com/henrygd/beszel/releases/download/v{{ beszel_agent_version }}/beszel-agent_linux_{{ beszel_agent_arch }}.tar.gz"
+    dest: "{{ beszel_agent_dir }}"
+    remote_src: true
+    creates: "{{ beszel_agent_dir }}/beszel-agent"
+    owner: root
+    group: root
+    mode: "0755"
+  register: _beszel_agent_download
+  until: _beszel_agent_download is succeeded
+  retries: 3
+  delay: 5
+  tags:
+    - install
+
+- name: Deploy the beszel-agent systemd unit
+  ansible.builtin.template:
+    src: beszel-agent.service.j2
+    dest: /etc/systemd/system/beszel-agent.service
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: "restart beszel-agent"
+  tags:
+    - config
+
+- name: Ensure the beszel-agent service is enabled and running
+  ansible.builtin.systemd_service:
+    name: beszel-agent
+    state: started
+    enabled: true
+    daemon_reload: true
+  tags:
+    - service

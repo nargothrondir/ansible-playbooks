@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  role_name: bootstrap
+  author: nargothrondir
+  description: >
+    Create the Ansible automation user (password auth for now) and grant
+    passwordless sudo on freshly provisioned Debian/Ubuntu servers.
+  min_ansible_version: "2.15"
+  license: MIT
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+
+dependencies: []

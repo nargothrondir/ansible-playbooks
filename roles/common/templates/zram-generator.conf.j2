@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+# zram compressed-RAM swap device. Managed by the `common` role — edit the role
+# variables (common_zram_*), not this file.
+[zram0]
+zram-size = {{ common_zram_size }}
+compression-algorithm = {{ common_zram_algo }}
+swap-priority = {{ common_zram_priority }}

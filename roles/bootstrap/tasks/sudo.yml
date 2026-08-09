@@ -1,0 +1,12 @@
+---
+- name: Grant passwordless sudo to automation user
+  ansible.builtin.template:
+    src: ansible-sudoers.j2
+    dest: "{{ _bootstrap_sudoers_path }}"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s
+  when: bootstrap_passwordless_sudo
+  tags:
+    - config

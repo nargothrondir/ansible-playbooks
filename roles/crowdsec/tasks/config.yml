@@ -1,0 +1,157 @@
+---
+# Idempotent collection install (fetch-then-guard, CLAUDE.md §7.4): read the
+# installed set once, then install only what is missing.
+- name: List installed CrowdSec collections
+  ansible.builtin.command: cscli collections list -o json
+  register: crowdsec_installed_collections
+  changed_when: false
+  tags:
+    - config
+
+- name: Determine which CrowdSec collections are already installed
+  ansible.builtin.set_fact:
+    crowdsec_present_collections: >-
+      {{ (crowdsec_installed_collections.stdout | from_json).collections
+         | default([]) | map(attribute='name') | list }}
+  tags:
+    - config
+
+- name: Install required CrowdSec collections
+  ansible.builtin.command: "cscli collections install {{ item }}"
+  loop: "{{ crowdsec_collections }}"
+  loop_control:
+    label: "{{ item }}"
+  when: item not in crowdsec_present_collections
+  # The pre-state list is the change detector: the task only runs for a missing
+  # collection, so completing it IS the change (avoids changed_when: true, §7.7).
+  changed_when: item not in crowdsec_present_collections
+  notify: "reload crowdsec"
+  tags:
+    - config
+
+- name: Deploy the SSH-only log acquisition (journald, ssh.service)
+  ansible.builtin.template:
+    src: acquis-sshd.yaml.j2
+    dest: /etc/crowdsec/acquis.d/sshd.yaml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: "reload crowdsec"
+  tags:
+    - config
+
+- name: Ensure the enrichment parsers directory exists
+  ansible.builtin.file:
+    path: /etc/crowdsec/parsers/s02-enrich
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags:
+    - config
+
+- name: Deploy the anti-lockout whitelist (mesh + admin)
+  ansible.builtin.template:
+    src: mesh-whitelist.yaml.j2
+    dest: /etc/crowdsec/parsers/s02-enrich/mesh-whitelist.yaml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: "reload crowdsec"
+  tags:
+    - config
+
+- name: Deploy the progressive SSH ban profile
+  ansible.builtin.template:
+    src: profiles.yaml.j2
+    dest: /etc/crowdsec/profiles.yaml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: "reload crowdsec"
+  tags:
+    - config
+
+# The firewall-bouncer package postinst registers itself in its own apt
+# transaction, which can run before the LAPI is ready — leaving the bouncer
+# unregistered (empty `cscli bouncers list`) and stuck "activating" with no
+# nftables table, so decisions are made but never enforced. Register it
+# explicitly (fetch-then-guard, §7.4) and hand it the key.
+#
+# This is the ONLY registration in the role. install.yml deliberately does not
+# start the bouncer, because it cannot run before this block has finished.
+- name: Read the bouncer configuration
+  ansible.builtin.slurp:
+    src: "{{ _crowdsec_bouncer_config }}"
+  register: crowdsec_bouncer_cfg
+  no_log: true
+  tags:
+    - config
+
+# The guard is the KEY's length, not "is a bouncer registered". A placeholder is
+# short and a real key is about forty-four characters, so this also repairs the
+# state the role used to leave behind — registered with the LAPI while the
+# shipped placeholder sat in the config. Matching the placeholder text instead
+# would break the day upstream changes it.
+- name: Determine whether the bouncer still needs its API key
+  ansible.builtin.set_fact:
+    crowdsec_need_key: >-
+      {{ ((crowdsec_bouncer_cfg.content | b64decode
+           | regex_search('^api_key:[ \t]*(\S+)', '\1', multiline=True)
+           | first | default('')) | length) < 20 }}
+  no_log: true
+  tags:
+    - config
+
+- name: List registered CrowdSec bouncers
+  ansible.builtin.command: cscli bouncers list -o json
+  register: crowdsec_bouncers
+  changed_when: false
+  check_mode: false
+  tags:
+    - config
+
+# cscli cannot reveal an existing key, so a registration whose key is not in the
+# config is unrecoverable: it has to go before a new one can be made.
+- name: Drop the stale registration for this bouncer
+  ansible.builtin.command: "cscli bouncers delete {{ _crowdsec_bouncer_name }}"
+  register: crowdsec_bouncer_deleted
+  changed_when: crowdsec_bouncer_deleted.rc == 0
+  when:
+    - crowdsec_need_key | bool
+    - _crowdsec_bouncer_name in ((((crowdsec_bouncers.stdout | trim) or '[]') | from_json or [])
+                                 | map(attribute='name') | list)
+  tags:
+    - config
+
+- name: Register the firewall bouncer with the local LAPI
+  ansible.builtin.command: "cscli bouncers add {{ _crowdsec_bouncer_name }} --output raw"
+  register: crowdsec_fw_bouncer_key
+  when: crowdsec_need_key | bool
+  changed_when: crowdsec_need_key | bool
+  no_log: true
+  tags:
+    - config
+
+- name: Write the firewall bouncer API key into its config
+  ansible.builtin.lineinfile:
+    path: "{{ _crowdsec_bouncer_config }}"
+    regexp: '^api_key:'
+    line: "api_key: {{ crowdsec_fw_bouncer_key.stdout | trim }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: crowdsec_need_key | bool
+  no_log: true
+  notify: "restart crowdsec bouncer"
+  tags:
+    - config
+
+# Last, because everything above is what makes it able to start at all.
+- name: Ensure the firewall bouncer is enabled and running
+  ansible.builtin.systemd_service:
+    name: crowdsec-firewall-bouncer
+    state: started
+    enabled: true
+  tags:
+    - service

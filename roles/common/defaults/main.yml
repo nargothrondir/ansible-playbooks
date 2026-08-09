@@ -1,0 +1,84 @@
+---
+# Baseline packages every host should have. Some provider images ship without
+# even sudo/curl/wget — this list closes that gap. Override or extend per
+# group/host as needed.
+common_packages:
+  - sudo
+  - curl
+  - wget
+  - ca-certificates
+  - gnupg
+  - unzip
+  - btop
+  # deb822_repository (docker/xanmod/netbird roles) needs this on the target;
+  # keeping it in the baseline frees those roles from depending on each
+  # other's ordering.
+  - python3-debian
+
+# TCP BBR congestion control + the fq queueing discipline it pairs with. This is
+# the payoff of the XanMod kernel (which ships BBRv3); stock Debian kernels
+# provide BBRv1 via the tcp_bbr module, so the same sysctl works fleet-wide.
+# Set to false for a host whose kernel lacks BBR.
+common_bbr_enabled: true
+
+# TCP MTU probing (PLPMTUD, RFC 4821). Reactive path-MTU discovery: it stays
+# dormant until an ICMP black hole stalls a connection, then finds a working
+# packet size at the TCP layer instead of hanging — insurance for clients on
+# networks that drop ICMP or have tunnel-reduced MTUs (reality/xray/netbird
+# overhead). 0 = off, 1 = reactive (recommended), 2 = always (aggressive).
+common_tcp_mtu_probing: 1
+
+# Connection-handling limits for a node serving many concurrent clients.
+# somaxconn and fs.file-max are already high on XanMod; these two were the
+# objectively small ones. tcp_max_syn_backlog: the half-open (SYN) queue — was
+# tiny (128) versus the 4096 accept queue, so connection bursts dropped SYNs.
+# ip_local_port_range: widen the ephemeral pool for the node's own many outbound
+# connections (xray upstreams, ACME, panel).
+common_tcp_max_syn_backlog: 4096
+common_ip_local_port_range: "1024 65535"
+
+# nf_conntrack table cap. The node forwards (Docker/netfilter) so conntrack is
+# active; the default (~7680 on 1GB) is low for a growing client base, and a
+# full table silently drops NEW connections. A modest bump (~5 MB RAM at 16384).
+# Set 0 to leave the kernel default (e.g. when RAM is tighter than the headroom
+# is worth).
+common_nf_conntrack_max: 16384
+
+# --- Swap: zram (compressed RAM swap) primary + disk-file overflow -----------
+# RAM is the scarce resource here (~1 GB) and disk is plentiful, so we compress
+# swap IN RAM with zram and keep it there, using a disk file only as a low-
+# priority overflow. The kernel's zswap is DISABLED: it caps its pool and
+# proactively writes cold pages to disk (the opposite of what we want on a RAM-
+# tight box), and it cannot coexist with zram (it would double-compress pages
+# headed for zram). Set false to skip all swap configuration.
+common_swap_enabled: true
+
+# zram device (via systemd-zram-generator). zstd for the best ratio; high
+# priority so the kernel fills zram before ever touching the disk file. Size is a
+# zram-generator EXPRESSION evaluated on the target at boot — `ram` is the host's
+# RAM in MB, so this auto-scales per server (1x RAM, capped) with no Ansible
+# re-run on a VPS resize. Override e.g. "ram / 2" on bigger boxes, or a literal MB.
+common_zram_size: "min(ram, 4096)"
+common_zram_algo: zstd
+common_zram_priority: 100
+
+# Disk swap file — overflow only, at a lower priority than zram. Sized from RAM
+# (RAM x multiplier) and hard-capped so it never bloats the disk.
+common_swapfile_path: /swapfile
+common_swapfile_ram_multiplier: 1
+common_swapfile_max_mb: 1024
+common_swapfile_priority: 10
+
+# Disable the kernel's zswap. Applied live via sysfs AND persisted on the GRUB
+# kernel cmdline (zswap.enabled=0), so it survives reboots without needing one now.
+common_zswap_disable: true
+
+# VM tuning for a zram-primary setup:
+#   swappiness 150         - zram swap-in is cheap, so lean on it over evicting cache
+#   page-cluster 0         - disable swap read-ahead (pointless/harmful for zram)
+#   watermark_boost_factor 0, watermark_scale_factor 125 - keep more free RAM so
+#                            reclaim starts early and avoids latency spikes
+common_swappiness: 150
+common_page_cluster: 0
+common_watermark_boost_factor: 0
+common_watermark_scale_factor: 125

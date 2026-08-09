@@ -1,0 +1,9 @@
+---
+- name: Import hostname configuration tasks
+  ansible.builtin.import_tasks: hostname.yml
+
+- name: Import automation user creation tasks
+  ansible.builtin.import_tasks: users.yml
+
+- name: Import sudo configuration tasks
+  ansible.builtin.import_tasks: sudo.yml

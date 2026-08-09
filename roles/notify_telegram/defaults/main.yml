@@ -1,0 +1,23 @@
+---
+# Telegram Bot API token and target chat id.
+# By default these read the global telegram_* vars (see group_vars/all/),
+# which should be backed by ansible-vault. A caller may also set them directly.
+notify_telegram_bot_token: "{{ telegram_bot_token | default('') }}"
+notify_telegram_chat_id: "{{ telegram_chat_id | default('') }}"
+
+# Optional forum topic id (message_thread_id) for supergroups with topics.
+# Leave empty to post to the group's General topic.
+notify_telegram_message_thread_id: ""
+
+# Send without sound/vibration (Telegram disable_notification). The message
+# still appears in the chat — useful for routine "nothing happened" heartbeats.
+notify_telegram_silent: false
+
+# Telegram formatting mode for the message body: "" (plain), "HTML" or
+# "MarkdownV2". When set, the caller is responsible for escaping any dynamic
+# content so it is valid for that mode (an invalid entity makes the API reject
+# the whole message).
+notify_telegram_parse_mode: ""
+
+# Message body — set by the caller.
+notify_telegram_message: ""

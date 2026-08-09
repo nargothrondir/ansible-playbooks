@@ -1,0 +1,36 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Read the ansible user passwd entry
+      ansible.builtin.getent:
+        database: passwd
+        key: ansible
+
+    - name: Stat the sudoers drop-in
+      ansible.builtin.stat:
+        path: /etc/sudoers.d/ansible
+      register: bootstrap_verify_sudoers
+
+    - name: Get the account password status
+      ansible.builtin.command: passwd -S ansible
+      register: bootstrap_verify_pwstatus
+      changed_when: false
+
+    - name: Read the authorized_keys file
+      ansible.builtin.slurp:
+        src: /home/ansible/.ssh/authorized_keys
+      register: bootstrap_verify_authkeys
+
+    - name: Assert the bootstrap outcomes
+      ansible.builtin.assert:
+        that:
+          - bootstrap_verify_sudoers.stat.exists
+          - bootstrap_verify_sudoers.stat.mode == '0440'
+          - bootstrap_verify_pwstatus.stdout.split()[1] == 'L'
+          - "'molecule-test' in (bootstrap_verify_authkeys.content | b64decode)"
+        fail_msg: >
+          Bootstrap state is wrong: expected /etc/sudoers.d/ansible (0440), a
+          locked password (passwd -S = L) and the molecule-test key in
+          authorized_keys.

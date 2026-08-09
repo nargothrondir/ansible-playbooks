@@ -1,0 +1,21 @@
+# {{ ansible_managed }}
+---
+services:
+  dockhand:
+    image: "{{ dockhand_image }}"
+    container_name: "{{ dockhand_container_name }}"
+    restart: "{{ dockhand_restart_policy }}"
+    ports:
+      - "{{ dockhand_bind }}:{{ dockhand_internal_port }}"
+    environment:
+      ENCRYPTION_KEY: "{{ dockhand_encryption_key }}"
+      PUID: "{{ dockhand_puid }}"
+      PGID: "{{ dockhand_pgid }}"
+    group_add:
+      - "{{ ansible_facts['getent_group']['docker'][1] }}"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "dockhand_data:/app/data"
+
+volumes:
+  dockhand_data:

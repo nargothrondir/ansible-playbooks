@@ -1,0 +1,9 @@
+---
+# Regenerate grub.cfg after the cmdline change so zswap.enabled=0 persists across
+# reboots. The meaningful state change is the /etc/default/grub edit that
+# notifies this handler; the regeneration itself is a downstream side effect, so
+# it is reported as unchanged (changed_when: false).
+- name: Regenerate the GRUB configuration
+  listen: "update grub"
+  ansible.builtin.command: update-grub
+  changed_when: false

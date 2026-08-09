@@ -1,0 +1,60 @@
+# {{ ansible_managed }}
+---
+services:
+  openbao:
+    image: "{{ openbao_image }}"
+    container_name: "{{ openbao_container_name }}"
+    restart: "{{ openbao_restart_policy }}"
+    ports:
+      - "{{ openbao_bind_address }}:{{ openbao_port }}:{{ openbao_port }}"
+    # Just `server`. The entrypoint already appends -config for the config
+    # DIRECTORY; passing the file explicitly as well made it load twice and the
+    # server logged "ignoring duplicate configuration found in directory".
+    command: "server"
+    environment:
+      # For `docker exec openbao bao ...` — the operator runs init and unseal
+      # that way, and without this every command needs -address.
+      BAO_ADDR: "http://127.0.0.1:{{ openbao_port }}"
+    volumes:
+      # Read-only on purpose. The entrypoint tries to chown this directory and
+      # logs that it could not; that is cosmetic. Allowing the chown would
+      # rewrite the owner of a file Ansible manages, so every run would then
+      # report changed.
+      - "{{ openbao_data_dir }}/config:/openbao/config:ro"
+      # MOUNTED AT A PATH THE IMAGE ALREADY DECLARES. Docker seeds a fresh named
+      # volume from the image's directory, ownership included; mounting one at a
+      # path the image does NOT have (e.g. /openbao/data) gets a root-owned
+      # directory instead, and the server dies with
+      # "failed to open bolt file: permission denied" because it runs as the
+      # unprivileged `openbao` user.
+      - "openbao_file:/openbao/file"
+{% if openbao_network | length > 0 %}
+    networks:
+      - {{ openbao_network }}
+{% endif %}
+    # A SEALED OpenBao is HEALTHY: it is the expected state after every restart
+    # until an operator supplies the unseal shares, and a restart is exactly
+    # when a healthcheck matters. `bao status` exits 0 unsealed, 2 sealed and 1
+    # on a real error — so only 1 (and "did not answer at all") is unhealthy.
+    # Treating sealed as unhealthy would flap the container forever after any
+    # reboot.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'bao status >/dev/null 2>&1; c=$$?; [ "$$c" = 0 ] || [ "$$c" = 2 ]'
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+{% if openbao_network | length > 0 %}
+# Declared external: the role creates it with the docker_network module, so the
+# name is exactly {{ openbao_network }} rather than compose's project-prefixed
+# form — which is what lets the semaphore role join it by that same name.
+networks:
+  {{ openbao_network }}:
+    external: true
+{% endif %}
+
+volumes:
+  openbao_file:

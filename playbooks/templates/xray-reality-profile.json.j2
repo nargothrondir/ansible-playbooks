@@ -1,0 +1,67 @@
+{
+  "log": { "loglevel": "warning" },
+  "dns": {
+    "servers": [
+      { "address": "https://dns.google/dns-query", "skipFallback": false }
+    ],
+    "queryStrategy": "UseIPv4"
+  },
+  "inbounds": [
+    {
+      "tag": "{{ profile_inbound_tag }}",
+      "port": 443,
+      "protocol": "vless",
+      "settings": { "clients": [], "decryption": "none" },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "dest": "/dev/shm/nginx.sock",
+          "show": false,
+          "xver": 1,
+          "spiderX": "",
+          "shortIds": ["{{ profile_short_id }}"],
+          "privateKey": "{{ profile_private_key }}",
+          "serverNames": ["{{ profile_domain }}"]
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    { "tag": "DIRECT", "protocol": "freedom" },
+    { "tag": "BLOCK", "protocol": "blackhole" }
+{% if profile_use_warp | default(false) | bool %}
+    ,{
+      "tag": "warp-out",
+      "protocol": "freedom",
+      "settings": { "domainStrategy": "UseIP" },
+      "streamSettings": {
+        "sockopt": { "interface": "warp", "tcpFastOpen": true }
+      }
+    }
+{% endif %}
+  ],
+  "routing": {
+    "rules": [
+      { "ip": ["geoip:private"], "type": "field", "outboundTag": "BLOCK" },
+      { "type": "field", "protocol": ["bittorrent"], "outboundTag": "BLOCK" }
+{% if profile_use_warp | default(false) | bool %}
+      ,{
+        "type": "field",
+        "domain": [
+          "geosite:google-deepmind",
+          "whoer.net",
+          "browserleaks.com",
+          "2ip.io",
+          "2ip.ru"
+        ],
+        "outboundTag": "warp-out"
+      }
+{% endif %}
+    ]
+  }
+}
