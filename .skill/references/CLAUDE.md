@@ -179,7 +179,14 @@ The opinionated choices an agent cannot infer:
 - Roles support `ansible-playbook --check`; Molecule where scenario coverage
   beyond check mode is warranted.
 
-## 9. Commits and branches
+## 9. Commits, branches and issues
+
+**Issues live in the private archive repository, not here.** This repository
+became public from a history-free snapshot; the backlog stayed behind because
+its issues carry addresses and screenshots. So `gh issue` needs
+`--repo <owner>/ansible-playbooks-archive`, and a new issue is opened THERE —
+including issues about code that lives here. A `#N` in a comment is provenance
+for a decision, not a link a reader can follow.
 
 Conventional Commits in English, **scope mandatory**:
 `type(scope): Description` — types `feat|fix|refactor|docs|style|test|chore|build|ci|perf`;

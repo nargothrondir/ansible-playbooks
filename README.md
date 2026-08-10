@@ -221,5 +221,10 @@ ansible-playbooks/
 ```
 
 Issue numbers in comments (`#122`, `#68`) point at this project's tracker,
-which is not public. They are kept as provenance for the decision a comment
-explains, not as links to follow.
+which is not public: this repository was published from a history-free
+snapshot and the backlog stayed in the private predecessor, because its issues
+carry addresses and screenshots. They are kept as provenance for the decision a
+comment explains, not as links to follow.
+
+New issues are opened there too, so the split does not blur over time. This
+repository's own tracker is left for anything filed from outside.
