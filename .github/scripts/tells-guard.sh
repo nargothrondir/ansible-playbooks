@@ -24,6 +24,18 @@ SCAN_EXCLUDE='\.(png|jpg|jpeg|ico|svg|webmanifest|woff2?|ttf)$'
 # run locally is not a guard.
 scan_files() { git ls-files -z | tr '\0' '\n' | grep -vE "$SCAN_EXCLUDE" | tr '\n' '\0'; }
 
+# --- public resolvers -------------------------------------------------------
+# Addresses of PUBLIC DNS resolvers this project configures or documents
+# (roles/dns). They are other people's infrastructure, not ours, and they are
+# listed here rather than woven into the regexes below so that adding one is an
+# obvious one-line edit instead of surgery on a pattern.
+#
+# The rule for this block is the same as for the domain allowlist: a resolver
+# goes in when the role can actually be pointed at it. Nothing of ours belongs
+# here, ever.
+RESOLVER_V4='1\.1\.1\.1|1\.0\.0\.1|8\.8\.8\.8|8\.8\.4\.4|9\.9\.9\.9|149\.112\.112\.112|194\.242\.2\.2|193\.110\.81\.0|94\.140\.14\.14'
+RESOLVER_V6='2606:4700:4700:|2620:fe:|2001:4860:4860:'
+
 # --- 1. IPv4 literals ------------------------------------------------------
 # Allowed: RFC 5737 documentation ranges, loopback, any/broadcast, and the
 # public resolvers we legitimately configure.
@@ -32,7 +44,7 @@ echo "[1] IPv4 literals outside the documentation ranges"
 # referenced in the CrowdSec mesh whitelist). The range 100.64/10 as a whole is
 # NOT allowed — mesh addresses live inside it, so a blanket allow would let the
 # very identifiers this guard exists to catch straight through.
-ip_ok='^(192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.0\.0\.1$|127\.0\.1\.1$|0\.0\.0\.0$|255\.255\.255\.255$|100\.64\.0\.0$|1\.1\.1\.1$|8\.8\.8\.8$|8\.8\.4\.4$|9\.9\.9\.9$)'
+ip_ok='^(192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.0\.0\.1$|127\.0\.1\.1$|0\.0\.0\.0$|255\.255\.255\.255$|100\.64\.0\.0$)|^('"$RESOLVER_V4"')$'
 found=0
 while IFS= read -r hit; do
   [ -z "$hit" ] && continue
@@ -63,7 +75,7 @@ echo "[1b] IPv6 literals outside the documentation and private ranges"
 # Allowed: loopback, unspecified, link-local, multicast, IPv4-mapped, the
 # RFC 3849 documentation prefix, and unique-local (the IPv6 counterpart of the
 # RFC 1918 ranges already allowed above).
-ip6_ok='^(::1|::|::ffff:|fe80:|ff0[0-9a-f]:|2001:0?db8:|f[cd][0-9a-f]{2}:)'
+ip6_ok='^(::1|::|::ffff:|fe80:|ff0[0-9a-f]:|2001:0?db8:|f[cd][0-9a-f]{2}:|'"$RESOLVER_V6"')'
 found=0
 while IFS= read -r hit; do
   [ -z "$hit" ] && continue
@@ -115,7 +127,7 @@ IPCHECK_OK='|whoer\.net|browserleaks\.com|2ip\.io|2ip\.ru'
 # Upstreams this project genuinely talks to, plus a few names that merely look
 # like domains (containerd.io is a Debian PACKAGE name). Extend only for a NEW
 # upstream — never to silence one of our own hostnames.
-domain_ok='(example\.(com|org|net)|localhost|github\.com|githubusercontent\.com|github\.io|ghcr\.io|debian\.org|ubuntu\.com|docker\.com|docker\.io|containerd\.io|letsencrypt\.org|cloudflare\.com|netbird\.io|netbird\.cloud|crowdsec\.net|packagecloud\.io|xanmod\.org|ansible\.com|readthedocs\.io|python\.org|telegram\.org|mozilla\.org|openbao\.org|hashicorp\.com|angie\.software|sshaudit\.com|renovatebot\.com|beszel\.dev|semaphoreui\.com|w3\.org|schema\.org|dns\.google|cloudflare-dns\.com|quad9\.net'"$IPCHECK_OK"')$'
+domain_ok='(example\.(com|org|net)|localhost|github\.com|githubusercontent\.com|github\.io|ghcr\.io|debian\.org|ubuntu\.com|docker\.com|docker\.io|containerd\.io|letsencrypt\.org|cloudflare\.com|netbird\.io|netbird\.cloud|crowdsec\.net|packagecloud\.io|xanmod\.org|ansible\.com|readthedocs\.io|python\.org|telegram\.org|mozilla\.org|openbao\.org|hashicorp\.com|angie\.software|sshaudit\.com|renovatebot\.com|beszel\.dev|semaphoreui\.com|w3\.org|schema\.org|dns\.google|cloudflare-dns\.com|quad9\.net|mullvad\.net|dns0\.eu|adguard-dns\.com'"$IPCHECK_OK"')$'
 found=0
 while IFS= read -r hit; do
     [ -z "$hit" ] && continue

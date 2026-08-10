@@ -6,13 +6,44 @@
 # Upstream resolvers, in preference order. The `#hostname` suffix is not
 # decoration: without it the TLS certificate can only be checked against the
 # IP, and the point of choosing a resolver is knowing you reached it.
+# Two independent operators, each with both of its anycast addresses and both
+# families. systemd-resolved tries them in order and stays on the one that
+# answers, so this is a preference list, not a load-balancing pool.
+#
+# Cloudflare first on latency: it has the widest anycast footprint, and every
+# lookup here is on the critical path for apt, ACME and reaching the panel.
+# Quad9 second for independence — a Swiss foundation, DNSSEC-validating, and
+# not the same company as the fallback below.
+#
+# IPv6 entries are not decoration: these nodes are dual-stack, and an IPv4-only
+# list makes DNS fail during an IPv4 incident that the node would otherwise
+# survive.
 dns_servers:
   - "1.1.1.1#cloudflare-dns.com"
+  - "2606:4700:4700::1111#cloudflare-dns.com"
+  - "1.0.0.1#cloudflare-dns.com"
   - "9.9.9.9#dns.quad9.net"
+  - "2620:fe::fe#dns.quad9.net"
+  - "149.112.112.112#dns.quad9.net"
 
-# Used only when every server above is unreachable.
+# Used only when every server above is unreachable. Google last on purpose: the
+# most reliably reachable resolver on the internet is the right thing to fall
+# back to and the wrong thing to prefer.
 dns_fallback_servers:
   - "8.8.8.8#dns.google"
+  - "2001:4860:4860::8888#dns.google"
+
+# ALTERNATIVES, for a host where the defaults are filtered — set dns_servers in
+# host_vars rather than changing the default. All speak DoT and validate
+# DNSSEC:
+#
+#   194.242.2.2#dns.mullvad.net          no logging, single operator, fewer PoPs
+#   193.110.81.0#dns0.eu                 European non-profit, ECS off
+#   94.140.14.14#dns.adguard-dns.com     filters ads and trackers as well
+#
+# Filtering resolvers deserve a thought before a node uses one: they answer
+# NXDOMAIN for what they block, and a node needs registries, mirrors and ACME
+# endpoints to resolve, not opinions about them.
 
 # Strict DNS-over-TLS: no silent downgrade to plaintext. The cost is that an
 # unreachable upstream breaks resolution outright rather than degrading — which

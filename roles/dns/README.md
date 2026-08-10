@@ -45,6 +45,30 @@ failure mode and no privacy.
 Prefer DoT; reach for DoH only on a host where 853 is actually filtered. That
 is a per-host decision, not a fleet standard.
 
+### Which resolvers, and why these
+
+Two independent operators as primaries, each with both anycast addresses and
+both address families; Google as fallback only. `systemd-resolved` tries the
+list in order and stays on whichever answers, so this is a preference order and
+not a pool.
+
+**Cloudflare first** on latency — the widest anycast footprint, and every
+lookup here sits on the critical path for apt, ACME and reaching the panel.
+**Quad9 second** for independence: a different operator, a Swiss foundation,
+DNSSEC-validating. **Google last**, because the most reliably reachable
+resolver on the internet is the right thing to fall back to and the wrong thing
+to prefer.
+
+The IPv6 entries are not decoration. These nodes are dual-stack, and an
+IPv4-only list turns an IPv4 incident the node would otherwise survive into a
+total DNS outage.
+
+Alternatives for a host where the defaults are filtered — Mullvad, dns0.eu,
+AdGuard — are listed in `defaults/main.yml`. Set `dns_servers` in that host's
+`host_vars`; do not change the default for the fleet. Note that a *filtering*
+resolver answers NXDOMAIN for what it blocks, and a node needs registries,
+mirrors and ACME endpoints to resolve rather than opinions about them.
+
 ## Variables
 
 | Variable | Default | Description |
