@@ -24,7 +24,6 @@
   ansible.builtin.apt:
     name: needrestart
     state: present
-  when: upgrade_reboot | bool
   tags:
     - install
 
@@ -41,7 +40,6 @@
     owner: root
     group: root
     mode: "0644"
-  when: upgrade_reboot | bool
   tags:
     - config
 
@@ -127,6 +125,18 @@
   tags:
     - service
 
+# DETECTION IS UNCONDITIONAL; only the reboot below obeys upgrade_reboot.
+# Gating the install on it broke two things at once. provision-node.yml sets
+# upgrade_reboot: false so the role cannot reboot mid-provisioning, then calls
+# needrestart itself after the agents — against a host where the package had
+# never been installed, and the run died at the last task. And on the panel,
+# which is permanently upgrade_reboot: false, the detection never ran at all,
+# so update.yml's "reboot required (manual)" indicator could not appear on the
+# one host that can only ever be rebooted by hand.
+#
+# Knowing whether a reboot is needed is free and useful everywhere. Performing
+# one is the part that is dangerous, and that is what the flag is for.
+#
 # The signal that works on both families. Batch mode emits NEEDRESTART-KSTA:
 #   0 unknown or failed to detect      1 no pending upgrade
 #   2 ABI compatible upgrade pending   3 version upgrade pending
@@ -140,7 +150,6 @@
   ansible.builtin.command: needrestart -b -k
   register: upgrade_needrestart
   changed_when: false
-  when: upgrade_reboot | bool
   tags:
     - service
 
@@ -154,7 +163,6 @@
          | select('match', '^NEEDRESTART-KSTA:')
          | map('regex_replace', '^NEEDRESTART-KSTA:\s*', '')
          | list | first | default('0') | int }}
-  when: upgrade_reboot | bool
   tags:
     - service
 

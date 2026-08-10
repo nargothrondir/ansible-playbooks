@@ -36,13 +36,13 @@
         - name: Record a successful upgrade
           ansible.builtin.set_fact:
             update_status: ok
-            update_reboot_needed: "{{ upgrade_reboot_required.stat.exists | default(false) }}"
+            update_reboot_needed: "{{ upgrade_reboot_required | default(false) | bool }}"
             # Actually rebooted only when the role is allowed to (panel has
             # upgrade_reboot: false and must be rebooted manually). upgrade_reboot
             # is the upgrade role's default, out of scope here at play level, so
             # mirror that default (true) — only host_vars overrides (panel) apply.
             update_rebooted: >-
-              {{ (upgrade_reboot_required.stat.exists | default(false))
+              {{ (upgrade_reboot_required | default(false) | bool)
                  and (upgrade_reboot | default(true) | bool) }}
             # Two-pass parse: security-suite lines first (marked 🛡), then the rest.
             # Lines already rewritten by the first pass no longer match the second.
