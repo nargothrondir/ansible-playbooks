@@ -2,9 +2,29 @@
 # Drop-in, NOT an edit of /etc/systemd/resolved.conf: that file belongs to the
 # systemd package, so a modified copy turns every systemd upgrade into a
 # conffile prompt that somebody eventually answers wrong.
+#
+# The empty assignments below are not noise. A drop-in has higher precedence
+# than the main file, but for systemd's LIST settings that does not mean
+# replacement: DNS=, FallbackDNS= and Domains= accumulate across files, and the
+# main file is parsed first, so its entries end up at the HEAD of the list —
+# where they are preferred. On a host whose resolver was configured by hand
+# (every node predating this role) that quietly left the old servers in charge
+# while this file looked like it was in control.
+#
+# An empty assignment clears everything accumulated so far, per setting. So each
+# list is reset immediately before it is set. DNSOverTLS and DNSSEC are single
+# values and need no reset — the last assignment simply wins.
+#
+# Measured on the lab node, because the manual documents neither the
+# accumulation nor the reset — it only says drop-ins "override" the main file:
+#   main DNS=203.0.113.53 + drop-in DNS= / DNS=198.51.100.53
+#   -> DNS Servers: 198.51.100.53
 [Resolve]
+DNS=
 DNS={{ dns_servers | join(' ') }}
+FallbackDNS=
 FallbackDNS={{ dns_fallback_servers | join(' ') }}
+Domains=
 Domains={{ dns_search_domain }}
 DNSOverTLS={{ 'yes' if dns_over_tls | bool else 'no' }}
 DNSSEC={{ dns_dnssec if dns_dnssec is string else ('yes' if dns_dnssec | bool else 'no') }}
