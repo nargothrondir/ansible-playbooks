@@ -1,0 +1,154 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+    fail_msg: >
+      Unsupported OS: {{ ansible_facts['distribution'] }}
+      {{ ansible_facts['distribution_version'] }}.
+      Only Debian/Ubuntu are supported.
+  tags:
+    - install
+
+# This role CONFIGURES systemd-resolved; it does not build a resolver stack
+# from nothing. Failing here names the reason, instead of writing a drop-in
+# that nothing reads and reporting success.
+- name: Collect service facts
+  ansible.builtin.service_facts:
+  tags:
+    - config
+
+- name: Assert systemd-resolved is running
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.services['systemd-resolved.service'].state | default('') == 'running'
+    fail_msg: >-
+      systemd-resolved is not active on this host, so a drop-in for it would
+      configure nothing. Either it is not the resolver here, or it is masked —
+      find out which before forcing this role.
+  tags:
+    - config
+
+- name: Ensure the resolved drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/resolved.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags:
+    - config
+
+- name: Deploy the encrypted-DNS drop-in
+  ansible.builtin.template:
+    src: resolved.conf.j2
+    dest: /etc/systemd/resolved.conf.d/50-encrypted-dns.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: "restart systemd-resolved"
+  tags:
+    - config
+
+- name: Remove interface-supplied nameservers from the interfaces file
+  ansible.builtin.lineinfile:
+    path: "{{ dns_interfaces_file }}"
+    regexp: '^\s*dns-nameservers\s'
+    state: absent
+    backup: true
+  when:
+    - dns_strip_interface_nameservers | bool
+    - dns_interfaces_file is exists
+  tags:
+    - config
+
+# The edit above only changes what the NEXT ifup would publish. The interface
+# is already up and resolved still holds its servers, so they keep winning
+# until something clears them. `resolvectl revert` clears a link's DNS settings
+# WITHOUT touching the interface itself — bouncing the interface instead would
+# drop the SSH session running this play.
+#
+# Only the default-route interface. Reverting the NetBird link would take the
+# mesh domain with it, and the panel addresses this node by its mesh name.
+- name: Read the link's current DNS settings
+  ansible.builtin.command: "resolvectl dns {{ ansible_facts['default_ipv4']['interface'] }}"
+  register: dns_link_current
+  changed_when: false
+  failed_when: false
+  when: dns_strip_interface_nameservers | bool
+  tags:
+    - config
+
+- name: Clear the link's DNS settings so the global ones apply
+  ansible.builtin.command: "resolvectl revert {{ ansible_facts['default_ipv4']['interface'] }}"
+  when:
+    - dns_strip_interface_nameservers | bool
+    - dns_link_current.stdout | default('') is search(':\s*\S')
+  changed_when: dns_link_current.stdout | default('') is search(':\s*\S')
+  tags:
+    - config
+
+# Handlers run at the end of a play, and everything below asks the resolver
+# what it is actually doing. Without this the verification would inspect the
+# OLD configuration and pass on a host that is about to change underneath it —
+# the "green but broken" shape this repository keeps meeting.
+- name: Apply the pending resolved restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Read the resolver state
+  ansible.builtin.command: resolvectl status
+  register: dns_status
+  changed_when: false
+  tags:
+    - config
+
+- name: Assert encrypted DNS is actually in force
+  ansible.builtin.assert:
+    that:
+      - dns_status.stdout is search('\+DNSOverTLS')
+    fail_msg: >-
+      resolvectl does not report +DNSOverTLS after applying the drop-in. The
+      file was written but is not in effect — check for a second drop-in
+      overriding it, or a DNSOverTLS setting left in
+      /etc/systemd/resolved.conf itself.
+    success_msg: "Encrypted DNS is in force"
+  when: dns_over_tls | bool
+  tags:
+    - config
+
+# Behaviour, not configuration. A resolver that cannot answer is a broken node
+# — no apt, no ACME, no panel — and it must fail here, while somebody is
+# watching, rather than at the next unattended run.
+- name: Resolve a name through the configured resolver
+  ansible.builtin.command: "resolvectl query --cache=no {{ dns_verify_name }}"
+  register: dns_verify
+  changed_when: false
+  retries: 3
+  delay: 2
+  until: dns_verify.rc == 0
+  tags:
+    - config
+
+# The mesh is the path the panel uses to reach this node. If the global scope
+# swallowed the NetBird domain, the node keeps serving traffic while becoming
+# unmanageable — visible only later, from the panel side.
+- name: Resolve this host's own mesh name
+  ansible.builtin.command: "resolvectl query --cache=no {{ inventory_hostname }}.{{ netbird_dns_domain }}"
+  register: dns_verify_mesh
+  changed_when: false
+  retries: 3
+  delay: 2
+  until: dns_verify_mesh.rc == 0
+  when: netbird_dns_domain | default('') | length > 0
+  tags:
+    - config
+
+- name: Report which scope answered
+  ansible.builtin.debug:
+    msg: >-
+      {{ dns_verify_name }} resolved via
+      {{ 'the global scope (encrypted upstreams in use)'
+         if not (dns_verify.stdout is search('-- link:'))
+         else 'a LINK scope — interface DNS still wins, the global servers are not being used' }}.
+  tags:
+    - debug

@@ -14,6 +14,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 |-----------|---------|
 | OS | Debian 12 → 13 on the fleet, Ubuntu LTS on the control host |
 | Kernel | XanMod (BBRv3) on the nodes |
+| DNS | systemd-resolved with DoT to chosen upstreams (roles/dns) |
 | Mesh | NetBird — every host joins it; admin surfaces are reachable only through it |
 | Containers | Docker Engine + Compose plugin |
 | Container delivery | Dockhand (From-Git stacks, polling) with Hawser edge agents |
@@ -27,6 +28,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | Role | Purpose | Depends on |
 |------|---------|------------|
 | [bootstrap](roles/bootstrap/README.md) | Create the key-only `ansible` automation user and grant passwordless sudo | — |
+| [dns](roles/dns/README.md) | Encrypted DNS for the host's own lookups: systemd-resolved + DoT, interface nameservers removed so it takes effect | — |
 | [common](roles/common/README.md) | Install baseline packages (sudo, curl, wget, ...) | — |
 | [docker](roles/docker/README.md) | Docker Engine + Compose plugin via the official repo | — |
 | [xanmod](roles/xanmod/README.md) | Install the XanMod performance kernel | — |
@@ -52,6 +54,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | [playbooks/dockhand.yml](playbooks/dockhand.yml) | dockhand | `dockhand_target` (default: panel) |
 | [playbooks/hawser.yml](playbooks/hawser.yml) | hawser (hosts with a token) | managed |
 | [playbooks/provision.yml](playbooks/provision.yml) | common, docker | lab |
+| [playbooks/dns.yml](playbooks/dns.yml) | dns (encrypted resolver) | `dns_target` (default: lab) |
 | [playbooks/common.yml](playbooks/common.yml) | common (re-apply the baseline) | `common_target` (default: lab) |
 | [playbooks/crowdsec.yml](playbooks/crowdsec.yml) | crowdsec | fleet (except panel) |
 | [playbooks/beszel.yml](playbooks/beszel.yml) | beszel_agent | fleet (except panel) |

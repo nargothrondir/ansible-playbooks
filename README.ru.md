@@ -14,6 +14,7 @@
 |-----------|--------|
 | ОС | Debian 12 → 13 на флоте, Ubuntu LTS на управляющем хосте |
 | Ядро | XanMod (BBRv3) на нодах |
+| DNS | systemd-resolved с DoT к выбранным апстримам (roles/dns) |
 | Меш | NetBird — в него входит каждый хост; админ-поверхности доступны только через него |
 | Контейнеры | Docker Engine + плагин Compose |
 | Доставка контейнеров | Dockhand (стеки From-Git, опрос) с краевыми агентами Hawser |
@@ -27,6 +28,7 @@
 | Роль | Назначение | Зависит от |
 |------|------------|------------|
 | [bootstrap](roles/bootstrap/README.ru.md) | Создаёт пользователя `ansible` (только по ключу) и выдаёт беспарольный sudo | — |
+| [dns](roles/dns/README.ru.md) | Шифрованный DNS для собственных запросов хоста: systemd-resolved + DoT, серверы интерфейса убраны, чтобы настройка действовала | — |
 | [common](roles/common/README.ru.md) | Установка базовых пакетов (sudo, curl, wget, ...) | — |
 | [docker](roles/docker/README.ru.md) | Docker Engine + Compose-плагин из официального репозитория | — |
 | [xanmod](roles/xanmod/README.ru.md) | Установка производительного ядра XanMod | — |
@@ -52,6 +54,7 @@
 | [playbooks/dockhand.yml](playbooks/dockhand.yml) | dockhand | `dockhand_target` (по умолчанию: panel) |
 | [playbooks/hawser.yml](playbooks/hawser.yml) | hawser (хосты с токеном) | managed |
 | [playbooks/provision.yml](playbooks/provision.yml) | common, docker | lab |
+| [playbooks/dns.yml](playbooks/dns.yml) | dns (шифрованный резолвер) | `dns_target` (по умолчанию: lab) |
 | [playbooks/common.yml](playbooks/common.yml) | common (повторное применение базовой роли) | `common_target` (по умолчанию: lab) |
 | [playbooks/crowdsec.yml](playbooks/crowdsec.yml) | crowdsec | fleet (кроме panel) |
 | [playbooks/beszel.yml](playbooks/beszel.yml) | beszel_agent | fleet (кроме panel) |

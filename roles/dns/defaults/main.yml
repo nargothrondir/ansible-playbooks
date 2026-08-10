@@ -1,0 +1,53 @@
+---
+# Encrypted DNS for the host's OWN lookups — apt, ACME, the panel, mesh names.
+# NOT the VPN clients' DNS: xray resolves their traffic itself over DoH, and
+# nothing here touches that path.
+
+# Upstream resolvers, in preference order. The `#hostname` suffix is not
+# decoration: without it the TLS certificate can only be checked against the
+# IP, and the point of choosing a resolver is knowing you reached it.
+dns_servers:
+  - "1.1.1.1#cloudflare-dns.com"
+  - "9.9.9.9#dns.quad9.net"
+
+# Used only when every server above is unreachable.
+dns_fallback_servers:
+  - "8.8.8.8#dns.google"
+
+# Strict DNS-over-TLS: no silent downgrade to plaintext. The cost is that an
+# unreachable upstream breaks resolution outright rather than degrading — which
+# is the correct trade for a resolver chosen on purpose, but it does mean a
+# typo in dns_servers takes the node off the network by name.
+#
+# systemd-resolved speaks DoT and NOT DoH. DoH needs a separate always-running
+# daemon; it buys blocking-resistance (port 443 rather than 853) and costs a
+# process that takes DNS with it when it dies. Worth it only where 853 is
+# actually filtered — set per host, do not standardise on it fleet-wide.
+dns_over_tls: true
+
+# Strict DNSSEC validation. A domain with broken DNSSEC then fails to resolve
+# instead of resolving unvalidated. Set "allow-downgrade" to prefer
+# availability over authenticity.
+dns_dnssec: true
+
+# `~.` makes these servers authoritative for every domain that no other scope
+# claims. NetBird's own scope keeps the mesh domain, so mesh names are
+# unaffected — verified by this role before it reports success.
+dns_search_domain: "~."
+
+# --- The half that makes the rest take effect ------------------------------
+# systemd-resolved resolves per SCOPE, and an interface's own servers beat the
+# global ones. Provider images ship `dns-nameservers` in the interface config;
+# ifupdown hands those to resolvectl (/sbin/resolvconf is a symlink to it), so
+# the interface acquires its own resolvers and every query goes there. The
+# global configuration above then applies to nothing at all, while
+# `resolvectl status` still shows it and looks correct.
+#
+# Set false only on a host whose interface DNS must stay.
+dns_strip_interface_nameservers: true
+dns_interfaces_file: /etc/network/interfaces
+
+# --- Verification ----------------------------------------------------------
+# Resolved after applying, to prove the resolver works rather than that the
+# config file was written. Any name the fleet genuinely depends on will do.
+dns_verify_name: deb.debian.org

@@ -1,0 +1,18 @@
+---
+galaxy_info:
+  role_name: dns
+  author: nargothrondir
+  description: Encrypted DNS for the host's own lookups — systemd-resolved with DoT, and interface nameservers removed so it takes effect
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+
+dependencies: []
