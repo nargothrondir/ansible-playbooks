@@ -141,6 +141,14 @@ The opinionated choices an agent cannot infer:
   **fetch-then-guard** — GET the current state, mutate only what is missing
   behind a `when:` guard; non-deterministic steps (key/id generation) sit
   behind the same guard. No unguarded mutating calls that fire on every run.
+- **External state is created by the playbook that needs it, through the
+  tool's API — never by hand in a UI.** A Dockhand environment, a Semaphore
+  template, a DNS record, a panel node: whatever a run depends on, the run
+  creates, idempotently by the rule above. A click leaves nothing in git, is
+  absent from a rebuild, and is found when the rebuild fails (#77). This costs
+  more than clicking and the API contract will be wrong at least once —
+  undocumented fields, renamed between versions, silently accepted and
+  dropped. Pay it: the alternative is state nobody can reconstruct.
 - **Privilege:** role-level `become: true`, not per-task repetition; escalate
   only where needed; `become_user` when not root.
 - **Templates render, don't compute** — logic lives in variables and tasks,
