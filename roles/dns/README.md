@@ -102,6 +102,28 @@ AdGuard — are listed in `defaults/main.yml`. Set `dns_servers` in that host's
 resolver answers NXDOMAIN for what it blocks, and a node needs registries,
 mirrors and ACME endpoints to resolve rather than opinions about them.
 
+### It replaces the resolver list, it does not merge with it
+
+On a host whose resolver was configured by hand, `/etc/systemd/resolved.conf`
+already carries `DNS=` and `FallbackDNS=`. A drop-in has higher precedence, but
+systemd's **list** settings accumulate across files rather than replace — and
+the main file is parsed first, so its servers end up at the head of the list,
+where they are preferred. The drop-in would look authoritative while the old
+servers kept answering.
+
+Measured on the lab node, since the manual documents neither the accumulation
+nor the cure:
+
+```
+main file:  DNS=203.0.113.53
+drop-in:    DNS=<six servers>
+result:     DNS Servers: 203.0.113.53 <six servers>    ← old one first
+```
+
+So the template resets each list with an empty assignment before setting it.
+With `DNS=` on its own line first, the same test yields only the drop-in's
+servers. The main file is still never edited.
+
 ## Variables
 
 | Variable | Default | Description |
