@@ -10,26 +10,26 @@
   tags:
     - install
 
-# This role CONFIGURES systemd-resolved; it does not build a resolver stack
-# from nothing. Failing here names the reason, instead of writing a drop-in
-# that nothing reads and reporting success.
-- name: Collect service facts
-  ansible.builtin.service_facts:
+# On Debian 12+ systemd-resolved is a SEPARATE PACKAGE and a minimal install
+# does not have it. Every production node here got it by hand; the node built
+# entirely by the pipeline had no resolver at all, and NetBird — finding none —
+# took /etc/resolv.conf for itself and forwarded to whatever the provider image
+# had configured, in plaintext.
+#
+# So a node rebuilt through the pipeline silently loses encrypted DNS. It does
+# not fail, it just stops having it. Installing the package is therefore part
+# of the role, not a precondition for it.
+- name: Install systemd-resolved
+  ansible.builtin.apt:
+    name: systemd-resolved
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  register: dns_resolved_installed
   tags:
-    - config
+    - install
 
-- name: Assert systemd-resolved is running
-  ansible.builtin.assert:
-    that:
-      - ansible_facts.services['systemd-resolved.service'].state | default('') == 'running'
-    fail_msg: >-
-      systemd-resolved is not active on this host, so a drop-in for it would
-      configure nothing. Either it is not the resolver here, or it is masked —
-      find out which before forcing this role.
-  tags:
-    - config
-
-- name: Ensure the resolved drop-in directory exists
+- name: Ensure the drop-in directory exists
   ansible.builtin.file:
     path: /etc/systemd/resolved.conf.d
     state: directory
@@ -39,6 +39,9 @@
   tags:
     - config
 
+# BEFORE the resolver is made authoritative below. Pointing resolv.conf at a
+# resolver that has no upstreams yet would break every lookup on the host for
+# as long as it took the next task to run.
 - name: Deploy the encrypted-DNS drop-in
   ansible.builtin.template:
     src: resolved.conf.j2
@@ -50,6 +53,92 @@
   tags:
     - config
 
+- name: Ensure systemd-resolved is enabled and running
+  ansible.builtin.systemd_service:
+    name: systemd-resolved
+    state: started
+    enabled: true
+    daemon_reload: true
+  register: dns_resolved_started
+  tags:
+    - service
+
+- name: Apply the pending resolved restart before it becomes authoritative
+  ansible.builtin.meta: flush_handlers
+
+# What actually makes systemd-resolved the system resolver. On a host that had
+# no resolver, NetBird owns this file as a PLAIN FILE listing its own address;
+# replacing it hands resolution to resolved, whose stub forwards to the
+# upstreams configured above.
+#
+# Backed up first, and only touched when it is not already the stub symlink —
+# on the hand-built nodes it is, and this is a no-op there.
+- name: Check what /etc/resolv.conf currently is
+  ansible.builtin.stat:
+    path: /etc/resolv.conf
+  register: dns_resolv_conf
+  tags:
+    - config
+
+- name: Back up the resolver configuration being replaced
+  ansible.builtin.copy:
+    src: /etc/resolv.conf
+    dest: /etc/resolv.conf.before-dns-role
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+    force: false
+  when:
+    - dns_manage_resolv_conf | bool
+    - dns_resolv_conf.stat.lnk_source | default('') != dns_stub_resolv_conf
+  tags:
+    - config
+
+- name: Point /etc/resolv.conf at the resolved stub
+  ansible.builtin.file:
+    src: "{{ dns_stub_resolv_conf }}"
+    dest: /etc/resolv.conf
+    state: link
+    force: true
+  when:
+    - dns_manage_resolv_conf | bool
+    - dns_resolv_conf.stat.lnk_source | default('') != dns_stub_resolv_conf
+  tags:
+    - config
+
+# Needed by the guard on the next task. Collected HERE rather than at the top,
+# so it reflects the state after systemd-resolved was installed and started.
+- name: Collect service facts
+  ansible.builtin.service_facts:
+  tags:
+    - service
+
+# NetBird decides how to publish the mesh domain when it STARTS: with resolved
+# present it registers as a link scope, without it it rewrites resolv.conf.
+# A node that just gained a resolver is still running the second arrangement,
+# and the file it was holding has just been replaced — so mesh names resolve
+# nowhere until it re-detects.
+#
+# Only when something above actually changed. Restarting NetBird on every run
+# would flap the mesh for nothing, and the mesh is how the panel reaches this
+# node.
+- name: Re-register NetBird against the new resolver
+  ansible.builtin.systemd_service:
+    name: netbird
+    state: restarted
+  when:
+    - dns_manage_resolv_conf | bool
+    - dns_resolved_installed is changed or dns_resolved_started is changed
+      or (dns_resolv_conf.stat.lnk_source | default('') != dns_stub_resolv_conf)
+    - "'netbird.service' in (ansible_facts.services | default({}))"
+  tags:
+    - service
+
+# --- interface-supplied nameservers ----------------------------------------
+# The other half, and the one that bites on the hand-built nodes: an
+# interface's own servers beat the global ones, so `dns-nameservers` in the
+# interfaces file quietly wins and the upstreams above apply to nothing.
 - name: Remove interface-supplied nameservers from the interfaces file
   ansible.builtin.lineinfile:
     path: "{{ dns_interfaces_file }}"
@@ -62,14 +151,13 @@
   tags:
     - config
 
-# The edit above only changes what the NEXT ifup would publish. The interface
-# is already up and resolved still holds its servers, so they keep winning
-# until something clears them. `resolvectl revert` clears a link's DNS settings
-# WITHOUT touching the interface itself — bouncing the interface instead would
+# The edit above only changes what the NEXT ifup would publish; the interface
+# is up and resolved still holds its servers. `resolvectl revert` clears a
+# link's settings WITHOUT touching the interface — bouncing the interface would
 # drop the SSH session running this play.
 #
-# Only the default-route interface. Reverting the NetBird link would take the
-# mesh domain with it, and the panel addresses this node by its mesh name.
+# Default-route interface only. Reverting the NetBird link would take the mesh
+# domain with it.
 - name: Read the link's current DNS settings
   ansible.builtin.command: "resolvectl dns {{ ansible_facts['default_ipv4']['interface'] }}"
   register: dns_link_current
@@ -88,17 +176,16 @@
   tags:
     - config
 
-# Handlers run at the end of a play, and everything below asks the resolver
-# what it is actually doing. Without this the verification would inspect the
-# OLD configuration and pass on a host that is about to change underneath it —
-# the "green but broken" shape this repository keeps meeting.
-- name: Apply the pending resolved restart
-  ansible.builtin.meta: flush_handlers
-
+# --- verification ----------------------------------------------------------
+# Behaviour, not configuration. "The file was written" is what this repository
+# keeps mistaking for "it works".
 - name: Read the resolver state
   ansible.builtin.command: resolvectl status
   register: dns_status
   changed_when: false
+  retries: 3
+  delay: 2
+  until: dns_status.rc == 0
   tags:
     - config
 
@@ -116,28 +203,25 @@
   tags:
     - config
 
-# Behaviour, not configuration. A resolver that cannot answer is a broken node
-# — no apt, no ACME, no panel — and it must fail here, while somebody is
-# watching, rather than at the next unattended run.
 - name: Resolve a name through the configured resolver
   ansible.builtin.command: "resolvectl query --cache=no {{ dns_verify_name }}"
   register: dns_verify
   changed_when: false
-  retries: 3
-  delay: 2
+  retries: 5
+  delay: 3
   until: dns_verify.rc == 0
   tags:
     - config
 
-# The mesh is the path the panel uses to reach this node. If the global scope
-# swallowed the NetBird domain, the node keeps serving traffic while becoming
-# unmanageable — visible only later, from the panel side.
+# The mesh is the path the panel uses to reach this node. If the handover left
+# NetBird unregistered, the node keeps serving traffic while becoming
+# unmanageable — and that is visible only later, from the panel side.
 - name: Resolve this host's own mesh name
   ansible.builtin.command: "resolvectl query --cache=no {{ inventory_hostname }}.{{ netbird_dns_domain }}"
   register: dns_verify_mesh
   changed_when: false
-  retries: 3
-  delay: 2
+  retries: 5
+  delay: 3
   until: dns_verify_mesh.rc == 0
   when: netbird_dns_domain | default('') | length > 0
   tags:

@@ -66,6 +66,22 @@ dns_dnssec: true
 # unaffected — verified by this role before it reports success.
 dns_search_domain: "~."
 
+# --- Making systemd-resolved the resolver at all ---------------------------
+# On Debian 12+ systemd-resolved is a separate package, absent from a minimal
+# install. Every hand-built node here got it manually; the node built entirely
+# by the pipeline had no resolver, so NetBird took /etc/resolv.conf for itself
+# and forwarded in plaintext to whatever the provider image configured.
+#
+# A node rebuilt through the pipeline therefore loses encrypted DNS silently.
+# The role installs the package and points resolv.conf at the resolved stub,
+# then restarts NetBird so it re-registers the mesh domain against the new
+# resolver instead of owning the file.
+#
+# Set false to configure resolved without taking resolv.conf from whoever holds
+# it — useful only if something else on the host must keep owning it.
+dns_manage_resolv_conf: true
+dns_stub_resolv_conf: /run/systemd/resolve/stub-resolv.conf
+
 # --- The half that makes the rest take effect ------------------------------
 # systemd-resolved resolves per SCOPE, and an interface's own servers beat the
 # global ones. Provider images ship `dns-nameservers` in the interface config;

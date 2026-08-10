@@ -11,6 +11,34 @@ removes the interface-supplied nameservers that would otherwise override them.
 It does **not** touch the VPN clients' DNS: xray resolves their traffic itself
 over DoH, on a path that never reaches the system resolver.
 
+### It installs the resolver, because the pipeline never did
+
+On Debian 12+ `systemd-resolved` is a **separate package**, absent from a
+minimal install. Every hand-built node here acquired it manually. The node
+built entirely by the provisioning pipeline had no resolver at all — and
+NetBird, finding none, took `/etc/resolv.conf` for itself as a plain file and
+forwarded to whatever the provider image had configured, in **plaintext**:
+
+```
+un  systemd-resolved  <none>          ← package not installed
+:53 → netbird only
+/etc/resolv.conf (a plain file):  nameserver 100.64.0.0
+```
+
+So a node rebuilt through the pipeline loses encrypted DNS **silently** — it
+does not fail, it just stops having it. The role therefore installs the
+package, hands `resolv.conf` to the stub, and restarts NetBird so it
+re-registers the mesh domain against the new resolver instead of owning the
+file. On a host that already has all this, every one of those steps is a no-op.
+
+The order is not arbitrary: upstreams are configured *before* resolved becomes
+authoritative, because pointing `resolv.conf` at a resolver with no upstreams
+breaks every lookup in the window between the two.
+
+The replaced `resolv.conf` is copied to `/etc/resolv.conf.before-dns-role`
+first. If the handover goes wrong, restoring that file and restarting NetBird
+puts resolution back.
+
 ### The half that is easy to miss
 
 `systemd-resolved` resolves per **scope**, and an interface's own servers beat
@@ -78,6 +106,8 @@ mirrors and ACME endpoints to resolve rather than opinions about them.
 | `dns_over_tls` | `true` | Strict DoT — no silent downgrade to plaintext. |
 | `dns_dnssec` | `true` | Strict validation. Use `allow-downgrade` to prefer availability over authenticity. |
 | `dns_search_domain` | `~.` | Makes the upstreams authoritative for domains no other scope claims. |
+| `dns_manage_resolv_conf` | `true` | Install the resolver and point `/etc/resolv.conf` at its stub, restarting NetBird to re-register. |
+| `dns_stub_resolv_conf` | `/run/systemd/resolve/stub-resolv.conf` | Where that symlink points. |
 | `dns_strip_interface_nameservers` | `true` | Remove `dns-nameservers` from the interfaces file and clear the link's DNS. |
 | `dns_interfaces_file` | `/etc/network/interfaces` | Where those lines live. |
 | `dns_verify_name` | `deb.debian.org` | Name resolved after applying, to prove the resolver works. |
