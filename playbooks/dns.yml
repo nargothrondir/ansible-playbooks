@@ -1,16 +1,23 @@
 ---
 # Apply encrypted DNS (systemd-resolved + DoT) to an explicit target.
 #
-# Deliberately NOT wired into provision-node.yml yet: the role edits
-# /etc/network/interfaces, which holds the node's STATIC address, and clears
-# the resolver's link settings on a live host. Both are safe as written; both
-# have now run on the lab node and nowhere else.
+# For applying the role to a node the pipeline did not build. provision-node.yml
+# runs it too, before netbird and before docker, which is where it costs
+# nothing: no resolver handover and no container ever created with a stale copy.
+#
+# This playbook is the retrofit path — the existing nodes were built before that
+# ordering existed, and on them the role has real work to do: their interface
+# nameservers are what currently overrides their DoT configuration.
 #
 # On a node with a stack already up the role STOPS, because replacing
 # /etc/resolv.conf leaves running containers with the resolver Docker copied
 # for them at creation time — see issue #153 and roles/dns/README.md. Waive it
 # with -e dns_allow_running_containers=true only when you will restart the
 # stack afterwards.
+#
+# The role also edits /etc/network/interfaces, which holds the node's STATIC
+# address, and clears the resolver's link settings on a live host. Both are safe
+# as written; both have run on the lab node.
 #
 #   ansible-playbook playbooks/dns.yml                    # the lab, by default
 #   ansible-playbook playbooks/dns.yml -e dns_target=fi   # one canary node

@@ -58,7 +58,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | [playbooks/common.yml](playbooks/common.yml) | common (re-apply the baseline) | `common_target` (default: lab) |
 | [playbooks/crowdsec.yml](playbooks/crowdsec.yml) | crowdsec | fleet (except panel) |
 | [playbooks/beszel.yml](playbooks/beszel.yml) | beszel_agent | fleet (except panel) |
-| [playbooks/provision-node.yml](playbooks/provision-node.yml) | bootstrap, upgrade, ssh_hardening, common, netbird, docker, xanmod, hawser, crowdsec, ufw, beszel_agent + panel API | (survey) |
+| [playbooks/provision-node.yml](playbooks/provision-node.yml) | bootstrap, upgrade, ssh_hardening, common, dns, netbird, docker, xanmod, hawser, crowdsec, ufw, beszel_agent + panel API | (survey) |
 | [playbooks/new-profile.yml](playbooks/new-profile.yml) | — (panel API call) | control |
 | [playbooks/new-node.yml](playbooks/new-node.yml) | — (panel API call) | control |
 | [playbooks/dns-record.yml](playbooks/dns-record.yml) | — (Cloudflare API; imported by provision-node.yml, or standalone) | `dns_target` (default: controller) |

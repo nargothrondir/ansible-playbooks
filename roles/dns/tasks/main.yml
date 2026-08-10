@@ -285,6 +285,13 @@
 # The mesh is the path the panel uses to reach this node. If the handover left
 # NetBird unregistered, the node keeps serving traffic while becoming
 # unmanageable — and that is visible only later, from the panel side.
+#
+# Guarded on NetBird actually being installed, not just on the domain being
+# configured. `netbird_dns_domain` comes from group_vars and is therefore set on
+# a host that has never joined the mesh — including a node mid-provision, where
+# this role now runs BEFORE the netbird role. Without this guard the check
+# retried five times and failed the whole provisioning run over a mesh that did
+# not exist yet.
 - name: Resolve this host's own mesh name
   ansible.builtin.command: "resolvectl query --cache=no {{ inventory_hostname }}.{{ netbird_dns_domain }}"
   register: dns_verify_mesh
@@ -292,7 +299,9 @@
   retries: 5
   delay: 3
   until: dns_verify_mesh.rc == 0
-  when: netbird_dns_domain | default('') | length > 0
+  when:
+    - netbird_dns_domain | default('') | length > 0
+    - "'netbird.service' in (ansible_facts.services | default({}))"
   tags:
     - config
 
