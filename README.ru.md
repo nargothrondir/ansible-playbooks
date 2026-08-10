@@ -58,7 +58,7 @@
 | [playbooks/common.yml](playbooks/common.yml) | common (повторное применение базовой роли) | `common_target` (по умолчанию: lab) |
 | [playbooks/crowdsec.yml](playbooks/crowdsec.yml) | crowdsec | fleet (кроме panel) |
 | [playbooks/beszel.yml](playbooks/beszel.yml) | beszel_agent | fleet (кроме panel) |
-| [playbooks/provision-node.yml](playbooks/provision-node.yml) | bootstrap, upgrade, ssh_hardening, common, netbird, docker, xanmod, hawser, crowdsec, ufw, beszel_agent + API панели | (survey) |
+| [playbooks/provision-node.yml](playbooks/provision-node.yml) | bootstrap, upgrade, ssh_hardening, common, dns, netbird, docker, xanmod, hawser, crowdsec, ufw, beszel_agent + API панели | (survey) |
 | [playbooks/new-profile.yml](playbooks/new-profile.yml) | — (вызов API панели) | control |
 | [playbooks/new-node.yml](playbooks/new-node.yml) | — (вызов API панели) | control |
 | [playbooks/dns-record.yml](playbooks/dns-record.yml) | — (API Cloudflare; импортируется provision-node.yml или отдельно) | `dns_target` (по умолчанию: controller) |

@@ -126,9 +126,12 @@ behaviour:
 - `resolvectl` reports `+DNSOverTLS`;
 - `dns_verify_name` resolves;
 - this host's own `<name>.<netbird_dns_domain>` still resolves, when that
-  variable is set — the mesh is how the panel reaches the node, and a global
-  scope that swallowed the mesh domain leaves a node that serves traffic while
-  becoming unmanageable.
+  variable is set **and NetBird is installed** — the mesh is how the panel
+  reaches the node, and a global scope that swallowed the mesh domain leaves a
+  node that serves traffic while becoming unmanageable. The second half of that
+  condition matters: `netbird_dns_domain` comes from `group_vars`, so it is set
+  on a node that has never joined the mesh, including one mid-provision where
+  this role runs before the `netbird` role.
 
 The final debug line names the upstream the global scope settled on and whether
 the default link kept any servers of its own, so a link that still wins is
@@ -155,6 +158,12 @@ Measured on the lab node — the same ACME hook, either side of this role:
 So the role **stops** when it finds running containers. Restarting them
 afterwards is the entire fix; set `dns_allow_running_containers=true` once that
 is arranged.
+
+It stops only when the handover is actually pending. The question is not
+"are there containers" but "is this role about to take the resolver away from
+them" — if `/etc/resolv.conf` is already the stub, nothing they depend on
+changes and the check is skipped. Without that distinction the guard aborted
+every re-run of `provision-node.yml` on a node the pipeline had already built.
 
 A restart is enough on both network types, which is worth stating because the
 documentation suggests otherwise. A **host-network** container gets the host

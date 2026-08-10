@@ -189,13 +189,28 @@
           the panel would be registered against a dead DNS name.
   roles:
     # Ordered deliberately: patch the base first; open the automation SSH door;
-    # lay the baseline (incl. deb822 prerequisites for the repo roles); join the
-    # mesh as early as possible — the panel will address this node by its mesh
-    # name; then Docker, which hawser needs in the next play; then the kernel,
-    # whose handler ends this play with a reboot.
+    # lay the baseline (incl. deb822 prerequisites for the repo roles); give the
+    # node a resolver before anything wants one; join the mesh as early as
+    # possible after that — the panel will address this node by its mesh name;
+    # then Docker, which hawser needs in the next play; then the kernel, whose
+    # handler ends this play with a reboot.
+    #
+    # dns sits BEFORE netbird on purpose, and the position is the whole point.
+    # systemd-resolved is a separate package on Debian 12+, absent from a
+    # minimal image. NetBird looks for a resolver when it starts: finding one,
+    # it registers the mesh domain as a link scope; finding none, it takes
+    # /etc/resolv.conf for itself as a plain file and forwards in plaintext.
+    #
+    # Installing the resolver first means NetBird lands in the arrangement we
+    # want on its first start. There is no handover, no restart to re-register,
+    # and — because this is also before the docker role — every container is
+    # later created with the correct resolv.conf instead of a stale copy (#153).
+    # That is what a node built entirely by this pipeline was missing while
+    # every hand-built node had it.
     - upgrade
     - ssh_hardening
     - common
+    - dns
     - netbird
     - docker
     - xanmod
