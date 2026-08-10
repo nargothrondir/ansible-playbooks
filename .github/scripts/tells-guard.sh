@@ -44,7 +44,14 @@ echo "[1] IPv4 literals outside the documentation ranges"
 # referenced in the CrowdSec mesh whitelist). The range 100.64/10 as a whole is
 # NOT allowed — mesh addresses live inside it, so a blanket allow would let the
 # very identifiers this guard exists to catch straight through.
-ip_ok='^(192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.0\.0\.1$|127\.0\.1\.1$|0\.0\.0\.0$|255\.255\.255\.255$|100\.64\.0\.0$)|^('"$RESOLVER_V4"')$'
+#
+# NOTE on 127.: the whole loopback range, not just the two familiar literals.
+# 127.0.0.53 (the systemd-resolved stub) and 127.0.0.11 (Docker's embedded
+# resolver) are the same on every Linux host in existence and identify nothing;
+# blocking them only stopped roles/dns from documenting how its own resolution
+# works. The comment above already claimed loopback was allowed, so this is the
+# code catching up with it rather than a relaxation.
+ip_ok='^(192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.|0\.0\.0\.0$|255\.255\.255\.255$|100\.64\.0\.0$)|^('"$RESOLVER_V4"')$'
 found=0
 while IFS= read -r hit; do
   [ -z "$hit" ] && continue
