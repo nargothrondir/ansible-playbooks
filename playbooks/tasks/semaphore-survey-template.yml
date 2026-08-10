@@ -41,37 +41,52 @@
   ansible.builtin.set_fact:
     _template: "{{ template_result.json }}"
 
+# The SET of names is declarative — the list here is the truth, so a variable
+# that should not be there is removed, not just left alone. Append-only was the
+# original design and it turned out to be the bug: hawser_token stopped being a
+# survey field, somebody deleted it from the template by hand, the list in this
+# repository never learned that, and the first run put it back — as a REQUIRED
+# secret whose value overrides the correct one.
+#
+# The CONTENT of a variable that should be there is left as found. Titles and
+# descriptions get tuned in the UI while reading them, and rewriting those on
+# every sync would be its own kind of vandalism. So: names are managed here,
+# wording is not.
+#
 # survey_vars can be JSON null on a template that never had any.
-- name: Determine which survey variables are missing
+- name: Work out what the survey should become
   ansible.builtin.set_fact:
     _existing_vars: "{{ _template.survey_vars | default([], true) }}"
-    _missing_vars: >-
-      {{ _survey.value
-         | rejectattr('name', 'in',
-                      _template.survey_vars | default([], true)
-                      | map(attribute='name') | list)
-         | list }}
+    _wanted_names: "{{ _survey.value | map(attribute='name') | list }}"
+    _existing_names: >-
+      {{ _template.survey_vars | default([], true) | map(attribute='name') | list }}
 
-- name: Add the missing survey variables (only when something is missing)
+- name: Split the survey into keep, add and remove
+  ansible.builtin.set_fact:
+    _keep_vars: "{{ _existing_vars | selectattr('name', 'in', _wanted_names) | list }}"
+    _missing_vars: "{{ _survey.value | rejectattr('name', 'in', _existing_names) | list }}"
+    _stale_vars: "{{ _existing_vars | rejectattr('name', 'in', _wanted_names) | list }}"
+
+- name: Bring the survey to the declared set (only when it differs)
   ansible.builtin.uri:
     url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates/{{ _template.id }}"
     method: PUT
     headers: "{{ _api_headers }}"
     body_format: json
-    body: "{{ _template | combine({'survey_vars': _existing_vars + _missing_vars}) }}"
+    body: "{{ _template | combine({'survey_vars': _keep_vars + _missing_vars}) }}"
     status_code: [200, 204]
   no_log: true
-  # The when-guard is the change detector: the PUT runs only when variables are
-  # actually missing, so completing it IS the state change.
-  changed_when: _missing_vars | length > 0
-  when: _missing_vars | length > 0
+  # The when-guard is the change detector: the PUT runs only when the set
+  # actually differs, so completing it IS the state change.
+  changed_when: (_missing_vars | length + _stale_vars | length) > 0
+  when: (_missing_vars | length + _stale_vars | length) > 0
 
 - name: Show the survey sync summary
   ansible.builtin.debug:
     msg: >-
       Template "{{ _survey.key }}":
-      {{ (_missing_vars | map(attribute='name') | join(', '))
-         if _missing_vars | length > 0 else 'nothing' }} added;
-      {{ _existing_vars | length }} variable(s) were already present.
+      added {{ (_missing_vars | map(attribute='name') | join(', ')) | default('nothing', true) }};
+      removed {{ (_stale_vars | map(attribute='name') | join(', ')) | default('nothing', true) }};
+      kept {{ _keep_vars | length }}.
   tags:
     - debug

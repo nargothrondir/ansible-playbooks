@@ -21,8 +21,19 @@
 # which is the point, because the alternative is somebody adding the variable
 # by hand in the UI and nothing recording that it exists.
 #
-# Idempotent per template (fetch-then-guard, CLAUDE.md §6): only variables
-# MISSING by name are appended, and the PUT runs only when something is missing.
+# Idempotent per template (fetch-then-guard, CLAUDE.md §6): the PUT runs only
+# when the survey actually differs from what is declared here.
+#
+# DECLARATIVE on the set of names: a variable listed here is added if missing,
+# and one that is NOT listed is removed. Append-only was the first design and it
+# was the bug — hawser_token stopped being a survey field, someone deleted it
+# from the template by hand, this list never learned that, and the next run put
+# it back as a required secret that overrides the correct value. A list that can
+# only push in one direction records intent it cannot enforce.
+#
+# The WORDING of a variable that belongs is left as found: titles and
+# descriptions get tuned in the UI while somebody is reading them, and
+# overwriting that on every sync would be its own kind of vandalism.
 
 - name: Ensure Semaphore template survey variables
   hosts: controller
@@ -60,11 +71,12 @@
             — then Profile domain is required
           type: ""
           required: true
-        - name: hawser_token
-          title: Hawser token
-          description: Dockhand edge token for this host's environment
-          type: secret
-          required: true
+        # NOT hawser_token. dockhand-environment.yml creates the environment and
+        # publishes the token, and provision-node.yml says so at the top of the
+        # file. Worse than redundant as a survey field: an explicitly supplied
+        # value WINS over the one from OpenBao, so a required box someone fills
+        # to get past it hands the node a Hawser token that does not work — and
+        # that only shows up at the end, when the stack fails to deploy.
         - name: node_country
           title: Country code
           description: ISO-2 country code for the panel flag (e.g. PL)
