@@ -17,7 +17,7 @@ is meant to sit behind the reverse proxy (Netbird-only / IP-allowlisted).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `dockhand_image` | `fnsys/dockhand:v1.0.40` | Pinned image |
+| `dockhand_image` | `fnsys/dockhand:v1.0.41` | Pinned image |
 | `dockhand_bind` | `127.0.0.1:3040` | Host bind for the UI (behind the proxy) |
 | `dockhand_data_dir` | `/opt/dockhand` | Dir holding the compose file (data in a named volume) |
 | `dockhand_puid` / `dockhand_pgid` | `1000` | Container user/group ids |
