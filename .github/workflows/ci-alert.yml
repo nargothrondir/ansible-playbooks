@@ -4,11 +4,9 @@
 # Required repository secrets: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 # Optional repository secret: TELEGRAM_TOPIC_ID
 #
-# `completed` only, deliberately. Notifying on `in_progress` too doubled the
-# number of runs — and since every job is billed rounded up to a full minute,
-# these notifications had become the single largest consumer of the Actions
-# quota, outweighing the checks they report on. "Build started" is noise for a
-# single operator; the result is the signal.
+# `completed` only, deliberately. "Build started" is noise for a single
+# operator; the result is the signal. This one survives the move to a public
+# repository unchanged — it was never about cost, unlike the rule below.
 name: CI Alert
 
 on:
@@ -23,11 +21,21 @@ permissions:
 jobs:
   telegram:
     name: Telegram notification
-    # ONLY failures. A skipped job costs nothing, while a job that runs and
-    # decides to stay quiet still bills a full minute — and these fire once per
-    # completed workflow, so on a green push they were four paid minutes to say
-    # nothing. Success is already visible in the PR checks.
-    if: github.event.workflow_run.conclusion != 'success'
+    # Every real outcome. This was narrowed to failures only while the account
+    # was rationing Actions minutes — a job that runs and decides to stay quiet
+    # still billed a full minute, four of them per green push. The repository is
+    # public now, standard runners are free, and the reason is gone.
+    #
+    # `cancelled` and `skipped` stay silent, and that is not a cost decision:
+    # they are not outcomes. Merging two pull requests seconds apart puts both
+    # pushes in the same concurrency group, so the first one's runs are
+    # cancelled — the setting doing its job. The first time it happened it sent
+    # three "build cancelled" messages about nothing. An alert that fires on
+    # routine behaviour is how people learn to ignore alerts.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' ||
+      github.event.workflow_run.conclusion == 'failure' ||
+      github.event.workflow_run.conclusion == 'timed_out'
     runs-on: ubuntu-latest
     steps:
       - name: Send Telegram notification
