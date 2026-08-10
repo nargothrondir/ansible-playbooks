@@ -25,7 +25,7 @@ answered:
 
 ```bash
 resolvectl query --cache=no github.com
-# github.com: 140.82.121.3   -- link: ens3      ← the interface won
+# github.com: 203.0.113.10   -- link: ens3      ← the interface won
 ```
 
 So the role does two things, and the second is what makes the first real:

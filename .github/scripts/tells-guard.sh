@@ -32,7 +32,7 @@ echo "[1] IPv4 literals outside the documentation ranges"
 # referenced in the CrowdSec mesh whitelist). The range 100.64/10 as a whole is
 # NOT allowed — mesh addresses live inside it, so a blanket allow would let the
 # very identifiers this guard exists to catch straight through.
-ip_ok='^(192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.0\.0\.1$|127\.0\.1\.1$|0\.0\.0\.0$|255\.255\.255\.255$|100\.64\.0\.0$|1\.1\.1\.1$|8\.8\.8\.8$|8\.8\.4\.4$)'
+ip_ok='^(192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.0\.0\.1$|127\.0\.1\.1$|0\.0\.0\.0$|255\.255\.255\.255$|100\.64\.0\.0$|1\.1\.1\.1$|8\.8\.8\.8$|8\.8\.4\.4$|9\.9\.9\.9$)'
 found=0
 while IFS= read -r hit; do
   [ -z "$hit" ] && continue
@@ -115,7 +115,7 @@ IPCHECK_OK='|whoer\.net|browserleaks\.com|2ip\.io|2ip\.ru'
 # Upstreams this project genuinely talks to, plus a few names that merely look
 # like domains (containerd.io is a Debian PACKAGE name). Extend only for a NEW
 # upstream — never to silence one of our own hostnames.
-domain_ok='(example\.(com|org|net)|localhost|github\.com|githubusercontent\.com|github\.io|ghcr\.io|debian\.org|ubuntu\.com|docker\.com|docker\.io|containerd\.io|letsencrypt\.org|cloudflare\.com|netbird\.io|netbird\.cloud|crowdsec\.net|packagecloud\.io|xanmod\.org|ansible\.com|readthedocs\.io|python\.org|telegram\.org|mozilla\.org|openbao\.org|hashicorp\.com|angie\.software|sshaudit\.com|renovatebot\.com|beszel\.dev|semaphoreui\.com|w3\.org|schema\.org|dns\.google'"$IPCHECK_OK"')$'
+domain_ok='(example\.(com|org|net)|localhost|github\.com|githubusercontent\.com|github\.io|ghcr\.io|debian\.org|ubuntu\.com|docker\.com|docker\.io|containerd\.io|letsencrypt\.org|cloudflare\.com|netbird\.io|netbird\.cloud|crowdsec\.net|packagecloud\.io|xanmod\.org|ansible\.com|readthedocs\.io|python\.org|telegram\.org|mozilla\.org|openbao\.org|hashicorp\.com|angie\.software|sshaudit\.com|renovatebot\.com|beszel\.dev|semaphoreui\.com|w3\.org|schema\.org|dns\.google|cloudflare-dns\.com|quad9\.net'"$IPCHECK_OK"')$'
 found=0
 while IFS= read -r hit; do
     [ -z "$hit" ] && continue

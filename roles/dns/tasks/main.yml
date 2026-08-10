@@ -13,18 +13,15 @@
 # This role CONFIGURES systemd-resolved; it does not build a resolver stack
 # from nothing. Failing here names the reason, instead of writing a drop-in
 # that nothing reads and reporting success.
-- name: Check that systemd-resolved is the resolver on this host
-  ansible.builtin.command: systemctl is-active systemd-resolved
-  register: dns_resolved_active
-  changed_when: false
-  failed_when: false
+- name: Collect service facts
+  ansible.builtin.service_facts:
   tags:
     - config
 
 - name: Assert systemd-resolved is running
   ansible.builtin.assert:
     that:
-      - dns_resolved_active.stdout | trim == 'active'
+      - ansible_facts.services['systemd-resolved.service'].state | default('') == 'running'
     fail_msg: >-
       systemd-resolved is not active on this host, so a drop-in for it would
       configure nothing. Either it is not the resolver here, or it is masked —
