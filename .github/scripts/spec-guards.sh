@@ -213,6 +213,14 @@ else ok "all templated task names are well formed"; fi
 #
 # Checked only where the README already documents the variable — a README that
 # does not mention an image cannot be wrong about it.
+#
+# PAIRED WITH renovate.json, and it does not work without it. This guard first
+# ran against a Renovate pull request and failed it: the bot had updated
+# defaults and could not know the README existed, so the check it could never
+# satisfy blocked the merge — the same shape as requiring a path-filtered
+# workflow. renovate.json therefore carries a second customManager for the
+# README tables. Remove that manager and every dependency pull request becomes
+# unmergeable.
 head_ "role README pins match defaults/main.yml (Renovate moves one, not the other)"
 _pin_hits=""
 for _def in roles/*/defaults/main.yml; do

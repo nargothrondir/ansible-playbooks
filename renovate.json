@@ -13,6 +13,15 @@
         "_image:\\s*\"(?<depName>[^\"]+):(?<currentValue>[^\":]+)\""
       ],
       "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "The same pins restated in the role README tables, both language variants. Without this Renovate updates defaults/main.yml alone, and spec-guards check 14 then fails the very pull request the bot just opened — with nothing the bot can do to satisfy it.",
+      "managerFilePatterns": ["/roles/.+/README(\\.ru)?\\.md$/"],
+      "matchStrings": [
+        "\\|\\s*`[a-z_]+_image`\\s*\\|\\s*`(?<depName>[^`:]+):(?<currentValue>[^`]+)`"
+      ],
+      "datasourceTemplate": "docker"
     }
   ]
 }
