@@ -1,0 +1,9 @@
+---
+# Restart, not reload: systemd-resolved re-reads DNS servers and the DoT/DNSSEC
+# mode only on start. A reload leaves the old upstreams in place, so the drop-in
+# would be on disk and not in effect.
+- name: Restart systemd-resolved
+  listen: "restart systemd-resolved"
+  ansible.builtin.systemd_service:
+    name: systemd-resolved
+    state: restarted

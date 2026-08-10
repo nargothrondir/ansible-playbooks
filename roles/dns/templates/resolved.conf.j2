@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+# Drop-in, NOT an edit of /etc/systemd/resolved.conf: that file belongs to the
+# systemd package, so a modified copy turns every systemd upgrade into a
+# conffile prompt that somebody eventually answers wrong.
+[Resolve]
+DNS={{ dns_servers | join(' ') }}
+FallbackDNS={{ dns_fallback_servers | join(' ') }}
+Domains={{ dns_search_domain }}
+DNSOverTLS={{ 'yes' if dns_over_tls | bool else 'no' }}
+DNSSEC={{ dns_dnssec if dns_dnssec is string else ('yes' if dns_dnssec | bool else 'no') }}
