@@ -90,7 +90,10 @@ dns_stub_resolv_conf: /run/systemd/resolve/stub-resolv.conf
 # Nothing fails during the play; the role verifies the host and the host is
 # fine. The containers just stop resolving, and the first thing that needs DNS
 # is ACME renewal, up to 60 days later. So the role STOPS when it finds running
-# containers rather than reporting success over a delayed outage.
+# containers rather than reporting success over a delayed outage — but only when
+# the handover is actually pending. If /etc/resolv.conf is already the stub the
+# role takes nothing away and the check is skipped, which is what keeps a re-run
+# of provision-node.yml working on a node the pipeline already built.
 #
 # Set true when you have arranged to restart the stack after the play — a
 # restart gives each container a fresh copy pointing at the stub, which is the

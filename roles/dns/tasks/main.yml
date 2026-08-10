@@ -30,6 +30,17 @@
 # Checked FIRST, before anything is touched: failing after the handover would
 # leave the host between two resolvers.
 #
+# And checked only when a handover is actually pending. The question is not "are
+# there containers" but "am I about to take the resolver away from them" — if
+# /etc/resolv.conf is ALREADY the stub, this role changes nothing they depend on
+# and there is nothing to strand. Without that distinction the guard aborted
+# every re-run of provision-node.yml on a node it had already built, which is a
+# routine operation here.
+#
+# This needs its own stat, before the package is installed: installing
+# systemd-resolved can create the symlink itself, so the later stat — the one
+# the handover logic uses — no longer answers "what did this role find".
+#
 # A plain `docker restart` is the entire fix, on both network types — measured,
 # because the documented behaviour suggested otherwise. A host-network container
 # gets the file copied verbatim and reaches the stub through the shared netns; a
@@ -37,12 +48,22 @@
 # gets Docker's embedded resolver, which forwards from the host's netns. Neither
 # falls back to Docker's plaintext defaults — that only happens on the default
 # `bridge` network, which nothing here uses. Issue #153 carries the numbers.
+- name: Check whether the resolver handover is still pending
+  ansible.builtin.stat:
+    path: /etc/resolv.conf
+  register: dns_resolv_conf_before
+  when: dns_manage_resolv_conf | bool
+  tags:
+    - config
+
 - name: List containers that would be left with a stale resolver
   ansible.builtin.command: "docker ps --format '{% raw %}{{.Names}}{% endraw %}'"
   register: dns_running_containers
   changed_when: false
   failed_when: false
-  when: dns_manage_resolv_conf | bool
+  when:
+    - dns_manage_resolv_conf | bool
+    - dns_resolv_conf_before.stat.lnk_source | default('') != dns_stub_resolv_conf
   tags:
     - config
 
@@ -63,6 +84,7 @@
   when:
     - dns_manage_resolv_conf | bool
     - not (dns_allow_running_containers | bool)
+    - dns_resolv_conf_before.stat.lnk_source | default('') != dns_stub_resolv_conf
   tags:
     - config
 

@@ -159,6 +159,12 @@ So the role **stops** when it finds running containers. Restarting them
 afterwards is the entire fix; set `dns_allow_running_containers=true` once that
 is arranged.
 
+It stops only when the handover is actually pending. The question is not
+"are there containers" but "is this role about to take the resolver away from
+them" — if `/etc/resolv.conf` is already the stub, nothing they depend on
+changes and the check is skipped. Without that distinction the guard aborted
+every re-run of `provision-node.yml` on a node the pipeline had already built.
+
 A restart is enough on both network types, which is worth stating because the
 documentation suggests otherwise. A **host-network** container gets the host
 file copied verbatim and reaches `127.0.0.53` through the shared netns. A
