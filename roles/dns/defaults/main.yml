@@ -82,6 +82,21 @@ dns_search_domain: "~."
 dns_manage_resolv_conf: true
 dns_stub_resolv_conf: /run/systemd/resolve/stub-resolv.conf
 
+# Docker gives a container its own copy of /etc/resolv.conf when the container
+# is CREATED and never revisits it. Replacing the host's file therefore leaves
+# every already-running container pointing at the resolver that was there
+# before — which, once NetBird re-registers with resolved, stops answering.
+#
+# Nothing fails during the play; the role verifies the host and the host is
+# fine. The containers just stop resolving, and the first thing that needs DNS
+# is ACME renewal, up to 60 days later. So the role STOPS when it finds running
+# containers rather than reporting success over a delayed outage.
+#
+# Set true when you have arranged to restart the stack after the play — a
+# restart gives each container a fresh copy pointing at the stub, which is the
+# correct end state. Issue #153 tracks removing the need for this.
+dns_allow_running_containers: false
+
 # --- The half that makes the rest take effect ------------------------------
 # systemd-resolved resolves per SCOPE, and an interface's own servers beat the
 # global ones. Provider images ship `dns-nameservers` in the interface config;

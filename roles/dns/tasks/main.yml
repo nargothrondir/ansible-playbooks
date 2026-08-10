@@ -10,6 +10,62 @@
   tags:
     - install
 
+# --- containers already running --------------------------------------------
+# Docker writes every container its own /etc/resolv.conf when the container is
+# CREATED, copying whatever the host had at that moment, and never revisits it.
+# Taking the host file over therefore leaves each running container pointing at
+# the resolver that was there before — on the lab node that was NetBird's mesh
+# address, which stops answering the moment NetBird re-registers with resolved.
+#
+# Nothing fails while the play runs. The role's own verification passes, because
+# it checks the HOST. The containers simply stop resolving, and the first thing
+# to need DNS is ACME renewal — up to 60 days later, with the cause 60 days
+# behind it. Measured on the lab node: the ACME hook resolved fine at 02:29 and
+# returned "Temporary failure in name resolution" at 04:40, across this role.
+#
+# Restarting a container fixes it properly (it gets a fresh copy pointing at the
+# stub), but restarting the stack is the operator's call, not the role's — one
+# of these containers is carrying user traffic.
+#
+# Checked FIRST, before anything is touched: failing after the handover would
+# leave the host between two resolvers.
+#
+# A plain `docker restart` is the entire fix, on both network types — measured,
+# because the documented behaviour suggested otherwise. A host-network container
+# gets the file copied verbatim and reaches the stub through the shared netns; a
+# container on a user-defined bridge never sees the host's servers at all, it
+# gets Docker's embedded resolver, which forwards from the host's netns. Neither
+# falls back to Docker's plaintext defaults — that only happens on the default
+# `bridge` network, which nothing here uses. Issue #153 carries the numbers.
+- name: List containers that would be left with a stale resolver
+  ansible.builtin.command: "docker ps --format '{% raw %}{{.Names}}{% endraw %}'"
+  register: dns_running_containers
+  changed_when: false
+  failed_when: false
+  when: dns_manage_resolv_conf | bool
+  tags:
+    - config
+
+- name: Refuse to strand containers that are already running
+  ansible.builtin.assert:
+    that:
+      - dns_running_containers.stdout | default('') | length == 0
+    fail_msg: >-
+      These containers are running and hold the resolver configuration Docker
+      copied for them when they were created:
+      {{ dns_running_containers.stdout_lines | default([]) | join(', ') }}.
+      This role replaces /etc/resolv.conf, which leaves them pointing at a
+      resolver that stops answering — silently, until something needs DNS.
+      Restart them once this play finishes and they pick up the new one. Re-run
+      with -e dns_allow_running_containers=true once that is arranged. See
+      issue #153.
+    success_msg: "No running containers to strand"
+  when:
+    - dns_manage_resolv_conf | bool
+    - not (dns_allow_running_containers | bool)
+  tags:
+    - config
+
 # On Debian 12+ systemd-resolved is a SEPARATE PACKAGE and a minimal install
 # does not have it. Every production node here got it by hand; the node built
 # entirely by the pipeline had no resolver at all, and NetBird — finding none —
@@ -139,6 +195,19 @@
 # The other half, and the one that bites on the hand-built nodes: an
 # interface's own servers beat the global ones, so `dns-nameservers` in the
 # interfaces file quietly wins and the upstreams above apply to nothing.
+#
+# The existence check has to be a stat on the TARGET. Jinja's `is exists` tests
+# the controller's filesystem, and the controller here is a Semaphore container
+# that has no /etc/network/interfaces — so the guard was always false and the
+# nameservers were never stripped, on any host, while the play reported ok.
+- name: Check whether the interfaces file exists on the target
+  ansible.builtin.stat:
+    path: "{{ dns_interfaces_file }}"
+  register: dns_interfaces_stat
+  when: dns_strip_interface_nameservers | bool
+  tags:
+    - config
+
 - name: Remove interface-supplied nameservers from the interfaces file
   ansible.builtin.lineinfile:
     path: "{{ dns_interfaces_file }}"
@@ -147,7 +216,7 @@
     backup: true
   when:
     - dns_strip_interface_nameservers | bool
-    - dns_interfaces_file is exists
+    - dns_interfaces_stat.stat.exists | default(false)
   tags:
     - config
 
@@ -227,12 +296,60 @@
   tags:
     - config
 
-- name: Report which scope answered
+# Read AFTER the queries above: the global scope reports no "Current DNS
+# Server" until something has actually resolved through it.
+- name: Re-read the resolver state now that queries have gone through
+  ansible.builtin.command: resolvectl status
+  register: dns_status_after
+  changed_when: false
+  tags:
+    - config
+
+- name: Read the default link's DNS settings after the change
+  ansible.builtin.command: "resolvectl dns {{ ansible_facts['default_ipv4']['interface'] }}"
+  register: dns_link_after
+  changed_when: false
+  failed_when: false
+  tags:
+    - config
+
+# This used to key off `-- link:` in the query output, reading it as the scope
+# that answered. It is not: that annotation names the interface the RETURNED
+# ADDRESS is reachable over. Verified on the lab node, where the default link
+# has "Current Scopes: LLMNR/IPv4 LLMNR/IPv6" and no DNS servers at all, yet
+# every answer still carried its name — so the old line reported a correctly
+# configured host as broken.
+#
+# What settles it instead: which upstream the global scope is talking to, and
+# whether the default link kept servers of its own.
+- name: Report which resolver is actually in use
   ansible.builtin.debug:
     msg: >-
-      {{ dns_verify_name }} resolved via
-      {{ 'the global scope (encrypted upstreams in use)'
-         if not (dns_verify.stdout is search('-- link:'))
-         else 'a LINK scope — interface DNS still wins, the global servers are not being used' }}.
+      {{ dns_verify_name }} resolved.
+      Global scope —
+      {{ dns_status_after.stdout | regex_search('Current DNS Server: \S+')
+         | default('no upstream selected yet', true) }}.
+      Default link ({{ ansible_facts['default_ipv4']['interface'] }})
+      {{ 'STILL has servers of its own, which beat the global ones: '
+         ~ (dns_link_after.stdout | default('') | trim)
+         if dns_link_after.stdout | default('') is search(':\s*\S')
+         else 'has none of its own, so the global servers apply' }}.
+  tags:
+    - debug
+
+# Only reached with the guard waived, so the operator has already accepted this
+# — but the list is worth having at the end of the run rather than at the start,
+# where it has scrolled past.
+- name: Remind that the running containers still hold the old resolver
+  ansible.builtin.debug:
+    msg: >-
+      Restart these containers so they pick up the new resolver:
+      {{ dns_running_containers.stdout_lines | join(', ') }}. Until then they
+      resolve through the address they were created with, which no longer
+      answers.
+  when:
+    - dns_manage_resolv_conf | bool
+    - dns_allow_running_containers | bool
+    - dns_running_containers.stdout | default('') | length > 0
   tags:
     - debug
