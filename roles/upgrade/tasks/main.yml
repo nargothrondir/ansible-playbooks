@@ -45,6 +45,17 @@
   tags:
     - config
 
+# Applied BEFORE the upgrade, or the hold would arrive too late to stop it.
+# dpkg_selections is idempotent and reports changed only when a mark actually
+# moves — unlike `apt-mark hold`, which would need a fetch-then-guard wrapper.
+- name: Hold packages this host must not upgrade unattended
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: "{{ upgrade_hold_packages }}"
+  tags:
+    - config
+
 - name: Get list of upgradable packages
   ansible.builtin.command: apt list --upgradable  # noqa: command-instead-of-module — no module lists upgradable packages
   register: upgrade_upgradable
@@ -55,6 +66,32 @@
 - name: Show upgradable packages before upgrade
   ansible.builtin.debug:
     var: upgrade_upgradable.stdout_lines
+  tags:
+    - debug
+
+# A hold is a promise to update the package by hand. This is what stops the
+# promise being forgotten: apt still LISTS a held package as upgradable, it
+# just refuses to touch it — so the pending update is visible here and nowhere
+# else. Without this the host would sit on an unpatched Docker indefinitely and
+# every run would report success, which is the silent-no-op failure this
+# repository keeps getting bitten by.
+- name: Note held packages that have an update waiting
+  ansible.builtin.set_fact:
+    upgrade_held_pending: >-
+      {{ upgrade_hold_packages
+         | select('in', upgrade_upgradable.stdout | default(''))
+         | list }}
+  tags:
+    - install
+
+- name: Announce held packages with a pending update
+  ansible.builtin.debug:
+    msg: >-
+      HELD, NOT UPGRADED — update these by hand in an attended window:
+      {{ upgrade_held_pending | join(', ') }}.
+      They are held because upgrading them here would kill the process running
+      this play (#83).
+  when: upgrade_held_pending | length > 0
   tags:
     - debug
 
