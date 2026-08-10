@@ -3,8 +3,14 @@
 #
 # Deliberately NOT wired into provision-node.yml yet: the role edits
 # /etc/network/interfaces, which holds the node's STATIC address, and clears
-# the resolver's link settings on a live host. Both are safe as written and
-# neither has run against a production node.
+# the resolver's link settings on a live host. Both are safe as written; both
+# have now run on the lab node and nowhere else.
+#
+# On a node with a stack already up the role STOPS, because replacing
+# /etc/resolv.conf leaves running containers with the resolver Docker copied
+# for them at creation time — see issue #153 and roles/dns/README.md. Waive it
+# with -e dns_allow_running_containers=true only when you will restart the
+# stack afterwards.
 #
 #   ansible-playbook playbooks/dns.yml                    # the lab, by default
 #   ansible-playbook playbooks/dns.yml -e dns_target=fi   # one canary node

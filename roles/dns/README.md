@@ -48,13 +48,18 @@ is a symlink to it), so the interface acquires its own resolvers and every
 query goes there.
 
 The global configuration then applies to nothing — while `resolvectl status`
-still lists it and looks correct. The only way to see it is to ask which scope
-answered:
+still lists it and looks correct. Ask the link itself:
 
 ```bash
-resolvectl query --cache=no github.com
-# github.com: 203.0.113.10   -- link: ens3      ← the interface won
+resolvectl dns ens3
+# Link 2 (ens3): 203.0.113.53 198.51.100.53   ← its own servers, and they win
 ```
+
+Do **not** try to read this off `resolvectl query`. Its `-- link: ens3`
+annotation names the interface the *returned address* is reachable over, not
+the scope that answered: a link with no DNS servers and no DNS scope at all
+still stamps its name on every answer. That misreading cost an evening here,
+and the role's own report used to repeat it.
 
 So the role does two things, and the second is what makes the first real:
 write the drop-in, and take the servers off the link.
@@ -108,6 +113,7 @@ mirrors and ACME endpoints to resolve rather than opinions about them.
 | `dns_search_domain` | `~.` | Makes the upstreams authoritative for domains no other scope claims. |
 | `dns_manage_resolv_conf` | `true` | Install the resolver and point `/etc/resolv.conf` at its stub, restarting NetBird to re-register. |
 | `dns_stub_resolv_conf` | `/run/systemd/resolve/stub-resolv.conf` | Where that symlink points. |
+| `dns_allow_running_containers` | `false` | Run even though containers are up. They keep a stale resolver until restarted — see below. |
 | `dns_strip_interface_nameservers` | `true` | Remove `dns-nameservers` from the interfaces file and clear the link's DNS. |
 | `dns_interfaces_file` | `/etc/network/interfaces` | Where those lines live. |
 | `dns_verify_name` | `deb.debian.org` | Name resolved after applying, to prove the resolver works. |
@@ -124,10 +130,33 @@ behaviour:
   scope that swallowed the mesh domain leaves a node that serves traffic while
   becoming unmanageable.
 
-The final debug line names which scope answered, so a link that still wins is
+The final debug line names the upstream the global scope settled on and whether
+the default link kept any servers of its own, so a link that still wins is
 visible rather than inferred.
 
-## Two ways this can bite
+## Three ways this can bite
+
+**Running containers keep the old resolver.** Docker copies `/etc/resolv.conf`
+into a container when the container is **created** and never revisits it.
+Replacing the host's file leaves every running container pointing at the
+resolver that was there before — which, once NetBird re-registers with
+`systemd-resolved`, stops answering. Nothing fails during the play: the role
+checks the host, and the host is correct. The containers simply stop resolving,
+and on a Remnawave node the first thing that needs DNS is ACME renewal, up to
+60 days later.
+
+Measured on the lab node — the same ACME hook, either side of this role:
+
+```
+02:29:00  added TXT _acme-challenge...              ← before
+04:40:43  ERROR ... Temporary failure in name resolution   ← after
+```
+
+So the role **stops** when it finds running containers. Restarting them
+afterwards is the fix and gives each a fresh copy pointing at the stub; set
+`dns_allow_running_containers=true` once that is arranged. Issue #153 tracks
+making the stub reachable from the container network, which removes the need
+for either.
 
 **Strict DoT has no fallback.** If the chosen upstreams are unreachable,
 resolution fails outright rather than degrading to plaintext — no apt, no ACME,
