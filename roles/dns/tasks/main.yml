@@ -28,8 +28,15 @@
 # of these containers is carrying user traffic.
 #
 # Checked FIRST, before anything is touched: failing after the handover would
-# leave the host between two resolvers. Issue #153 tracks making the stub
-# reachable from the container network, which removes the need for this.
+# leave the host between two resolvers.
+#
+# A plain `docker restart` is the entire fix, on both network types — measured,
+# because the documented behaviour suggested otherwise. A host-network container
+# gets the file copied verbatim and reaches the stub through the shared netns; a
+# container on a user-defined bridge never sees the host's servers at all, it
+# gets Docker's embedded resolver, which forwards from the host's netns. Neither
+# falls back to Docker's plaintext defaults — that only happens on the default
+# `bridge` network, which nothing here uses. Issue #153 carries the numbers.
 - name: List containers that would be left with a stale resolver
   ansible.builtin.command: "docker ps --format '{% raw %}{{.Names}}{% endraw %}'"
   register: dns_running_containers

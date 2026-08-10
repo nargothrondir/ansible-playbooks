@@ -153,10 +153,18 @@ Measured on the lab node — the same ACME hook, either side of this role:
 ```
 
 So the role **stops** when it finds running containers. Restarting them
-afterwards is the fix and gives each a fresh copy pointing at the stub; set
-`dns_allow_running_containers=true` once that is arranged. Issue #153 tracks
-making the stub reachable from the container network, which removes the need
-for either.
+afterwards is the entire fix; set `dns_allow_running_containers=true` once that
+is arranged.
+
+A restart is enough on both network types, which is worth stating because the
+documentation suggests otherwise. A **host-network** container gets the host
+file copied verbatim and reaches `127.0.0.53` through the shared netns. A
+container on a **user-defined bridge** never sees the host's servers at all — it
+gets Docker's embedded resolver on `127.0.0.11`, which forwards external queries
+from the host's netns, so the stub works there too. Docker's plaintext fallback
+to `8.8.8.8` applies only to the **default** `bridge` network, which nothing
+here uses. Measured on both; the numbers are in issue #153, which now tracks
+only whether the role should orchestrate the restart itself.
 
 **Strict DoT has no fallback.** If the chosen upstreams are unreachable,
 resolution fails outright rather than degrading to plaintext — no apt, no ACME,
