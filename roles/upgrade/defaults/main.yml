@@ -12,6 +12,22 @@ upgrade_autoremove_purge: true
 # Reuse the apt cache if it was refreshed within this many seconds.
 upgrade_cache_valid_time: 3600
 
+# Packages this host must NEVER upgrade unattended, held with dpkg selections.
+#
+# The control plane cannot safely update the things it is running on. Semaphore
+# executes ansible-playbook inside a container on the panel; `docker-ce`'s
+# postinst restarts the daemon, which kills that container and the play with
+# it. The task neither fails nor finishes — the run just stops existing, with
+# no PLAY RECAP and no Telegram report (#83). The reboot variant of the same
+# hazard is already handled by upgrade_reboot: false on that host (#52).
+#
+# Empty everywhere by default: a hold is a promise to update the package by
+# hand, and making that promise for a host nobody watches is worse than the
+# restart it prevents. Set it per host in the inventory, and see the report
+# below — a held package with an update waiting is announced on every run, so
+# the promise cannot be quietly forgotten.
+upgrade_hold_packages: []
+
 # Reboot the host automatically when the system signals one is required.
 upgrade_reboot: true
 
