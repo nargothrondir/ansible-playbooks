@@ -1,0 +1,77 @@
+---
+# Ensure ONE template's survey variables. Included in a loop by
+# semaphore-survey.yml, which has already resolved _project_id and fetched
+# templates_result.
+#
+# Expects:
+#   _survey.key    the template name
+#   _survey.value  the desired survey variable set
+#
+# Idempotent (fetch-then-guard, CLAUDE.md §6): only variables MISSING by name
+# are appended; existing entries — including manual edits to titles, types or
+# defaults — are never touched. The PUT runs only when something is missing.
+
+- name: Resolve the target template stub
+  ansible.builtin.set_fact:
+    _template_stub: >-
+      {{ templates_result.json
+         | selectattr('name', 'equalto', _survey.key)
+         | list | first | default({}) }}
+
+- name: Assert the template exists
+  ansible.builtin.assert:
+    that:
+      - _template_stub.id is defined
+    fail_msg: >-
+      Template '{{ _survey.key }}' not found. Available:
+      {{ templates_result.json | map(attribute='name') | list | join(', ') }}
+
+# The LIST endpoint omits survey_vars (and possibly other fields) — merging
+# against it wiped the existing survey on the first run. Only the DETAIL
+# endpoint returns the full object safe to modify and PUT back.
+- name: Fetch the full template object
+  ansible.builtin.uri:
+    url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates/{{ _template_stub.id }}"
+    method: GET
+    headers: "{{ _api_headers }}"
+    status_code: [200]
+  register: template_result
+
+- name: Resolve the target template
+  ansible.builtin.set_fact:
+    _template: "{{ template_result.json }}"
+
+# survey_vars can be JSON null on a template that never had any.
+- name: Determine which survey variables are missing
+  ansible.builtin.set_fact:
+    _existing_vars: "{{ _template.survey_vars | default([], true) }}"
+    _missing_vars: >-
+      {{ _survey.value
+         | rejectattr('name', 'in',
+                      _template.survey_vars | default([], true)
+                      | map(attribute='name') | list)
+         | list }}
+
+- name: Add the missing survey variables (only when something is missing)
+  ansible.builtin.uri:
+    url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates/{{ _template.id }}"
+    method: PUT
+    headers: "{{ _api_headers }}"
+    body_format: json
+    body: "{{ _template | combine({'survey_vars': _existing_vars + _missing_vars}) }}"
+    status_code: [200, 204]
+  no_log: true
+  # The when-guard is the change detector: the PUT runs only when variables are
+  # actually missing, so completing it IS the state change.
+  changed_when: _missing_vars | length > 0
+  when: _missing_vars | length > 0
+
+- name: Show the survey sync summary
+  ansible.builtin.debug:
+    msg: >-
+      Template "{{ _survey.key }}":
+      {{ (_missing_vars | map(attribute='name') | join(', '))
+         if _missing_vars | length > 0 else 'nothing' }} added;
+      {{ _existing_vars | length }} variable(s) were already present.
+  tags:
+    - debug
