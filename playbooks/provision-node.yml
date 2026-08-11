@@ -357,6 +357,19 @@
       X-Forwarded-Proto: "https"
     # Set by new-profile.yml, which owns the derivation.
     _advertised_name: "{{ provisioned_profile_domain | default('') }}"
+    # This node's record as the panel currently sees it. A play var, so it is
+    # re-evaluated every time it is read — which means the retry loop below and
+    # the assert after it read the SAME expression and cannot drift apart.
+    #
+    # They did drift, on the first run of this play. The loop waited for
+    # isConnected while the assert also required xrayUptime, isConnected was
+    # already true, the loop exited on its first attempt, and the assert failed
+    # six seconds after the node was registered — about two minutes before the
+    # panel had pushed the config and started xray. Eighteen retries went
+    # unused. A wait that does not test what the assert requires is decoration.
+    _panel_node: >-
+      {{ _smoke_nodes.json.response | default([])
+         | selectattr('name', 'equalto', node_name) | list | first | default({}) }}
 
   tasks:
     - name: Fetch the Remnawave API token
@@ -368,11 +381,17 @@
       tags:
         - config
 
-    # The panel connects outward to the node over the mesh, and it does not do
-    # so instantly — hence the wait rather than a single look. failed_when is
-    # off so a timeout lands on the assert below, which can say what the panel
-    # actually reported.
-    - name: Wait for the panel to report the node connected
+    # The panel connects outward to the node over the mesh, pushes the xray
+    # config and only then reports a running service — none of it instant, and
+    # measured at roughly two minutes on a freshly registered node. So the wait
+    # is on xrayUptime, the last thing in that chain to become true: the panel
+    # cannot report a positive uptime for a node it is not talking to, which
+    # makes this the strictest single condition and keeps it identical to what
+    # the assert demands.
+    #
+    # failed_when is off so a timeout lands on the assert below, which can say
+    # what the panel actually reported instead of "until condition failed".
+    - name: Wait for the panel to report xray running on the node
       delegate_to: panel
       ansible.builtin.uri:
         url: "{{ remnawave_panel_url }}/api/nodes"
@@ -383,20 +402,9 @@
       no_log: true
       changed_when: false
       failed_when: false
-      until: >-
-        (_smoke_nodes.json.response | default([])
-         | selectattr('name', 'equalto', node_name) | list | first
-         | default({})).isConnected | default(false)
-      retries: 18
+      until: (_panel_node.xrayUptime | default(0) | int) > 0
+      retries: 24
       delay: 10
-      tags:
-        - config
-
-    - name: Remember what the panel says about this node
-      ansible.builtin.set_fact:
-        _smoke_node: >-
-          {{ _smoke_nodes.json.response | default([])
-             | selectattr('name', 'equalto', node_name) | list | first | default({}) }}
       tags:
         - config
 
@@ -405,18 +413,18 @@
     - name: Assert the panel sees the node connected and xray running
       ansible.builtin.assert:
         that:
-          - _smoke_node.isConnected | default(false)
-          - not (_smoke_node.isDisabled | default(false))
-          - (_smoke_node.xrayUptime | default(0) | int) > 0
+          - _panel_node.isConnected | default(false)
+          - not (_panel_node.isDisabled | default(false))
+          - (_panel_node.xrayUptime | default(0) | int) > 0
         fail_msg: >-
           The panel does not have {{ node_name }} serving.
-          isConnected={{ _smoke_node.isConnected | default('?') }},
-          isDisabled={{ _smoke_node.isDisabled | default('?') }},
-          xrayUptime={{ _smoke_node.xrayUptime | default('?') }},
-          last message: {{ _smoke_node.lastStatusMessage | default('none') }}.
+          isConnected={{ _panel_node.isConnected | default('?') }},
+          isDisabled={{ _panel_node.isDisabled | default('?') }},
+          xrayUptime={{ _panel_node.xrayUptime | default('?') }},
+          last message: {{ _panel_node.lastStatusMessage | default('none') }}.
           An empty record means no node called {{ node_name }} exists at all.
         success_msg: >-
-          Panel: connected, xray up {{ _smoke_node.xrayUptime | default(0) }}s
+          Panel: connected, xray up {{ _panel_node.xrayUptime | default(0) }}s
       tags:
         - config
 
@@ -450,7 +458,7 @@
       ansible.builtin.debug:
         msg: >-
           {{ node_name }} serves: the panel has it connected with xray up
-          {{ _smoke_node.xrayUptime | default(0) }}s, and a TLS handshake to
+          {{ _panel_node.xrayUptime | default(0) }}s, and a TLS handshake to
           {{ _advertised_name }} returned its camouflage page with a
           certificate valid for that name.
       when: _advertised_name | length > 0
