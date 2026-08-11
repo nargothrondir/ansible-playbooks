@@ -82,13 +82,17 @@
           description: ISO-2 country code for the panel flag (e.g. PL)
           type: ""
           required: false
-        - name: profile_domain
-          title: Profile domain
-          description: >-
-            Reality domain / SNI (e.g. pl.example.com). Required only when the
-            profile must be created (new country)
-          type: ""
-          required: false
+        # NOT profile_domain. It used to be asked for, and asking made it
+        # possible to disagree with the certificate — which is issued for
+        # <node_name>.<zone> and nothing else. The help text suggested a
+        # country-level name, that is what was entered, and the node advertised
+        # a name it could not serve: the web server rejects a handshake whose
+        # SNI matches no server_name, and reality relays the client's handshake
+        # there to borrow a certificate. Fully provisioned, green everywhere,
+        # usable by nobody.
+        #
+        # new-profile.yml now derives it from node_name. One input, nothing to
+        # keep in step. -e profile_domain still overrides for a standalone run.
         - name: node_address
           title: Node address override
           description: >-

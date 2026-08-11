@@ -14,8 +14,14 @@
 #                                    DNS name <node_name>.<netbird_dns_domain>
 #   node_country   (optional)        ISO-2 country code (e.g. PL); defaults to XX
 #   node_profile   (required)        config profile name; created if it does not exist
-#   profile_domain (optional)        reality domain / SNI; REQUIRED only when the
-#                                    profile must be created (new country)
+#
+# profile_domain is NOT a survey field any more. It is the name reality
+# advertises, and it is DERIVED from node_name — because while it was asked for
+# it could disagree with the certificate, which is issued for
+# <node_name>.<zone>. A node advertising a name it cannot serve is not
+# fingerprintable, it is unusable: the web server rejects a handshake whose SNI
+# matches no server_name, and reality relays the client's handshake there to
+# borrow a certificate. See new-profile.yml and archive #156.
 #
 # hawser_token is NO LONGER a survey field: dockhand-environment.yml creates the
 # Dockhand environment and mints the token itself, storing it in OpenBao. Pass
