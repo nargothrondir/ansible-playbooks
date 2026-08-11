@@ -304,26 +304,84 @@
   tags:
     - config
 
-# The mesh is the path the panel uses to reach this node. If the handover left
-# NetBird unregistered, the node keeps serving traffic while becoming
-# unmanageable — and that is visible only later, from the panel side.
+# The mesh is the path the panel uses to reach this node. A global scope that
+# swallowed the mesh domain leaves a node serving traffic while becoming
+# unmanageable, and that is visible only later, from the panel side.
 #
-# Guarded on NetBird actually being installed, not just on the domain being
-# configured. `netbird_dns_domain` comes from group_vars and is therefore set on
-# a host that has never joined the mesh — including a node mid-provision, where
-# this role now runs BEFORE the netbird role. Without this guard the check
-# retried five times and failed the whole provisioning run over a mesh that did
-# not exist yet.
+# Two checks, because they fail for different reasons and only one of them needs
+# to know what this host is called.
+#
+# Everything here is guarded on NetBird being INSTALLED, not on
+# netbird_dns_domain being set. That variable comes from group_vars and is
+# therefore defined on a host that has never joined the mesh — including a node
+# mid-provision, where this role runs BEFORE the netbird role.
+
+# Structural, and name-free: does any LINK still claim the mesh domain? That is
+# the invariant this section exists to defend — the global scope takes `~.`, so
+# the question is whether it swallowed netbird.cloud along with everything else.
+# Holds no matter what the peer is called.
+- name: Read which link claims which domain
+  ansible.builtin.command: resolvectl domain
+  register: dns_domains
+  changed_when: false
+  when: "'netbird.service' in (ansible_facts.services | default({}))"
+  tags:
+    - config
+
+- name: Assert the mesh domain is still routed to a link
+  ansible.builtin.assert:
+    that:
+      - dns_domains.stdout_lines | select('match', '^Link ')
+        | select('search', netbird_dns_domain | regex_escape) | list | length > 0
+    fail_msg: >-
+      No link claims {{ netbird_dns_domain }} any more, so mesh names now fall
+      through to the global scope and its upstreams, which know nothing about
+      them. The node will keep serving traffic while the panel loses the name it
+      reaches it by. Restarting netbird re-registers the domain.
+    success_msg: "The mesh domain is still routed to a link"
+  when:
+    - netbird_dns_domain | default('') | length > 0
+    - "'netbird.service' in (ansible_facts.services | default({}))"
+  tags:
+    - config
+
+# Behavioural, and it needs the name — so ASK NETBIRD rather than guess.
+#
+# The previous version built the name as inventory_hostname + the domain. That
+# is not the peer name: the production nodes are `fi`, `kz`, `ru` in the
+# inventory and `fi-1`, `kz-1`, `ru-1` in the mesh, so the check asked for a
+# name that does not exist and failed the play on a node that was perfectly
+# healthy. It only ever worked on pipeline-built nodes, where provision-node.yml
+# sets the hostname from node_name and the two happen to coincide.
+#
+# The system hostname is no better: on this fleet it is whatever the provider
+# image shipped (node-NNNNN.example.invalid), while the peer name was set
+# explicitly. `netbird status --json` reports the peer's own fqdn at the top
+# level, which is the only source that is right by construction.
+- name: Ask NetBird what this host is called in the mesh
+  ansible.builtin.command: netbird status --json
+  register: dns_netbird_status
+  changed_when: false
+  failed_when: false
+  when: "'netbird.service' in (ansible_facts.services | default({}))"
+  tags:
+    - config
+
+- name: Remember the mesh name NetBird reports
+  ansible.builtin.set_fact:
+    _dns_mesh_fqdn: "{{ (dns_netbird_status.stdout | from_json).fqdn | default('') }}"
+  when: dns_netbird_status.stdout | default('') | length > 0
+  tags:
+    - config
+
 - name: Resolve this host's own mesh name
-  ansible.builtin.command: "resolvectl query --cache=no {{ inventory_hostname }}.{{ netbird_dns_domain }}"
+  ansible.builtin.command: "resolvectl query --cache=no {{ _dns_mesh_fqdn }}"
   register: dns_verify_mesh
   changed_when: false
   retries: 5
   delay: 3
   until: dns_verify_mesh.rc == 0
-  when:
-    - netbird_dns_domain | default('') | length > 0
-    - "'netbird.service' in (ansible_facts.services | default({}))"
+  when: _dns_mesh_fqdn | default('') | length > 0
   tags:
     - config
 
