@@ -281,6 +281,15 @@
       no_log: true
       when: host_missing | bool
 
+    # Published so the smoke test can connect to exactly the name this profile
+    # advertises, without deriving it a second time. Two places computing one
+    # value is the shape of the bug this playbook was just fixed for.
+    - name: Publish the advertised name for the rest of the run
+      ansible.builtin.set_fact:
+        provisioned_profile_domain: "{{ profile_domain }}"
+      tags:
+        - config
+
     - name: Show the profile summary
       ansible.builtin.debug:
         msg: >-

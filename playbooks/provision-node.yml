@@ -333,6 +333,130 @@
 # Last of all, and deliberately only on success: a full provisioning run takes
 # about twenty minutes, and the operator should not have to watch it.
 #
+# Everything above reports "ok" when its own step completed. None of it asks
+# whether the node WORKS, and the difference is not academic: a node has been
+# built by this pipeline that was green in the panel, green in Dockhand, serving
+# a valid camouflage site to anything connecting by IP — and usable by nobody,
+# because it advertised a name its certificate did not cover. Ten minutes of
+# green output over a machine no client could reach.
+#
+# Two checks, and only two. Each one names the failure it exists for; a check
+# that cannot name one is ceremony and does not belong here. Between them they
+# cover both directions — the control plane reaching the node, and a client
+# reaching it — and the obvious extras (does the mesh name resolve, does the
+# service port answer) are already implied by the first: the panel could not
+# report `isConnected` without both.
+- name: Prove the node actually serves
+  hosts: controller
+  gather_facts: false
+
+  vars:
+    _api_headers:
+      Authorization: "Bearer {{ _remnawave_api_token }}"
+      X-Forwarded-For: "127.0.0.1"
+      X-Forwarded-Proto: "https"
+    # Set by new-profile.yml, which owns the derivation.
+    _advertised_name: "{{ provisioned_profile_domain | default('') }}"
+
+  tasks:
+    - name: Fetch the Remnawave API token
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: remnawave
+        openbao_read_field: api_token
+        openbao_read_into: _remnawave_api_token
+      tags:
+        - config
+
+    # The panel connects outward to the node over the mesh, and it does not do
+    # so instantly — hence the wait rather than a single look. failed_when is
+    # off so a timeout lands on the assert below, which can say what the panel
+    # actually reported.
+    - name: Wait for the panel to report the node connected
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/nodes"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _smoke_nodes
+      no_log: true
+      changed_when: false
+      failed_when: false
+      until: >-
+        (_smoke_nodes.json.response | default([])
+         | selectattr('name', 'equalto', node_name) | list | first
+         | default({})).isConnected | default(false)
+      retries: 18
+      delay: 10
+      tags:
+        - config
+
+    - name: Remember what the panel says about this node
+      ansible.builtin.set_fact:
+        _smoke_node: >-
+          {{ _smoke_nodes.json.response | default([])
+             | selectattr('name', 'equalto', node_name) | list | first | default({}) }}
+      tags:
+        - config
+
+    # xrayUptime is what separates "the panel reached the node" from "the
+    # service is running": a container can be up with xray dead inside it.
+    - name: Assert the panel sees the node connected and xray running
+      ansible.builtin.assert:
+        that:
+          - _smoke_node.isConnected | default(false)
+          - not (_smoke_node.isDisabled | default(false))
+          - (_smoke_node.xrayUptime | default(0) | int) > 0
+        fail_msg: >-
+          The panel does not have {{ node_name }} serving.
+          isConnected={{ _smoke_node.isConnected | default('?') }},
+          isDisabled={{ _smoke_node.isDisabled | default('?') }},
+          xrayUptime={{ _smoke_node.xrayUptime | default('?') }},
+          last message: {{ _smoke_node.lastStatusMessage | default('none') }}.
+          An empty record means no node called {{ node_name }} exists at all.
+        success_msg: >-
+          Panel: connected, xray up {{ _smoke_node.xrayUptime | default(0) }}s
+      tags:
+        - config
+
+    # THE one that matters, and the one whose absence cost a night. It does what
+    # a client does — a TLS handshake to the advertised name — instead of
+    # comparing strings, so it does not care WHY the node cannot serve it.
+    #
+    # validate_certs is load-bearing, not politeness: the certificate has to be
+    # valid FOR THIS NAME, which is exactly what was wrong. And reaching the
+    # camouflage page at all means the whole chain worked — public DNS, the
+    # node's 443, reality declining an unauthenticated caller, the fallback, and
+    # the certificate.
+    #
+    # Retried because ACME issuance happens after the stack deploys.
+    - name: Connect to the advertised name the way a client does
+      ansible.builtin.uri:
+        url: "https://{{ _advertised_name }}/"
+        method: GET
+        status_code: [200]
+        validate_certs: true
+      register: _smoke_tls
+      changed_when: false
+      until: _smoke_tls.status | default(0) == 200
+      retries: 12
+      delay: 15
+      when: _advertised_name | length > 0
+      tags:
+        - config
+
+    - name: Report what was proven
+      ansible.builtin.debug:
+        msg: >-
+          {{ node_name }} serves: the panel has it connected with xray up
+          {{ _smoke_node.xrayUptime | default(0) }}s, and a TLS handshake to
+          {{ _advertised_name }} returned its camouflage page with a
+          certificate valid for that name.
+      when: _advertised_name | length > 0
+      tags:
+        - debug
+
 # ONLY SUCCESS. A play at the end of a playbook does not run when an earlier
 # play failed, so this can never report a failure — that is Semaphore's job,
 # because it is the thing that knows a task died and where. Do not add a
