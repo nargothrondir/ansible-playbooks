@@ -147,13 +147,25 @@ behaviour:
 
 - `resolvectl` reports `+DNSOverTLS`;
 - `dns_verify_name` resolves;
-- this host's own `<name>.<netbird_dns_domain>` still resolves, when that
-  variable is set **and NetBird is installed** — the mesh is how the panel
-  reaches the node, and a global scope that swallowed the mesh domain leaves a
-  node that serves traffic while becoming unmanageable. The second half of that
-  condition matters: `netbird_dns_domain` comes from `group_vars`, so it is set
-  on a node that has never joined the mesh, including one mid-provision where
-  this role runs before the `netbird` role.
+- some **link** still claims `netbird_dns_domain` in `resolvectl domain`. The
+  global scope takes `~.`, so the question is whether it swallowed the mesh
+  domain with everything else. This check needs no name and holds whatever the
+  peer is called;
+- this host's own mesh name still resolves — the behavioural half. The name
+  comes from `netbird status --json`, which reports the peer's own `fqdn`.
+
+Both are skipped unless NetBird is actually installed. `netbird_dns_domain`
+comes from `group_vars`, so it is set on a node that has never joined the mesh,
+including one mid-provision where this role runs before the `netbird` role.
+
+**The mesh name is asked for, not derived.** An earlier version built it from
+`inventory_hostname`, which is not the peer name: the production nodes are `fi`,
+`kz`, `ru` in the inventory and `fi-1`, `kz-1`, `ru-1` in the mesh, so the check
+requested a name that does not exist and failed the play on a healthy node. It
+had only ever worked on pipeline-built nodes, where `provision-node.yml` sets
+the hostname from `node_name` and the two coincide. The system hostname is no
+better — on this fleet it is whatever the provider image shipped, while the peer
+name was set explicitly.
 
 The final debug line names the upstream the global scope settled on and whether
 the default link kept any servers of its own, so a link that still wins is
