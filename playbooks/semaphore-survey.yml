@@ -82,13 +82,19 @@
           description: ISO-2 country code for the panel flag (e.g. PL)
           type: ""
           required: false
+        # Required on EVERY run, not only when the profile is new: this is the
+        # name reality advertises, and the node's web server must answer to it
+        # or the node serves nobody. provision-node.yml asserts it — the flag
+        # here is documentation, because this sync manages which variables
+        # exist and not their wording, so flipping it would not reach a
+        # template that already carries the variable.
         - name: profile_domain
           title: Profile domain
           description: >-
-            Reality domain / SNI (e.g. pl.example.com). Required only when the
-            profile must be created (new country)
+            Reality domain / SNI (e.g. pl.example.com). Required on every run —
+            the node issues its certificate for this name as well as its own
           type: ""
-          required: false
+          required: true
         - name: node_address
           title: Node address override
           description: >-

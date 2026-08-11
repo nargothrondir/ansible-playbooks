@@ -29,6 +29,26 @@
     # matching on the tail of the URL keeps the account out of this file.
     _repo_slug: "{{ dockhand_stack_repo | default('docker-stacks') }}"
     _compose_path: "{{ dockhand_stack_compose | default('remnanode/docker-compose.yml') }}"
+    # The name reality ADVERTISES, which is not this node's name. The panel's
+    # config profile is per COUNTRY and shared by every node in it, so its
+    # serverNames is typically a country-level name while the node calls itself
+    # <node>.<zone>.
+    #
+    # Angie has to answer to it. Its fallback server block sets
+    # ssl_reject_handshake, so a handshake whose SNI matches no server_name is
+    # rejected outright — and reality relays the client's handshake to dest in
+    # order to borrow its certificate. Nothing to borrow means the node serves
+    # nobody, authenticated clients included. Found on the lab node, where the
+    # profile advertised the country name and the certificate carried the
+    # node's: a fully provisioned, apparently healthy node that no client could
+    # use.
+    #
+    # Left EMPTY when the two names coincide — the stack appends this to
+    # server_name, and listing the same name twice is not something to discover
+    # later.
+    _reality_sni: >-
+      {{ '' if (profile_domain | default('')) in ['', _stack_name ~ '.' ~ infra_domain]
+         else profile_domain }}
     # Reality camouflage: the decoy site served on 443 to anything that is not a
     # valid reality client. The compose file already reads ${CAMO_SITE} and
     # falls back to `converter`, so never setting it made every node serve the
@@ -291,6 +311,7 @@
           {{ {'variables': [
               {'key': 'ACME_DOMAIN', 'value': infra_domain, 'isSecret': false},
               {'key': 'NODE_NAME', 'value': _stack_name, 'isSecret': false},
+              {'key': 'REALITY_SNI', 'value': _reality_sni, 'isSecret': false},
               {'key': 'CAMO_SITE',
                'value': _existing_env.get('CAMO_SITE') | default(_camo_site, true),
                'isSecret': false},
@@ -311,6 +332,7 @@
                     or 'ACME_DOMAIN' not in _existing_keys
                     or 'NODE_NAME' not in _existing_keys
                     or 'CAMO_SITE' not in _existing_keys
+                    or _existing_env.get('REALITY_SNI', '') != _reality_sni
       tags:
         - config
 

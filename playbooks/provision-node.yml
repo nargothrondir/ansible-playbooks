@@ -87,15 +87,28 @@
           # dedup on re-runs — require lowercase input outright.
           - node_name is match('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')
           - node_profile is defined and node_profile | length > 0
+          # profile_domain is REQUIRED even when the profile already exists, and
+          # the survey still calls it optional because it used to be. It is the
+          # name reality advertises, and the node's Angie has to answer to it —
+          # its fallback block rejects a handshake whose SNI matches no
+          # server_name, and reality borrows dest's certificate through exactly
+          # that handshake. Get it wrong and the node serves nobody while
+          # looking perfectly healthy, which is how it was found.
+          #
+          # Enforced here rather than by the survey's `required` flag: the
+          # survey sync manages which variables exist, not their wording, so a
+          # flag flipped in the repository would never reach the template.
+          - profile_domain is defined and profile_domain | length > 0
           # hawser_token is asserted against the play above rather than the
           # survey: it now comes from dockhand-environment.yml, and an empty one
           # means that play found neither a stored token nor a way to make one.
           - _hawser_token | length > 0
         fail_msg: >
           Required survey vars: node_ip, node_name (>=3, DNS-safe: lowercase
-          letters, digits, hyphens), node_profile. hawser_token is produced by
-          dockhand-environment.yml — an empty one means that play did not run
-          or could not reach Dockhand.
+          letters, digits, hyphens), node_profile, profile_domain (the reality
+          SNI — required on every run, not only when the profile is new).
+          hawser_token is produced by dockhand-environment.yml — an empty one
+          means that play did not run or could not reach Dockhand.
 
     # Guardrail: a mistyped node_ip must never re-provision a production
     # machine (a real near-miss — a serving node's address was entered by
