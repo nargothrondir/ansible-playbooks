@@ -2,6 +2,11 @@
 # Register this node in the Beszel hub (PocketBase) and obtain its per-node
 # token — idempotent (fetch-then-guard). All calls hit the hub API from the
 # controller (delegate_to localhost), not the node.
+#
+# no_log on EVERY call carrying the superuser token: headers are part of the
+# module arguments, which Ansible prints on failure and at -vvv. Three of these
+# were missing it (§7) — the register still works under no_log, so there is no
+# reason to leave one uncovered.
 - name: Assert hub superuser credentials are provided
   ansible.builtin.assert:
     that:
@@ -42,6 +47,7 @@
   register: beszel_agent_info
   delegate_to: localhost
   become: false
+  no_log: true
   tags:
     - config
 
@@ -87,6 +93,7 @@
   register: beszel_agent_system_lookup
   delegate_to: localhost
   become: false
+  no_log: true
   tags:
     - config
 
@@ -108,6 +115,7 @@
   when: beszel_agent_system_lookup.json['items'] | length == 0
   delegate_to: localhost
   become: false
+  no_log: true
   tags:
     - config
 
