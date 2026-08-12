@@ -129,7 +129,36 @@
   # The pre-state fact is the change detector: this task only runs when the
   # agent was not connected, so completing it IS the state change.
   changed_when: not netbird_connected | bool
+  # The CLI's own wait can expire while the daemon goes on to connect
+  # successfully — seen on a clean install, where it returned non-zero after
+  # 52s on a peer that joined the mesh correctly (#161). So the exit code is
+  # information, not the verdict: the poll below decides, and it asks the
+  # daemon instead of trusting the command's opinion of itself.
+  failed_when: false
   no_log: true
+  tags:
+    - config
+    - netbird
+
+# Not belt-and-braces for the task above — it IS the check. The '{' probe
+# guards from_json the same way the pre-state fact does, and Jinja's `and`
+# short-circuits so unparseable stdout simply keeps the loop waiting. When the
+# retries run out this fails with the daemon's own last answer, which carries no
+# credential and is therefore safe to show — unlike the join, whose setup key
+# forces no_log and leaves a genuine failure with no message at all.
+- name: Wait for the daemon to report the mesh up
+  ansible.builtin.command: netbird status --json
+  register: netbird_join_status
+  changed_when: false
+  until: >-
+    netbird_join_status.rc == 0
+    and (netbird_join_status.stdout | trim)[:1] == '{'
+    and ((netbird_join_status.stdout | trim | from_json).management.connected | default(false))
+  retries: 12
+  delay: 5
+  when:
+    - netbird_setup_key | length > 0
+    - not netbird_connected | default(false) | bool
   tags:
     - config
     - netbird
