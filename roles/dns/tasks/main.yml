@@ -367,10 +367,18 @@
   tags:
     - config
 
+# Same two-part probe the netbird role already applies to this exact command
+# (roles/netbird/tasks/main.yml): `failed_when: false` above means a broken or
+# --json-ignoring CLI reaches here with rc != 0 or plain text on stdout, and
+# from_json raises on either — failing the whole role over a name that is only
+# used for one verification query. Non-JSON degrades to "no name", which skips
+# the query below rather than stopping the run.
 - name: Remember the mesh name NetBird reports
   ansible.builtin.set_fact:
-    _dns_mesh_fqdn: "{{ (dns_netbird_status.stdout | from_json).fqdn | default('') }}"
-  when: dns_netbird_status.stdout | default('') | length > 0
+    _dns_mesh_fqdn: "{{ (dns_netbird_status.stdout | trim | from_json).fqdn | default('') }}"
+  when:
+    - dns_netbird_status.rc | default(1) == 0
+    - (dns_netbird_status.stdout | default('') | trim)[:1] == '{'
   tags:
     - config
 
