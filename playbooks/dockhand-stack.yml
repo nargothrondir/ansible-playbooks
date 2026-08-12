@@ -188,6 +188,62 @@
       tags:
         - config
 
+    # The 409 proves the stack exists but does not say WHICH one: the body is
+    # {"error": "A stack with this name already exists on this environment"} and
+    # carries no id — verified in the upstream handler for the pinned v1.0.41.
+    # A created stack answers with the record itself, so `.json.id` is only
+    # populated on the 200/201 path.
+    #
+    # The deploy at the end of this file guards on a non-empty id, so the
+    # missing one never reached the URL — it SKIPPED the deploy instead, wrote
+    # the environment and reported success. A stack that gained a variable after
+    # it was first created (CAMO_SITE was added long after the earliest nodes)
+    # therefore sat undeployed with nothing in the log to say so.
+    - name: List the environment's git stacks to find the existing one
+      ansible.builtin.uri:
+        url: "{{ _dockhand_api }}/api/git/stacks?env={{ _env_id | int }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _dockhand_api_token }}"
+        status_code: [200]
+      register: _stack_list
+      delegate_to: panel
+      no_log: true
+      changed_when: false
+      check_mode: false
+      when: _stack_created.status | default(0) == 409
+      tags:
+        - config
+
+    # That endpoint answers with objects carrying id, stackName and
+    # environmentId, and the ?env= query already scopes the list — so the name
+    # alone identifies the stack.
+    - name: Resolve the effective stack id
+      ansible.builtin.set_fact:
+        _stack_id: >-
+          {{ _stack_created.json.id | default('')
+             if (_stack_created.status | default(0) in [200, 201])
+             else (_stack_list.json | default([])
+                   | selectattr('stackName', 'equalto', _stack_name)
+                   | map(attribute='id') | list | first | default('')) }}
+      tags:
+        - config
+
+    - name: Assert the stack id was resolved
+      ansible.builtin.assert:
+        that:
+          - _stack_id | string | length > 0
+        fail_msg: >-
+          Dockhand answered 409 for stack {{ _stack_name }} on {{ _env_name }},
+          but GET /api/git/stacks?env={{ _env_id | int }} does not list it under
+          that name. The 409 covers ANY stack of that name on the environment —
+          internal and adopted stacks share the name space with From-Git ones —
+          so this most likely means {{ _stack_name }} exists as a stack that
+          cannot be deployed from here. Check it in Dockhand before re-running.
+      when: _stack_created.status | default(0) != 0
+      tags:
+        - config
+
     - name: Read the stack's environment variables
       ansible.builtin.uri:
         url: "{{ _dockhand_api }}/api/stacks/{{ _stack_name }}/env?env={{ _env_id | int }}"
@@ -277,9 +333,69 @@
       tags:
         - config
 
+    # Built once and then used twice — as the diff input and as the request
+    # body. Two hand-maintained copies of this list are precisely how the write
+    # and its change detection came to disagree: the body sent every value while
+    # the detection only asked which KEYS were absent.
+    #
     # A secret sent back as '***' keeps its stored value — that is the server's
     # own mechanism, and it is what lets this PUT be a full list without ever
     # re-sending a credential it already holds.
+    - name: Build the environment this playbook wants
+      ansible.builtin.set_fact:
+        _desired_env:
+          - key: ACME_DOMAIN
+            value: "{{ infra_domain }}"
+            isSecret: false
+          - key: NODE_NAME
+            value: "{{ _stack_name }}"
+            isSecret: false
+          - key: CAMO_SITE
+            value: "{{ _existing_env.get('CAMO_SITE') | default(_camo_site, true) }}"
+            isSecret: false
+          - key: CF_API_TOKEN
+            value: "{{ '***' if 'CF_API_TOKEN' in _existing_keys else _cloudflare_dns_token }}"
+            isSecret: true
+          - key: SECRET_KEY
+            value: "{{ '***' if 'SECRET_KEY' in _existing_keys else _secret_key }}"
+            isSecret: true
+      no_log: true
+      tags:
+        - config
+
+    - name: Split the desired environment into comparable and unreadable halves
+      ansible.builtin.set_fact:
+        _desired_plain: >-
+          {{ _desired_env | rejectattr('isSecret')
+             | items2dict(key_name='key', value_name='value') }}
+        _desired_secret_keys: >-
+          {{ _desired_env | selectattr('isSecret') | map(attribute='key') | list }}
+      no_log: true
+      tags:
+        - config
+
+    # A secret comes back masked, so its value CANNOT be compared — presence is
+    # the only signal available for those. Non-secrets do come back verbatim on
+    # a git stack, where every variable is stored in Dockhand's database, so
+    # those are compared properly.
+    #
+    # The projection is what makes the answer honest: the stored environment is
+    # narrowed to the keys this playbook owns, then compared with the desired
+    # map. A missing key and a changed value both surface as one dict
+    # inequality, while a variable somebody added by hand is not read as drift
+    # and does not trigger a deploy.
+    - name: Decide whether the environment actually needs writing
+      ansible.builtin.set_fact:
+        _env_needs_write: >-
+          {{ _desired_plain != (_existing_env | dict2items
+                                | selectattr('key', 'in', _desired_plain.keys() | list)
+                                | items2dict)
+             or (_desired_secret_keys | reject('in', _existing_keys)
+                 | list | length > 0) }}
+      no_log: true
+      tags:
+        - config
+
     - name: Write the stack's environment variables
       ansible.builtin.uri:
         url: "{{ _dockhand_api }}/api/stacks/{{ _stack_name }}/env?env={{ _env_id | int }}"
@@ -287,30 +403,12 @@
         headers:
           Authorization: "Bearer {{ _dockhand_api_token }}"
         body_format: json
-        body: >-
-          {{ {'variables': [
-              {'key': 'ACME_DOMAIN', 'value': infra_domain, 'isSecret': false},
-              {'key': 'NODE_NAME', 'value': _stack_name, 'isSecret': false},
-              {'key': 'CAMO_SITE',
-               'value': _existing_env.get('CAMO_SITE') | default(_camo_site, true),
-               'isSecret': false},
-              {'key': 'CF_API_TOKEN',
-               'value': ('***' if 'CF_API_TOKEN' in _existing_keys else _cloudflare_dns_token),
-               'isSecret': true},
-              {'key': 'SECRET_KEY',
-               'value': ('***' if 'SECRET_KEY' in _existing_keys
-                         else _secret_key),
-               'isSecret': true}]} }}
+        body: "{{ {'variables': _desired_env} }}"
         status_code: [200]
-      register: _env_written
       delegate_to: panel
       no_log: true
-      changed_when: _stack_created.status in [200, 201]
-                    or 'SECRET_KEY' not in _existing_keys
-                    or 'CF_API_TOKEN' not in _existing_keys
-                    or 'ACME_DOMAIN' not in _existing_keys
-                    or 'NODE_NAME' not in _existing_keys
-                    or 'CAMO_SITE' not in _existing_keys
+      changed_when: _env_needs_write | bool
+      when: _env_needs_write | bool
       tags:
         - config
 
@@ -319,15 +417,19 @@
     # nothing.
     - name: Deploy the stack
       ansible.builtin.uri:
-        url: "{{ _dockhand_api }}/api/git/stacks/{{ _stack_created.json.id | default('') }}/deploy"
+        url: "{{ _dockhand_api }}/api/git/stacks/{{ _stack_id }}/deploy"
         method: POST
         headers:
           Authorization: "Bearer {{ _dockhand_api_token }}"
         status_code: [200, 201, 202]
+      register: _stack_deployed
       delegate_to: panel
       no_log: true
-      changed_when: true  # spec-ok: a deploy always acts; it is guarded by `when` below
-      when: _env_written.changed | bool and (_stack_created.json.id | default('')) | string | length > 0
+      changed_when: true  # spec-ok: a deploy always acts; it is guarded by `when`
+      when:
+        - _stack_id | string | length > 0
+        - _env_needs_write | bool
+          or _stack_created.status | default(0) in [200, 201]
       tags:
         - config
 
@@ -340,6 +442,8 @@
           camouflage page
           {{ _existing_env.get('CAMO_SITE') | default(_camo_site, true) }}
           ({{ 'assigned' if 'CAMO_SITE' not in _existing_keys else 'kept' }});
+          environment {{ 'written' if _env_needs_write | bool else 'already matched' }};
+          {{ 'DEPLOYED' if not (_stack_deployed is skipped) else 'not deployed' }};
           polling auto-update on, webhook off.
       tags:
         - debug
