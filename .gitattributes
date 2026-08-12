@@ -1,0 +1,15 @@
+# The CI guards are Bash, and they run from the working tree — so on a Windows
+# checkout with core.autocrlf=true they were checked out CRLF and `bash` failed
+# to parse `set -uo pipefail` before reaching a single check. CI never saw it:
+# its Linux checkout is LF either way, so the scripts were green in the one
+# place they could not catch a local mistake, and unrunnable in the one place
+# they could.
+*.sh text eol=lf
+
+# Same reasoning for everything Ansible parses or ships to a Debian host:
+# templates render into files a Linux service reads, and a stray CR is a
+# configuration bug that only appears on the node.
+*.yml text eol=lf
+*.yaml text eol=lf
+*.j2 text eol=lf
+*.cfg text eol=lf
