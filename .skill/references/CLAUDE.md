@@ -184,6 +184,12 @@ The opinionated choices an agent cannot infer:
   the gate. Never report a local lint pass that did not happen; "pushed, CI
   will check" is the honest phrasing.
 - `# noqa` and `# spec-ok` always carry a reason on the same line.
+- **A failing check is satisfied by changing the code, not the check.** Widening
+  a guard, or reaching for `# noqa`/`# spec-ok` to get past one, changes what
+  that guard promises — so it needs its own plan, its own approval, and proof
+  the guard still bites afterwards (re-run it against a case it must catch).
+  CI failures can be fixed unattended, which is when this is easiest to get
+  wrong and hardest to notice.
 - Roles support `ansible-playbook --check`; Molecule where scenario coverage
   beyond check mode is warranted.
 
