@@ -11,6 +11,9 @@ inbound port/forwarding is needed (good for VPS/NAT and censored hosts).
 
 Each host is a separate Dockhand environment with its **own token**.
 
+The token is rendered into the compose file, which is written `0600` (root-only)
+by a task running with `no_log`, so it is neither world-readable nor logged.
+
 ## Variables
 
 | Variable | Default | Description |

@@ -32,6 +32,10 @@
   tags:
     - config
 
+# The rendered file carries TOKEN, so 0600 keeps it off the host and no_log
+# keeps it out of the run: --diff prints a changed template's full content, and
+# -vvv prints module arguments. §7, and the same pairing as roles/semaphore,
+# roles/crowdsec and roles/beszel_agent, all of which render a credential.
 - name: Deploy Hawser compose file
   ansible.builtin.template:
     src: docker-compose.yml.j2
@@ -39,6 +43,7 @@
     owner: root
     group: root
     mode: "0600"
+  no_log: true
   tags:
     - config
 
