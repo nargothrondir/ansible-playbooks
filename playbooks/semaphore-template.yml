@@ -1,0 +1,212 @@
+---
+# Ensure the Semaphore task templates exist — Semaphore configuration as code,
+# through its own REST API, so a template is not something one person once
+# clicked into being.
+#
+# Companion to semaphore-survey.yml, which fills in the survey variables of
+# templates that already exist. This one creates them. They are deliberately
+# separate: creating is a POST that must not fire twice, editing is a diff.
+#
+# Contract verified against Semaphore's OpenAPI at v2.19.7 — the version we run,
+# not the current release: POST /api/project/{id}/templates answers 201 with the
+# created record, and TemplateRequest carries project_id, inventory_id,
+# repository_id, environment_id, name, playbook, app and git_branch.
+#
+# Designed to run FROM Semaphore itself (an ad-hoc template with no survey):
+# inside the container its API is http://127.0.0.1:3000. Override
+# semaphore_api_url for a run from elsewhere. The template must have the
+# Variable Group carrying OPENBAO_SECRET_ID attached, or the first read fails.
+#
+# EXISTING TEMPLATES ARE NOT TOUCHED. A template whose name is already there is
+# left exactly as it is, including settings that differ from what is declared
+# below. Reconciling them needs a PUT and a field-by-field diff, and doing that
+# in the same playbook would put every working template at risk of a bad
+# comparison. If a template needs changing, change it deliberately.
+#
+# IDS ARE RESOLVED FROM NAMES. Numeric ids are local to one Semaphore instance
+# and mean nothing in git; a rebuilt instance renumbers everything. Where a name
+# is not given, the playbook takes the only candidate and asserts that there is
+# exactly one — the same shape the project id already uses.
+
+- name: Ensure the Semaphore task templates exist
+  hosts: "{{ semaphore_template_target | default('controller') }}"
+  gather_facts: false
+
+  vars:
+    semaphore_api_url: "http://127.0.0.1:3000"
+    _api_headers:
+      Authorization: "Bearer {{ _semaphore_api_token }}"
+      Content-Type: application/json
+
+    # Name → what the template should be. Adding one is a data edit here.
+    #
+    # allow_override_args_in_task lets the operator pass CLI arguments at run
+    # time, which is what makes `--limit <host>` possible. hawser.yml targets
+    # every managed host, and a fleet-wide run recreates every agent at once —
+    # fine for a label, wrong for anything else, and the choice belongs to
+    # whoever presses the button rather than to this file.
+    semaphore_templates:
+
+      "Deploy Hawser":
+        playbook: playbooks/hawser.yml
+        description: >-
+          Deploy or update the Hawser edge agent. Pass --limit <host> to do one
+          node at a time — without it, every agent on the fleet is recreated.
+
+  tasks:
+    - name: Fetch the Semaphore API token
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: semaphore
+        openbao_read_field: api_token
+        openbao_read_into: _semaphore_api_token
+      tags:
+        - config
+
+    # No no_log on the read-only GETs: the responses carry no secrets, the token
+    # travels in headers which uri does not log, and censoring them once made a
+    # wrong id undebuggable (#52).
+    #
+    # The OpenAPI spec marks `sort` and `order` required on the templates GET;
+    # the running implementation accepts the call without them, which is what
+    # semaphore-survey.yml has been doing since it was written. Following the
+    # working call rather than the stricter document.
+    - name: Fetch Semaphore projects
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/projects"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _projects
+      changed_when: false
+      when: semaphore_project_id is not defined
+      tags:
+        - config
+
+    - name: Assert exactly one project exists
+      ansible.builtin.assert:
+        that:
+          - _projects.json | length == 1
+        fail_msg: >-
+          Expected exactly one Semaphore project, found
+          {{ _projects.json | length }} — pass -e semaphore_project_id
+          to disambiguate.
+      when: semaphore_project_id is not defined
+      tags:
+        - config
+
+    - name: Resolve the project id
+      ansible.builtin.set_fact:
+        _project_id: "{{ semaphore_project_id | default(_projects.json[0].id) }}"
+      tags:
+        - config
+
+    - name: Fetch the pieces a template has to point at
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/{{ item }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _pieces
+      changed_when: false
+      loop:
+        - inventory
+        - repositories
+        - environment
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - config
+
+    # One name per collection, not one per template: every playbook in this
+    # repository runs against the same inventory, repository and variable group,
+    # and a per-template override would be complexity with no case behind it.
+    - name: Resolve the inventory, repository and variable group
+      ansible.builtin.set_fact:
+        _inventory_id: >-
+          {{ (_pieces.results[0].json | selectattr('name', 'equalto', semaphore_template_inventory) | list | first).id
+             if semaphore_template_inventory is defined
+             else (_pieces.results[0].json | first).id }}
+        _repository_id: >-
+          {{ (_pieces.results[1].json | selectattr('name', 'equalto', semaphore_template_repository) | list | first).id
+             if semaphore_template_repository is defined
+             else (_pieces.results[1].json | first).id }}
+        _environment_id: >-
+          {{ (_pieces.results[2].json | selectattr('name', 'equalto', semaphore_template_environment) | list | first).id
+             if semaphore_template_environment is defined
+             else (_pieces.results[2].json | first).id }}
+      tags:
+        - config
+
+    # Taking "the only one" is only safe when there IS only one. Where a name was
+    # given the count does not matter, so the assert is scoped to the collections
+    # that were resolved by falling back.
+    - name: Assert each unnamed collection has exactly one candidate
+      ansible.builtin.assert:
+        that:
+          - semaphore_template_inventory is defined or (_pieces.results[0].json | length) == 1
+          - semaphore_template_repository is defined or (_pieces.results[1].json | length) == 1
+          - semaphore_template_environment is defined or (_pieces.results[2].json | length) == 1
+        fail_msg: >-
+          More than one inventory, repository or variable group exists, so the
+          template would be pointed at an arbitrary one. Name the right ones with
+          -e semaphore_template_inventory=... / _repository=... / _environment=...
+          Found: {{ _pieces.results[0].json | length }} inventories,
+          {{ _pieces.results[1].json | length }} repositories,
+          {{ _pieces.results[2].json | length }} variable groups.
+      tags:
+        - config
+
+    - name: Fetch the existing templates
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _templates
+      changed_when: false
+      tags:
+        - config
+
+    # Fetch-then-guard (§6): created only when the name is absent. The POST is
+    # not idempotent — a second one would make a duplicate template with the same
+    # name and a different id, and Semaphore accepts that quite happily.
+    - name: Create the missing templates
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates"
+        method: POST
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body: >-
+          {{ {'project_id': _project_id | int,
+              'inventory_id': _inventory_id | int,
+              'repository_id': _repository_id | int,
+              'environment_id': _environment_id | int,
+              'name': item.key,
+              'playbook': item.value.playbook,
+              'description': item.value.description | default(''),
+              'app': 'ansible',
+              'git_branch': item.value.git_branch | default(''),
+              'arguments': '[]',
+              'allow_override_args_in_task': item.value.allow_override_args | default(true),
+              'type': ''} }}
+        status_code: [201]
+      loop: "{{ semaphore_templates | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: item.key not in (_templates.json | default([]) | map(attribute='name') | list)
+      changed_when: item.key not in (_templates.json | default([]) | map(attribute='name') | list)
+      tags:
+        - config
+
+    - name: Report which templates were created
+      ansible.builtin.debug:
+        msg: >-
+          {{ semaphore_templates.keys() | list | length }} declared;
+          created: {{ semaphore_templates.keys() | difference(_templates.json | default([]) | map(attribute='name') | list) | join(', ') | default('none', true) }};
+          already present: {{ semaphore_templates.keys() | intersect(_templates.json | default([]) | map(attribute='name') | list) | join(', ') | default('none', true) }}.
+          Existing templates are never modified — change one deliberately if it
+          needs changing.
+      tags:
+        - debug
+        - config
