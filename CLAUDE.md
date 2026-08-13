@@ -80,6 +80,21 @@ This is the only bypass of the confirmation gate.
   ask, do not silently fix; safety/correctness — fix immediately and note;
   missing mandatory artifacts (README, meta) — note and ask, do not
   auto-create.
+- **Someone else's tool: read its documentation before designing, its source
+  before calling.** They answer different questions, and mixing them up costs a
+  whole cycle. Source says what a call *does* — the authoritative contract, and
+  still the right place for field names and status codes. Documentation says
+  what a feature is *for*, and only it can tell you the scenario is supported at
+  all. A mechanism can be reachable, well-understood and completely wrong to use
+  here: Dockhand's stack import was driven correctly through its API against a
+  remote host it explicitly does not serve, and produced a record pointing at a
+  file the tool can never open (#163).
+- **"The tool does not support this" is a finding, and it belongs in the action
+  plan.** The check above earns its keep by cancelling work, not by informing
+  it — so it happens before the plan is written, and its answer can be *this
+  cannot be built*. Reporting that costs one message; discovering it from
+  behaviour costs the build, the debugging, the revert, and whatever the
+  experiment broke on the way.
 
 ## 4. Action plan and confirmation gate
 
