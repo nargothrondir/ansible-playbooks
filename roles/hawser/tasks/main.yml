@@ -32,14 +32,51 @@
   tags:
     - config
 
-# The rendered file carries TOKEN, so 0600 keeps it off the host and no_log
-# keeps it out of the run: --diff prints a changed template's full content, and
-# -vvv prints module arguments. §7, and the same pairing as roles/semaphore,
-# roles/crowdsec and roles/beszel_agent, all of which render a credential.
+# Fetched on the CONTROLLER, never on the node. raw.githubusercontent.com is
+# intermittently blocked where part of the fleet lives, and provisioning must not
+# depend on a node's ability to reach GitHub. Semaphore already cannot start a
+# run without GitHub, so this adds no new failure domain — it just keeps the one
+# we have on the side that already has it.
+#
+# changed_when: false because this writes to controller scratch and changes no
+# managed host. The copy below is the honest change detector.
+#
+# No checksum: the ref is a git commit hash, which IS the content address. A
+# second checksum would restate the same guarantee and then rot separately.
+- name: Fetch the pinned Hawser compose from docker-stacks
+  ansible.builtin.get_url:
+    url: "{{ hawser_compose_url }}"
+    dest: "{{ hawser_compose_cache }}"
+    mode: "0644"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
+  tags:
+    - config
+
 - name: Deploy Hawser compose file
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
+  ansible.builtin.copy:
+    src: "{{ hawser_compose_cache }}"
     dest: "{{ hawser_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  tags:
+    - config
+
+# The compose file carries no credential any more — TOKEN lives here, and only
+# here. 0600 keeps it off the host, no_log keeps it out of the run: --diff prints
+# a changed template's full content and -vvv prints module arguments. §7, and the
+# same pairing as roles/semaphore, roles/crowdsec and roles/beszel_agent.
+#
+# Compose reads .env from the project directory automatically, so nothing has to
+# point at it — which is also why it must sit beside the compose file and not in
+# a tidier location.
+- name: Deploy the Hawser environment file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ hawser_dir }}/.env"
     owner: root
     group: root
     mode: "0600"

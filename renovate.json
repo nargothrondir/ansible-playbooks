@@ -7,7 +7,7 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Pinned container images in role defaults (semaphore_image, dockhand_image, hawser_image, ...)",
+      "description": "Pinned container images in role defaults (semaphore_image, dockhand_image, ...). Not hawser: its image moved into the compose file in docker-stacks, where Renovate bumps it natively.",
       "managerFilePatterns": ["/roles/.+/defaults/main\\.yml$/"],
       "matchStrings": [
         "_image:\\s*\"(?<depName>[^\"]+):(?<currentValue>[^\":]+)\""
