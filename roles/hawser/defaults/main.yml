@@ -1,10 +1,25 @@
 ---
-# Pinned Hawser agent image.
-hawser_image: "ghcr.io/finsys/hawser:0.2.46"
-hawser_container_name: hawser
-hawser_restart_policy: unless-stopped
+# The compose file is NOT rendered by this role. It lives in docker-stacks,
+# which is its single source, and is fetched from there — see tasks/main.yml.
+#
+# Pinned by COMMIT, not by branch: a git hash is the content address, so the pin
+# is also the integrity check, and the platform layer never follows a moving
+# main. Bumping this is how a compose change reaches the fleet, which keeps that
+# change visible in this repository's history instead of only in another one.
+#
+# The image tag now lives in that compose file, so it is no longer a variable
+# here — docker-stacks' own Renovate bumps it natively, without the regex
+# manager this repository needs for role defaults.
+hawser_compose_repo: "https://raw.githubusercontent.com/nargothrondir/docker-stacks"
+hawser_compose_ref: "2d24df064f639a7b52b8e0f481ac36aec66c964b"
+hawser_compose_path: "hawser/docker-compose.yml"
+hawser_compose_url: "{{ hawser_compose_repo }}/{{ hawser_compose_ref }}/{{ hawser_compose_path }}"
 
-# Directory holding the agent's own compose file.
+# Controller-side scratch. The ref is in the filename on purpose: a new pin then
+# misses the cache and fetches, instead of quietly reusing the old content.
+hawser_compose_cache: "/tmp/hawser-compose-{{ hawser_compose_ref }}.yml"
+
+# Directory holding the agent's own compose file and its .env.
 hawser_dir: /opt/hawser
 
 # Directory for Hawser-managed compose stacks (STACKS_DIR).
@@ -12,7 +27,7 @@ hawser_stacks_dir: /opt/hawser-stacks
 
 # Agent request timeout in seconds (REQUEST_TIMEOUT). The upstream default of
 # 30 s cancels From-Git deploys mid-pull when a cold image pull + extract on a
-# slow host takes longer (measured; see ansible-playbooks issue #12). 180 s
+# slow host takes longer (measured; see ansible-playbooks issue #12). 120 s
 # covers a legitimate cold deploy (heaviest measured ~1 min); for anything
 # heavier, pre-pull images on the host first.
 hawser_request_timeout: 120
