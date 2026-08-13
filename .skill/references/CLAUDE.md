@@ -95,6 +95,17 @@ This is the only bypass of the confirmation gate.
   cannot be built*. Reporting that costs one message; discovering it from
   behaviour costs the build, the debugging, the revert, and whatever the
   experiment broke on the way.
+- **Where to read, in this order.** The vendor's **manual** for intent and the
+  limits of support — the only source that can say *not for this scenario*, so
+  it comes first, before the plan. The **upstream source at the version we
+  actually run** for the contract: field names, status codes, real behaviour —
+  and the only one that matches production, because manuals describe the current
+  release while we are pinned. **Generated API docs (Context7)** to find *where*
+  to look; they are built from `main` rather than our tag and the tier is
+  quota-limited, so they are a lead, never the verdict. When manual and pinned
+  source disagree, the source says what will happen and the manual says what is
+  supported — an unsupported scenario that happens to work is still a defect
+  waiting for the next upgrade.
 
 ## 4. Action plan and confirmation gate
 
