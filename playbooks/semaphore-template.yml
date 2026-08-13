@@ -34,6 +34,15 @@
 
   vars:
     semaphore_api_url: "http://127.0.0.1:3000"
+
+    # Declared, not discovered. Semaphore holds TWO repository records — this
+    # repository and the inventory one — so the "only candidate" fallback cannot
+    # resolve it: the first run proved that by failing the assert rather than
+    # pointing a template at whichever came back first. A template for a playbook
+    # in THIS repository must use the record for THIS repository, which makes the
+    # name a definition rather than a guess. Override if the record is renamed.
+    semaphore_template_repository: "ansible-playbooks"
+
     _api_headers:
       Authorization: "Bearer {{ _semaphore_api_token }}"
       Content-Type: application/json
@@ -124,36 +133,46 @@
     - name: Resolve the inventory, repository and variable group
       ansible.builtin.set_fact:
         _inventory_id: >-
-          {{ (_pieces.results[0].json | selectattr('name', 'equalto', semaphore_template_inventory) | list | first).id
-             if semaphore_template_inventory is defined
-             else (_pieces.results[0].json | first).id }}
+          {{ ((_pieces.results[0].json | selectattr('name', 'equalto', semaphore_template_inventory) | list | first | default({}))
+              if semaphore_template_inventory is defined
+              else (_pieces.results[0].json | first | default({}))).id | default('') }}
         _repository_id: >-
-          {{ (_pieces.results[1].json | selectattr('name', 'equalto', semaphore_template_repository) | list | first).id
-             if semaphore_template_repository is defined
-             else (_pieces.results[1].json | first).id }}
+          {{ ((_pieces.results[1].json | selectattr('name', 'equalto', semaphore_template_repository) | list | first | default({}))
+              if semaphore_template_repository is defined
+              else (_pieces.results[1].json | first | default({}))).id | default('') }}
         _environment_id: >-
-          {{ (_pieces.results[2].json | selectattr('name', 'equalto', semaphore_template_environment) | list | first).id
-             if semaphore_template_environment is defined
-             else (_pieces.results[2].json | first).id }}
+          {{ ((_pieces.results[2].json | selectattr('name', 'equalto', semaphore_template_environment) | list | first | default({}))
+              if semaphore_template_environment is defined
+              else (_pieces.results[2].json | first | default({}))).id | default('') }}
       tags:
         - config
 
-    # Taking "the only one" is only safe when there IS only one. Where a name was
-    # given the count does not matter, so the assert is scoped to the collections
-    # that were resolved by falling back.
-    - name: Assert each unnamed collection has exactly one candidate
+    # Two failures, and they are different. Taking "the only one" is safe only
+    # when there IS one — so the count is checked for whatever was resolved by
+    # falling back. A NAMED record that does not exist resolves to nothing, which
+    # is why the ids are checked as well: without that, an id of '' would be sent
+    # to the API and come back as a puzzling 400.
+    - name: Assert every piece resolved to exactly one record
       ansible.builtin.assert:
         that:
           - semaphore_template_inventory is defined or (_pieces.results[0].json | length) == 1
           - semaphore_template_repository is defined or (_pieces.results[1].json | length) == 1
           - semaphore_template_environment is defined or (_pieces.results[2].json | length) == 1
+          - _inventory_id | string | length > 0
+          - _repository_id | string | length > 0
+          - _environment_id | string | length > 0
         fail_msg: >-
-          More than one inventory, repository or variable group exists, so the
-          template would be pointed at an arbitrary one. Name the right ones with
-          -e semaphore_template_inventory=... / _repository=... / _environment=...
-          Found: {{ _pieces.results[0].json | length }} inventories,
+          Could not point the template at exactly one inventory, repository and
+          variable group.
+          Found {{ _pieces.results[0].json | length }} inventories,
           {{ _pieces.results[1].json | length }} repositories,
-          {{ _pieces.results[2].json | length }} variable groups.
+          {{ _pieces.results[2].json | length }} variable groups; resolved ids
+          '{{ _inventory_id }}' / '{{ _repository_id }}' / '{{ _environment_id }}'.
+          An empty id means the NAME given does not exist in Semaphore — check
+          semaphore_template_repository (default "{{ semaphore_template_repository }}")
+          against the repository list. A count above one with no name given means
+          the fallback cannot choose: pass
+          -e semaphore_template_inventory=... / _repository=... / _environment=...
       tags:
         - config
 
