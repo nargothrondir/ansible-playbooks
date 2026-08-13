@@ -64,6 +64,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | [playbooks/dns-record.yml](playbooks/dns-record.yml) | — (Cloudflare API; imported by provision-node.yml, or standalone) | `dns_target` (default: controller) |
 | [playbooks/dockhand-environment.yml](playbooks/dockhand-environment.yml) | — (Dockhand API via the panel; imported by provision-node.yml, or standalone) | `dockhand_env_target` (default: controller) |
 | [playbooks/dockhand-stack.yml](playbooks/dockhand-stack.yml) | — (Dockhand + panel APIs via the panel; deploys the node's From-Git workload stack) | `dockhand_stack_target` (default: controller) |
+| [playbooks/semaphore-template.yml](playbooks/semaphore-template.yml) | — (Semaphore API call; creates missing task templates, never modifies existing ones) | `semaphore_template_target` (default: controller) |
 | [playbooks/semaphore-survey.yml](playbooks/semaphore-survey.yml) | — (Semaphore API call) | control |
 | [playbooks/semaphore-inventory-repo.yml](playbooks/semaphore-inventory-repo.yml) | — (Semaphore API call; report-only without arguments) | control |
 | [playbooks/openbao.yml](playbooks/openbao.yml) | openbao | `openbao_target` (default: panel) |

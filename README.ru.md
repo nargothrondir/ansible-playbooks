@@ -64,6 +64,7 @@
 | [playbooks/dns-record.yml](playbooks/dns-record.yml) | — (API Cloudflare; импортируется provision-node.yml или отдельно) | `dns_target` (по умолчанию: controller) |
 | [playbooks/dockhand-environment.yml](playbooks/dockhand-environment.yml) | — (API Dockhand через панель; импортируется provision-node.yml или отдельно) | `dockhand_env_target` (по умолчанию: controller) |
 | [playbooks/dockhand-stack.yml](playbooks/dockhand-stack.yml) | — (API Dockhand и панели через панель; разворачивает From-Git стек ноды) | `dockhand_stack_target` (по умолчанию: controller) |
+| [playbooks/semaphore-template.yml](playbooks/semaphore-template.yml) | — (вызов API Semaphore; создаёт недостающие шаблоны задач, существующие не меняет) | `semaphore_template_target` (по умолчанию: controller) |
 | [playbooks/semaphore-survey.yml](playbooks/semaphore-survey.yml) | — (вызов API Semaphore) | control |
 | [playbooks/semaphore-inventory-repo.yml](playbooks/semaphore-inventory-repo.yml) | — (вызов API Semaphore; без аргументов только отчёт) | control |
 | [playbooks/openbao.yml](playbooks/openbao.yml) | openbao | `openbao_target` (default: panel) |
