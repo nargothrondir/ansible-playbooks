@@ -324,11 +324,18 @@
 - name: Register the node in the Remnawave panel
   ansible.builtin.import_playbook: new-node.yml
 
-# Last: the workload container. The panel must know the node first, because
+# The workload container. The panel must know the node first, because
 # SECRET_KEY is minted from the panel's CA, and the node must be provisioned
 # first, because the stack is deployed onto it (#136).
 - name: Deploy the node's workload stack
   ansible.builtin.import_playbook: dockhand-stack.yml
+
+# Registers the agent's own stack so Dockhand stops calling it "Untracked". It
+# only writes a record — Dockhand must never DEPLOY that stack, because the agent
+# would recreate its own container. Runs here because Dockhand looks the running
+# stack up through the agent, which the play above has already connected.
+- name: Register the agent's own stack in Dockhand
+  ansible.builtin.import_playbook: dockhand-adopt.yml
 
 # Last of all, and deliberately only on success: a full provisioning run takes
 # about twenty minutes, and the operator should not have to watch it.
