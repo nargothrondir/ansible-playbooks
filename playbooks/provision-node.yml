@@ -522,7 +522,7 @@
           🌍 {{ node_country | default('XX') | upper }} · profile <code>{{ node_profile }}</code>
           🔗 mesh <code>{{ node_name }}.{{ netbird_dns_domain }}</code>
           🌐 <code>{{ node_name }}.{{ infra_domain }}</code> → <code>{{ node_ip }}</code>
-          📦 Dockhand <code>{{ node_name | upper }}</code> · stack <code>{{ node_name }}</code> deployed
+          📦 Dockhand <code>{{ node_name | upper }}</code> · stack <code>{{ dockhand_stack_name | default('remnanode') }}</code> deployed
           🕒 {{ provision_started_at }} → {{ _finished_at }} UTC ({{ _duration }})
           Panel, DNS, mesh, monitoring and the workload are all in place.
       tags:

@@ -10,6 +10,15 @@
 #   1. imported by provision-node.yml, inheriting node_name;
 #   2. standalone:  -e node_name=lab-1
 #
+# NAMING. The stack is named for what it runs (`remnanode`), the ENVIRONMENT for
+# where it runs (`LAB-1`). Dockhand scopes stack names per environment, so the
+# same stack name repeats across the fleet without colliding. Override with
+# -e dockhand_stack_name=<name> only when deploying something else entirely.
+#
+# node_name remains the NODE's identity and is what NODE_NAME, the certificate
+# host label and the camouflage seed are built from. The two were the same
+# string until 2026-08-13 and three places had come to rely on that.
+#
 # WHY delegate_to: panel — Dockhand and the Remnawave panel both answer on the
 # panel's loopback, unreachable from the Semaphore container. Running the
 # requests on the panel is what new-node.yml already does.
@@ -19,7 +28,16 @@
   gather_facts: false
 
   vars:
-    _stack_name: "{{ node_name | default('') }}"
+    # The stack is named for WHAT IT RUNS, the environment for WHERE it runs.
+    # Dockhand scopes stack names per environment (its own 409 says "on this
+    # environment"), so every node can carry a stack called `remnanode` while
+    # the environment keeps the node's identity.
+    #
+    # This used to be node_name, and two derived values quietly depended on the
+    # coincidence — NODE_NAME below, and the camouflage seed. Both now read
+    # node_name directly. Anything else that needs the NODE must do the same:
+    # this variable no longer identifies one.
+    _stack_name: "{{ dockhand_stack_name | default('remnanode') }}"
     _env_name: "{{ (node_name | default('')) | upper }}"
     _dockhand_api: "{{ dockhand_api_url | default('http://127.0.0.1:3040') }}"
     # Matched by the SLUG at the end of the repository URL, not by Dockhand's
@@ -48,22 +66,37 @@
       {{ dockhand_stack_camo_sites
          | default(['10gag', 'YouTube', 'converter', 'convertit', 'downloader',
                     'filecloud', 'games-site', 'modmanager', 'speedtest']) }}
-    # Seeded with the node name, so the pick is arbitrary ACROSS nodes but
+    # Seeded with the NODE name, so the pick is arbitrary ACROSS nodes but
     # stable FOR one: a re-run cannot land on a different site and redeploy the
     # stack for nothing. The write below is guarded on absence as well — this is
     # the second lock, not the only one.
-    _camo_site: "{{ _camo_sites | random(seed=_stack_name) }}"
+    #
+    # It must be node_name and not the stack name: the stack name is now the
+    # same string on every node, and seeding with a constant would hand the
+    # whole fleet one identical decoy page — exactly the fingerprint CAMO_SITE
+    # exists to prevent.
+    _camo_site: "{{ _camo_sites | random(seed=node_name | default('')) }}"
 
   tasks:
-    - name: Assert the node is named
+    # Both names are checked, because they are no longer the same string and
+    # they fail differently. A bad STACK name is rejected by Dockhand with a
+    # 400 you can read. A bad NODE name is accepted everywhere and then shows
+    # up as a certificate for the wrong host and a decoy page shared with the
+    # rest of the fleet — no error, just a node that quietly does not work.
+    - name: Assert the node and the stack are named
       ansible.builtin.assert:
         that:
+          - node_name | default('') | length > 0
+          - node_name is match('^[a-z0-9][a-z0-9-]*$')
           - _stack_name | length > 0
           - _stack_name is match('^[a-z0-9][a-z0-9_-]*$')
         fail_msg: >-
-          node_name is required and must be lowercase — Dockhand rejects a stack
-          name that is not. Pass it as a survey variable, or with
+          node_name is required and must be lowercase — it becomes NODE_NAME in
+          the stack (and thus the certificate's host label) and seeds the
+          camouflage page. Pass it as a survey variable, or with
           -e node_name=<name> when running this playbook standalone.
+          dockhand_stack_name, if overridden, must be lowercase too: Dockhand
+          rejects a stack name that is not.
       tags:
         - config
 
@@ -347,8 +380,13 @@
           - key: ACME_DOMAIN
             value: "{{ infra_domain }}"
             isSecret: false
+          # The NODE's name, never the stack's. Angie builds its server_name
+          # from NODE_NAME and ACME_DOMAIN, so this string is the host label the
+          # certificate is issued for and the SNI reality advertises. Feeding it
+          # the stack name would issue a certificate for a host that does not
+          # exist — the same desync closed in #22, arriving from the other side.
           - key: NODE_NAME
-            value: "{{ _stack_name }}"
+            value: "{{ node_name }}"
             isSecret: false
           - key: CAMO_SITE
             value: "{{ _existing_env.get('CAMO_SITE') | default(_camo_site, true) }}"
