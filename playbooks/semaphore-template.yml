@@ -84,6 +84,23 @@
           canonical deb822 source list. Defaults to the lab group; pass
           -e apt_sources_target=<host> in CLI args for one node at a time.
 
+      # This playbook declares itself, and that is not a curiosity — it is what
+      # ends the borrowing. Until now the only way to run it was to repoint an
+      # existing template at it, which left that template named for a job it was
+      # no longer doing. One run from a borrowed template creates this entry;
+      # after that the borrowed one goes back to its own playbook and nothing
+      # has to be repointed again.
+      #
+      # The first template still cannot come from here — something has to run
+      # this playbook the first time. That is the irreducible seed, and it is the
+      # same shape as the Hawser agent, which also cannot deliver itself.
+      "Sync Templates":
+        playbook: playbooks/semaphore-template.yml
+        description: >-
+          Create any task template declared in this playbook that Semaphore does
+          not have yet. Existing templates are never modified — change one
+          deliberately if it needs changing.
+
   tasks:
     - name: Fetch the Semaphore API token
       ansible.builtin.include_tasks: tasks/openbao-read.yml
