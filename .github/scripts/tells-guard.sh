@@ -134,7 +134,7 @@ IPCHECK_OK='|whoer\.net|browserleaks\.com|2ip\.io|2ip\.ru'
 # Upstreams this project genuinely talks to, plus a few names that merely look
 # like domains (containerd.io is a Debian PACKAGE name). Extend only for a NEW
 # upstream — never to silence one of our own hostnames.
-domain_ok='(example\.(com|org|net)|localhost|github\.com|githubusercontent\.com|github\.io|ghcr\.io|debian\.org|ubuntu\.com|docker\.com|docker\.io|containerd\.io|letsencrypt\.org|cloudflare\.com|netbird\.io|netbird\.cloud|crowdsec\.net|packagecloud\.io|xanmod\.org|ansible\.com|readthedocs\.io|python\.org|telegram\.org|mozilla\.org|openbao\.org|hashicorp\.com|angie\.software|sshaudit\.com|renovatebot\.com|beszel\.dev|semaphoreui\.com|w3\.org|schema\.org|dns\.google|cloudflare-dns\.com|quad9\.net|mullvad\.net|dns0\.eu|adguard-dns\.com'"$IPCHECK_OK"')$'
+domain_ok='(example\.(com|org|net)|localhost|github\.com|githubusercontent\.com|github\.io|ghcr\.io|debian\.org|ubuntu\.com|docker\.com|docker\.io|containerd\.io|letsencrypt\.org|cloudflare\.com|netbird\.io|netbird\.cloud|crowdsec\.net|packagecloud\.io|xanmod\.org|ansible\.com|readthedocs\.io|python\.org|telegram\.org|mozilla\.org|openbao\.org|hashicorp\.com|angie\.software|sshaudit\.com|renovatebot\.com|deepwiki\.com|beszel\.dev|semaphoreui\.com|w3\.org|schema\.org|dns\.google|cloudflare-dns\.com|quad9\.net|mullvad\.net|dns0\.eu|adguard-dns\.com'"$IPCHECK_OK"')$'
 found=0
 while IFS= read -r hit; do
     [ -z "$hit" ] && continue

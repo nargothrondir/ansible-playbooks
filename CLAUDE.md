@@ -226,7 +226,9 @@ became public from a history-free snapshot; the backlog stayed behind because
 its issues carry addresses and screenshots. So `gh issue` needs
 `--repo <owner>/ansible-playbooks-archive`, and a new issue is opened THERE —
 including issues about code that lives here. A `#N` in a comment is provenance
-for a decision, not a link a reader can follow.
+for a decision, not a link a reader can follow. So a pull request body stands
+on its own: it is written to be read without archive access, because for
+everyone but you that is the only half of the record that opens.
 
 Conventional Commits in English, **scope mandatory**:
 `type(scope): Description` — types `feat|fix|refactor|docs|style|test|chore|build|ci|perf`;
