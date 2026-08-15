@@ -1,0 +1,20 @@
+{{ ansible_managed | comment }}
+{#
+  deb822, not the one-line format. The reason is Signed-By: here it is a proper
+  field, and in the one-line format it is a bracket option that is easy to omit —
+  and an omitted Signed-By means apt validates that repository against EVERY key
+  in the trusted keyring, which is how a third-party repository quietly becomes
+  as trusted as Debian itself.
+#}
+Types: deb
+URIs: {{ apt_sources_uri }}
+Suites: {{ apt_sources_suite }} {{ apt_sources_suite }}-updates{% if apt_sources_backports %} {{ apt_sources_suite }}-backports{% endif %}
+
+Components: {{ apt_sources_components }}
+Signed-By: {{ apt_sources_keyring }}
+
+Types: deb
+URIs: {{ apt_sources_security_uri }}
+Suites: {{ apt_sources_suite }}-security
+Components: {{ apt_sources_components }}
+Signed-By: {{ apt_sources_keyring }}

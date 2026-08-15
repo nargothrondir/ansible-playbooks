@@ -1,0 +1,177 @@
+---
+- name: Assert this is plain Debian
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == 'Debian'
+    fail_msg: >-
+      apt_sources writes Debian archive URIs and Debian component names. On
+      {{ ansible_distribution }} that would leave the host unable to install
+      anything: Ubuntu's archive is elsewhere and its components are
+      main/restricted/universe/multiverse. Set apt_sources_require_debian=false
+      only together with a full set of overrides for that distribution.
+  when: apt_sources_require_debian | bool
+  tags:
+    - config
+
+- name: Assert the release codename is known
+  ansible.builtin.assert:
+    that:
+      - apt_sources_suite | default('') | length > 0
+    fail_msg: >-
+      No release codename — the suite would render empty and every line would
+      point at a suite that does not exist. Gather facts, or set
+      apt_sources_suite explicitly.
+  tags:
+    - config
+
+# Written FIRST, before anything is removed. The reverse order has a window in
+# which the host has no sources at all, and a failure inside that window leaves
+# it there.
+- name: Deploy the canonical Debian sources
+  ansible.builtin.template:
+    src: debian.sources.j2
+    dest: "{{ apt_sources_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: apt_sources_canonical
+  tags:
+    - config
+
+# Matched by CONTENT, not by name. The names differ per provider image —
+# sources.list, default.list, updates.list, security.list, debian.sources — and
+# the only reliable statement is "this file points at a Debian archive". The
+# third-party repositories point elsewhere (download.docker.com, pkgs.netbird.io,
+# deb.xanmod.org, packagecloud.io), so they cannot match and are left to the
+# roles that own them.
+- name: Find the distribution sources this role replaces
+  ansible.builtin.find:
+    paths: /etc/apt/sources.list.d
+    patterns:
+      - "*.list"
+      - "*.sources"
+    contains: '(deb|security)\.debian\.org'
+    hidden: true
+  register: apt_sources_found
+  changed_when: false
+  tags:
+    - config
+
+# Anything under two bytes cannot hold `deb URI suite component` — it declares
+# no repository, so removing it loses no configuration. One provider image left
+# a one-byte file literally named `.list` in this directory.
+- name: Find files too small to declare a repository
+  ansible.builtin.find:
+    paths: /etc/apt/sources.list.d
+    patterns:
+      - "*.list"
+      - "*.sources"
+    size: "-2b"
+    hidden: true
+  register: apt_sources_empty
+  changed_when: false
+  tags:
+    - config
+
+- name: Decide what to remove
+  ansible.builtin.set_fact:
+    _apt_sources_stale: >-
+      {{ ((apt_sources_found.files | default([]) | map(attribute='path') | list)
+          + (apt_sources_empty.files | default([]) | map(attribute='path') | list))
+         | reject('equalto', apt_sources_file) | unique | list }}
+  tags:
+    - config
+
+- name: Check whether the legacy sources.list is still there
+  ansible.builtin.stat:
+    path: /etc/apt/sources.list
+  register: apt_sources_legacy
+  tags:
+    - config
+
+# Taken before removal and never overwritten: a second run must not replace the
+# provider's original with whatever the first run left behind. The suffix keeps
+# them out of apt's sight — it reads *.list and *.sources and nothing else.
+- name: Back up every file being removed
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ item }}{{ apt_sources_backup_suffix }}"
+    remote_src: true
+    force: false
+    owner: root
+    group: root
+    mode: "0644"
+  loop: >-
+    {{ _apt_sources_stale
+       + ([ '/etc/apt/sources.list' ] if apt_sources_legacy.stat.exists else []) }}
+  loop_control:
+    label: "{{ item }}"
+  tags:
+    - config
+
+- name: Remove the superseded distribution sources
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ _apt_sources_stale
+       + ([ '/etc/apt/sources.list' ] if apt_sources_legacy.stat.exists else []) }}
+  loop_control:
+    label: "{{ item }}"
+  register: apt_sources_removed
+  tags:
+    - config
+
+# The behavioural check, and the reason this role can be trusted on a live host:
+# if the sources just written are wrong, this fails here — loudly, on the node
+# being changed — instead of surfacing as a mysterious install failure days
+# later. Guarded so an unchanged host stays changed=0 and a scheduled run is a
+# genuine no-op.
+- name: Refresh the package lists from the new sources
+  ansible.builtin.apt:
+    update_cache: true
+  when: apt_sources_canonical.changed or apt_sources_removed.changed
+  tags:
+    - config
+
+- name: Read back what apt now considers a source # noqa: command-instead-of-module — the apt module installs and updates; it cannot report which archives apt will fetch, and that question is the whole point of this check
+  ansible.builtin.command: apt-get indextargets --format '$(URI)'
+  register: apt_sources_effective
+  changed_when: false
+  tags:
+    - config
+
+# apt is the authority on what it will fetch, not the files we wrote. Asking it
+# closes the gap the fleet was in: several nodes had a file that looked right
+# beside another file that was also being read.
+- name: Assert apt fetches only the archives this role declares
+  ansible.builtin.assert:
+    that:
+      - apt_sources_effective.stdout_lines | select('search', 'debian\.org')
+        | reject('search', apt_sources_uri | regex_escape)
+        | reject('search', apt_sources_security_uri | regex_escape)
+        | list | length == 0
+    success_msg: "Debian archives come only from the declared URIs"
+    fail_msg: >-
+      apt still reads a Debian archive this role did not declare:
+      {{ apt_sources_effective.stdout_lines | select('search', 'debian\.org')
+         | reject('search', apt_sources_uri | regex_escape)
+         | reject('search', apt_sources_security_uri | regex_escape)
+         | list | join(', ') }}.
+      Something outside /etc/apt/sources.list.d is adding it.
+  tags:
+    - config
+
+- name: Report the resulting sources
+  ansible.builtin.debug:
+    msg: >-
+      {{ apt_sources_suite }} from {{ apt_sources_uri }}
+      ({{ apt_sources_components }}), security from
+      {{ apt_sources_security_uri }}, backports
+      {{ 'on' if apt_sources_backports | bool else 'off' }}.
+      Removed {{ _apt_sources_stale | length }} superseded file(s)
+      {{ '+ /etc/apt/sources.list' if apt_sources_legacy.stat.exists else '' }};
+      backups keep the {{ apt_sources_backup_suffix }} suffix.
+  tags:
+    - debug
+    - config

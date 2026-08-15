@@ -28,6 +28,7 @@
 | Роль | Назначение | Зависит от |
 |------|------------|------------|
 | [bootstrap](roles/bootstrap/README.ru.md) | Создаёт пользователя `ansible` (только по ключу) и выдаёт беспарольный sudo | — |
+| [apt_sources](roles/apt_sources/README.ru.md) | Один канонический deb822-файл источников архива Debian вместо того, что положил образ провайдера (только Debian) | — |
 | [dns](roles/dns/README.ru.md) | Шифрованный DNS для собственных запросов хоста: systemd-resolved + DoT, серверы интерфейса убраны, чтобы настройка действовала | — |
 | [common](roles/common/README.ru.md) | Установка базовых пакетов (sudo, curl, wget, ...) | — |
 | [docker](roles/docker/README.ru.md) | Docker Engine + Compose-плагин из официального репозитория | — |
@@ -55,6 +56,7 @@
 | [playbooks/hawser.yml](playbooks/hawser.yml) | hawser (хосты с токеном) | managed |
 | [playbooks/provision.yml](playbooks/provision.yml) | common, docker | lab |
 | [playbooks/dns.yml](playbooks/dns.yml) | dns (шифрованный резолвер) | `dns_target` (по умолчанию: lab) |
+| [playbooks/apt-sources.yml](playbooks/apt-sources.yml) | apt_sources (канонические источники архива Debian) | `apt_sources_target` (по умолчанию: lab) |
 | [playbooks/common.yml](playbooks/common.yml) | common (повторное применение базовой роли) | `common_target` (по умолчанию: lab) |
 | [playbooks/crowdsec.yml](playbooks/crowdsec.yml) | crowdsec | fleet (кроме panel) |
 | [playbooks/beszel.yml](playbooks/beszel.yml) | beszel_agent | fleet (кроме panel) |

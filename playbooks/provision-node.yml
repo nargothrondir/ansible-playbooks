@@ -213,6 +213,11 @@
     # later created with the correct resolv.conf instead of a stale copy (#153).
     # That is what a node built entirely by this pipeline was missing while
     # every hand-built node had it.
+    # apt_sources is first because upgrade's very first act is `apt update`, and
+    # normalising the archive afterwards would mean the run fetched from the
+    # provider's arrangement once before adopting ours. On a fresh node it costs
+    # nothing — nothing has been fetched yet.
+    - apt_sources
     - upgrade
     - ssh_hardening
     - common

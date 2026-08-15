@@ -28,6 +28,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | Role | Purpose | Depends on |
 |------|---------|------------|
 | [bootstrap](roles/bootstrap/README.md) | Create the key-only `ansible` automation user and grant passwordless sudo | — |
+| [apt_sources](roles/apt_sources/README.md) | One canonical deb822 source list for the Debian archive, replacing whatever the provider image shipped (Debian only) | — |
 | [dns](roles/dns/README.md) | Encrypted DNS for the host's own lookups: systemd-resolved + DoT, interface nameservers removed so it takes effect | — |
 | [common](roles/common/README.md) | Install baseline packages (sudo, curl, wget, ...) | — |
 | [docker](roles/docker/README.md) | Docker Engine + Compose plugin via the official repo | — |
@@ -55,6 +56,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | [playbooks/hawser.yml](playbooks/hawser.yml) | hawser (hosts with a token) | managed |
 | [playbooks/provision.yml](playbooks/provision.yml) | common, docker | lab |
 | [playbooks/dns.yml](playbooks/dns.yml) | dns (encrypted resolver) | `dns_target` (default: lab) |
+| [playbooks/apt-sources.yml](playbooks/apt-sources.yml) | apt_sources (canonical Debian archive sources) | `apt_sources_target` (default: lab) |
 | [playbooks/common.yml](playbooks/common.yml) | common (re-apply the baseline) | `common_target` (default: lab) |
 | [playbooks/crowdsec.yml](playbooks/crowdsec.yml) | crowdsec | fleet (except panel) |
 | [playbooks/beszel.yml](playbooks/beszel.yml) | beszel_agent | fleet (except panel) |
