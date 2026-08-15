@@ -56,11 +56,22 @@
     # whoever presses the button rather than to this file.
     semaphore_templates:
 
-      "Deploy Hawser":
+      # "Sync", not "Deploy" or "Upgrade": the run does three different jobs and
+      # only one of them is a version bump. It delivers a changed compose, it
+      # hands the agent a token that was just rotated, and it is how a stranded
+      # agent is brought back. The role is idempotent, so the honest description
+      # is that it makes the agent match what is declared — whatever that turns
+      # out to mean on the day.
+      #
+      # First install is NOT one of the jobs in practice: a new node gets its
+      # agent from provision-node.yml, and nobody reaches for this template to
+      # build one.
+      "Sync Hawser":
         playbook: playbooks/hawser.yml
         description: >-
-          Deploy or update the Hawser edge agent. Pass --limit <host> to do one
-          node at a time — without it, every agent on the fleet is recreated.
+          Bring the Hawser agent in line with what is declared — new compose,
+          rotated token, or a stranded agent brought back. Set Limit to one host;
+          without it every agent on the fleet is recreated at once.
 
   tasks:
     - name: Fetch the Semaphore API token
