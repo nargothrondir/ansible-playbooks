@@ -1,0 +1,36 @@
+---
+# Normalise the Debian archive sources on an explicit target.
+#
+# The retrofit path. provision-node.yml runs the role too, first in the base
+# system play, where it costs nothing — a fresh node has never fetched anything
+# yet. On the existing fleet the role has real work: five provider images,
+# five different arrangements, and components that differ enough that the same
+# `apt install` succeeds on one node and fails on another (roles/apt_sources
+# README has the measurements).
+#
+# The role rewrites what the host installs FROM. That is not dangerous in itself
+# — it verifies against apt afterwards and fails on the node being changed
+# rather than days later — but it is worth doing one host at a time, because a
+# node whose sources are wrong cannot install anything until Ansible reaches it
+# again.
+#
+#   ansible-playbook playbooks/apt-sources.yml                       # the lab
+#   ansible-playbook playbooks/apt-sources.yml -e apt_sources_target=fi
+#   ansible-playbook playbooks/apt-sources.yml -e apt_sources_target=fleet
+#
+# The default is the lab group, so a mis-click cannot reach the fleet — the same
+# guard playbooks/dns.yml and playbooks/common.yml use.
+#
+# Ubuntu is out of scope and the role asserts it: the control host's archive
+# lives elsewhere and names its components differently.
+
+- name: Normalise the Debian archive sources
+  hosts: "{{ apt_sources_target | default('lab') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    ansible_user: "{{ bootstrap_user }}"
+
+  roles:
+    - apt_sources

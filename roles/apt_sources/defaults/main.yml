@@ -1,0 +1,55 @@
+---
+# The distribution's own package sources, written in ONE canonical form so
+# every node fetches the same thing from the same place. Third-party
+# repositories are not touched — roles/docker, roles/netbird, roles/xanmod and
+# roles/crowdsec each own theirs.
+#
+# Why this role exists: the fleet was assembled from five provider images and
+# every one of them arranged apt differently. Measured 2026-08-14 — one-line
+# sources.list on three nodes, loose fragments in sources.list.d on one, deb822
+# on another; components ranging from `main` alone to
+# `main contrib non-free non-free-firmware`; three different security URLs; and
+# backports enabled on exactly one host. Same intent, five realities.
+
+# https, not http. Signatures protect integrity either way — that is Debian's
+# own position and the reason http is still the default — but https hides WHICH
+# packages a host fetches from anyone watching the wire. One node sits behind
+# censorship, so that is not an abstract concern.
+apt_sources_uri: "https://deb.debian.org/debian"
+
+# The security archive has its own host, and the canonical path includes
+# /debian-security. Two nodes were reaching it through the CDN and one through a
+# bare security.debian.org/ — both resolve today, neither is the documented form.
+apt_sources_security_uri: "https://security.debian.org/debian-security"
+
+# non-free-firmware is where Debian moved firmware blobs in bookworm; a VPS
+# usually needs none, but the cost of having it available is a directory listing
+# and the cost of NOT having it is a node that cannot install a driver it turns
+# out to want. contrib and non-free are deliberately absent: nothing on the
+# fleet comes from them (verified on all five hosts).
+apt_sources_components: "main non-free-firmware"
+
+# Backports is an official archive of newer packages rebuilt for stable. It is
+# pinned BELOW the main archive, so nothing is ever installed from it without
+# being asked for by name — which is why the one node that had it enabled had
+# nothing installed from it. Off here: it is an extra archive to trust and to
+# poll, and a difference in what is AVAILABLE between nodes, for no current use.
+apt_sources_backports: false
+
+# The suite comes from the host, not from this file. Hardcoding a codename is
+# how a role breaks silently on the release after next.
+apt_sources_suite: "{{ ansible_distribution_release }}"
+
+apt_sources_file: /etc/apt/sources.list.d/debian.sources
+apt_sources_keyring: /usr/share/keyrings/debian-archive-keyring.gpg
+
+# Suffix for the copies taken before anything is removed. Files ending in it are
+# invisible to apt, which only reads *.list and *.sources, so the backups can sit
+# beside the originals without being parsed.
+apt_sources_backup_suffix: ".pre-apt-sources.bak"
+
+# Refuse to run when the host is not plain Debian. Ubuntu's archive lives
+# elsewhere and names its components differently (main restricted universe
+# multiverse); writing Debian URIs there would leave the control host unable to
+# install anything.
+apt_sources_require_debian: true
