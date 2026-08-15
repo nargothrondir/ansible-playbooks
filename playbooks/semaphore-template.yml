@@ -73,6 +73,17 @@
           rotated token, or a stranded agent brought back. Set Limit to one host;
           without it every agent on the fleet is recreated at once.
 
+      # Targeting here is the playbook's own variable rather than --limit,
+      # because apt-sources.yml chooses its hosts from apt_sources_target and
+      # defaults to the lab group. A run with no arguments therefore cannot
+      # reach the fleet, and widening it is a deliberate act typed at launch.
+      "Normalise apt sources":
+        playbook: playbooks/apt-sources.yml
+        description: >-
+          Replace whatever apt arrangement the provider image shipped with one
+          canonical deb822 source list. Defaults to the lab group; pass
+          -e apt_sources_target=<host> in CLI args for one node at a time.
+
   tasks:
     - name: Fetch the Semaphore API token
       ansible.builtin.include_tasks: tasks/openbao-read.yml
