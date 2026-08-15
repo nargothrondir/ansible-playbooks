@@ -134,7 +134,7 @@
   tags:
     - config
 
-- name: Read back what apt now considers a source
+- name: Read back what apt now considers a source # noqa: command-instead-of-module — the apt module installs and updates; it cannot report which archives apt will fetch, and that question is the whole point of this check
   ansible.builtin.command: apt-get indextargets --format '$(URI)'
   register: apt_sources_effective
   changed_when: false
