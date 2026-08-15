@@ -2,10 +2,10 @@
 - name: Assert this is plain Debian
   ansible.builtin.assert:
     that:
-      - ansible_distribution == 'Debian'
+      - ansible_facts['distribution'] == 'Debian'
     fail_msg: >-
       apt_sources writes Debian archive URIs and Debian component names. On
-      {{ ansible_distribution }} that would leave the host unable to install
+      {{ ansible_facts['distribution'] }} that would leave the host unable to install
       anything: Ubuntu's archive is elsewhere and its components are
       main/restricted/universe/multiverse. Set apt_sources_require_debian=false
       only together with a full set of overrides for that distribution.

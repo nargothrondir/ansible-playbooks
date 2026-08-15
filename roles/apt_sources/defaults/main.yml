@@ -38,7 +38,7 @@ apt_sources_backports: false
 
 # The suite comes from the host, not from this file. Hardcoding a codename is
 # how a role breaks silently on the release after next.
-apt_sources_suite: "{{ ansible_distribution_release }}"
+apt_sources_suite: "{{ ansible_facts['distribution_release'] }}"
 
 apt_sources_file: /etc/apt/sources.list.d/debian.sources
 apt_sources_keyring: /usr/share/keyrings/debian-archive-keyring.gpg
