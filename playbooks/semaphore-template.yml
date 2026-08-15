@@ -238,10 +238,33 @@
     # ones get. The id is dropped: it identifies that template's own vault
     # record, and sending it back would point the new template at a row that
     # belongs to another.
+    # Read one at a time, because THE LIST DOES NOT CARRY VAULTS. The schema says
+    # Template has a `vaults` field and the collection returns Template objects,
+    # but the implementation at v2.19.7 fills it only for a single fetch:
+    # GET .../templates calls GetTemplatesWithPermissions → getTemplates(...,
+    # loadVaults=false), while GET .../templates/{id} calls GetTemplate →
+    # FillTemplate, which loads them.
+    #
+    # Found the hard way: the assert below fired on a Semaphore where every
+    # template plainly showed "Vaults: default" in the UI.
+    - name: Read each existing template on its own to see its vault
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates/{{ item.id }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _template_details
+      changed_when: false
+      loop: "{{ _templates.json | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - config
+
     - name: Take the vault configuration from a template that already has one
       ansible.builtin.set_fact:
         _vault_src: >-
-          {{ (_templates.json | default([])
+          {{ (_template_details.results | default([]) | map(attribute='json')
               | selectattr('vaults', 'defined') | selectattr('vaults', 'truthy')
               | list | first | default({})).vaults | default([]) | first | default({}) }}
       tags:
