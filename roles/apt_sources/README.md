@@ -44,7 +44,7 @@ succeed on one node and fail on another**, because one host had `contrib` and
 | `apt_sources_security_uri` | `https://security.debian.org/debian-security` | Security archive — its own host, and the canonical path |
 | `apt_sources_components` | `main non-free-firmware` | `contrib`/`non-free` deliberately absent; nothing on the fleet came from them |
 | `apt_sources_backports` | `false` | Adds `<suite>-backports` when true |
-| `apt_sources_suite` | `{{ ansible_distribution_release }}` | Taken from the host — a hardcoded codename breaks on the next release |
+| `apt_sources_suite` | `{{ ansible_facts['distribution_release'] }}` | Taken from the host — a hardcoded codename breaks on the next release |
 | `apt_sources_file` | `/etc/apt/sources.list.d/debian.sources` | Where the canonical file goes |
 | `apt_sources_keyring` | `/usr/share/keyrings/debian-archive-keyring.gpg` | `Signed-By` for both stanzas |
 | `apt_sources_backup_suffix` | `.pre-apt-sources.bak` | apt reads only `*.list` and `*.sources`, so backups can sit beside the originals |

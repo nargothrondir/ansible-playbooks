@@ -44,7 +44,7 @@
 | `apt_sources_security_uri` | `https://security.debian.org/debian-security` | Архив безопасности — свой хост и канонический путь |
 | `apt_sources_components` | `main non-free-firmware` | `contrib`/`non-free` намеренно отсутствуют: на флоте оттуда ничего не установлено |
 | `apt_sources_backports` | `false` | При `true` добавляет `<suite>-backports` |
-| `apt_sources_suite` | `{{ ansible_distribution_release }}` | Берётся с хоста — зашитое имя релиза ломается на следующем |
+| `apt_sources_suite` | `{{ ansible_facts['distribution_release'] }}` | Берётся с хоста — зашитое имя релиза ломается на следующем |
 | `apt_sources_file` | `/etc/apt/sources.list.d/debian.sources` | Куда пишется канонический файл |
 | `apt_sources_keyring` | `/usr/share/keyrings/debian-archive-keyring.gpg` | `Signed-By` для обеих строф |
 | `apt_sources_backup_suffix` | `.pre-apt-sources.bak` | apt читает только `*.list` и `*.sources`, поэтому копии могут лежать рядом |
