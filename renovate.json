@@ -22,6 +22,18 @@
         "\\|\\s*`[a-z_]+_image`\\s*\\|\\s*`(?<depName>[^`:]+):(?<currentValue>[^`]+)`"
       ],
       "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "The docker-stacks commit the Hawser compose is fetched from. Nothing else links the two repositories: edit hawser/docker-compose.yml there and it reaches no node until this pin moves, with no error anywhere to say so. The pin stays deliberate (a floating ref would let any docker-stacks commit recreate the agent container fleet-wide, which is how pl-1 was stranded) — this only means the bot proposes the bump and merging it is the decision. Watches the branch head, not the hawser/ path, so an unrelated commit there opens a no-op pull request; the fetched content is then identical and nodes report changed=0.",
+      "managerFilePatterns": ["/^roles/hawser/defaults/main\\.yml$/"],
+      "matchStrings": [
+        "hawser_compose_ref:\\s*\"(?<currentDigest>[0-9a-f]{40})\""
+      ],
+      "currentValueTemplate": "main",
+      "depNameTemplate": "docker-stacks",
+      "packageNameTemplate": "https://github.com/nargothrondir/docker-stacks",
+      "datasourceTemplate": "git-refs"
     }
   ]
 }
