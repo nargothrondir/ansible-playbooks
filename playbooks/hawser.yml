@@ -53,8 +53,44 @@
       {{ (hostvars['controller']._hawser_tokens | default({}))[inventory_hostname]
          | default('') }}
 
+  # `--limit` filters EVERY play, the token-table play above included. When it
+  # is excluded the table is never read, `hawser_token` resolves to '' for each
+  # host through the default() above, the deploy skips itself, and the run ends
+  # ok=1 changed=0 failed=0 — a green run that did nothing. Measured on pl-1,
+  # task #256. The rotation recipe in dockhand-environment.yml would have hit
+  # exactly this: a node left holding a revoked token, reported as success.
+  pre_tasks:
+    - name: Assert the token table was read
+      ansible.builtin.assert:
+        that:
+          - hostvars['controller']._hawser_tokens is defined
+        fail_msg: >-
+          The token table play matched no hosts, so every token here is empty
+          and every deploy below would skip silently. A limit that leaves out
+          the controller looks exactly like this. Re-run with the controller
+          in the limit:
+          '{{ ansible_limit | default('<hosts>') }},controller'.
+      run_once: true
+      tags:
+        - config
+
   tasks:
     - name: Deploy Hawser on hosts with a token configured
       ansible.builtin.include_role:
         name: hawser
       when: hawser_token | default('') | length > 0
+
+    # The skip above is otherwise invisible: a host with no token looks the
+    # same in the recap as a host that was never meant to have one.
+    - name: Report a host the table has no token for
+      ansible.builtin.debug:
+        msg: >-
+          infra/hawser has no entry for {{ inventory_hostname }}, so Hawser was
+          not deployed here. Nodes are given a token by
+          dockhand-environment.yml (-e node_name={{ inventory_hostname }}); the
+          control node has none by design — Dockhand manages it over the local
+          Docker socket.
+      when: hawser_token | default('') | length == 0
+      tags:
+        - debug
+        - config

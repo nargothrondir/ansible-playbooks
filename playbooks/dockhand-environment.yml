@@ -23,7 +23,11 @@
 # but Dockhand cannot manage it until the hawser role is re-run to hand the new
 # token to the agent:
 #
-#   ansible-playbook playbooks/hawser.yml --limit node-a
+# The controller belongs in the limit: it is the host that reads the token
+# table out of OpenBao, and without it the run deploys nothing and still
+# reports success.
+#
+#   ansible-playbook playbooks/hawser.yml --limit node-a,controller
 #
 # So rotate one host at a time, and expect a gap between the two commands.
 #
