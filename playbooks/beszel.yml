@@ -45,5 +45,24 @@
       {{ (hostvars['controller']._beszel_admin | default({})).admin_password
          | default('') }}
 
+  # `--limit` filters the credential play above out along with everything else.
+  # The role then asserts on empty credentials and sends the operator to look
+  # for them in the vault, where nothing is wrong — the cause is the limit, and
+  # it belongs in the message. Same shape as hawser.yml and the #52 guard in
+  # provision-node.yml.
+  pre_tasks:
+    - name: Assert the credential play was not filtered out
+      ansible.builtin.assert:
+        that:
+          - hostvars['controller']._beszel_admin is defined
+        fail_msg: >-
+          The hub credential play matched no hosts, so the credentials below
+          are empty and the role would blame the vault for it. Re-run with the
+          controller in the limit:
+          '{{ ansible_limit | default('<hosts>') }},controller'.
+      run_once: true
+      tags:
+        - config
+
   roles:
     - beszel_agent
