@@ -17,7 +17,7 @@
 
 | Переменная | По умолчанию | Описание |
 |------------|--------------|----------|
-| `dockhand_image` | `fnsys/dockhand:v1.0.41` | Закреплённый образ |
+| `dockhand_image` | `fnsys/dockhand:v1.0.42` | Закреплённый образ |
 | `dockhand_bind` | `127.0.0.1:3040` | Привязка UI на хосте (за прокси) |
 | `dockhand_data_dir` | `/opt/dockhand` | Каталог compose-файла (данные — в томе) |
 | `dockhand_puid` / `dockhand_pgid` | `1000` | UID/GID пользователя в контейнере |
