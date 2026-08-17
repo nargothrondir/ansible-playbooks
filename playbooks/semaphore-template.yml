@@ -73,6 +73,29 @@
           rotated token, or a stranded agent brought back. Set Limit to one host;
           without it every agent on the fleet is recreated at once.
 
+      # The rotation half of the pair above, and the reason it needs an entry of
+      # its own: dockhand-environment.yml is imported by provision-node.yml, so
+      # until now it could only run as part of provisioning a new node. Replacing
+      # ONE node's token had no button, and the header of that playbook has
+      # documented the procedure since July as something nobody could perform.
+      #
+      # Limit stays EMPTY here, which is the opposite of Sync Hawser. This
+      # playbook targets the controller and speaks only to the OpenBao and
+      # Dockhand APIs; it never touches the node. A limit naming the node would
+      # leave the play with no hosts.
+      #
+      # Rotation REVOKES the previous token, so the node is unmanaged from the
+      # moment this finishes until Sync Hawser hands the new one to the agent.
+      # Traffic is unaffected — Hawser carries management, not user connections —
+      # but the two runs belong together, one host at a time.
+      "Rotate Hawser token":
+        playbook: playbooks/dockhand-environment.yml
+        description: >-
+          Mint and issue a new Hawser token for one node, revoking the old one.
+          Pass -e node_name=<host> -e dockhand_force_rotate=true in CLI args and
+          leave Limit EMPTY. The node is unmanaged until Sync Hawser is run for
+          it with Limit <host>,controller — do one host at a time.
+
       # Targeting here is the playbook's own variable rather than --limit,
       # because apt-sources.yml chooses its hosts from apt_sources_target and
       # defaults to the lab group. A run with no arguments therefore cannot
