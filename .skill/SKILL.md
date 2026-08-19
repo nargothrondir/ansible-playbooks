@@ -26,7 +26,7 @@ It is built around a single source of truth:
 
 > **Always read `references/CLAUDE.md` before producing any action plan or code.**
 
-`references/CLAUDE.md` contains the full specification (v4.0, 333 lines).
+`references/CLAUDE.md` contains the full specification (v4.0, 346 lines).
 Worked examples live in `references/workflow.md` and
 `references/ansible-standards.md` — read those on demand.
 This file is a navigation aid and quick reference only.
