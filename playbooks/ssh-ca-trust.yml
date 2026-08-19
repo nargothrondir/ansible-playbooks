@@ -1,0 +1,96 @@
+---
+# Teach a node to trust the fleet SSH certificate authority (#74, phase 3).
+#
+# This is the first phase that changes a host. What it changes is additive: the
+# node gains a second way to accept a login, and loses none. authorized_keys is
+# not touched by this playbook or by the role it applies, so the ordinary key
+# keeps working whatever happens to the certificate side — which is the whole
+# reason the two live side by side rather than one replacing the other.
+#
+# The CA public key is READ ON THE CONTROLLER and handed to the nodes. Nodes
+# cannot reach OpenBao at all — its API is on a Docker network the panel owns,
+# not on the mesh — so the shape here is the same as the Hawser token table:
+# one play fetches, the next applies.
+#
+# ROLL IT OUT ONE HOST AT A TIME, starting with the lab node:
+#
+#   Limit: pl-1,controller
+#
+# `controller` belongs in that limit for the reason the guard below explains at
+# length. Then log in with a certificate and prove it before the next host.
+#
+# Undoing it needs no playbook and no OpenBao: delete
+# /etc/ssh/sshd_config.d/20-ansible-ca.conf and reload sshd. The node is then
+# back to keys only, and the certificate becomes an inert file again.
+
+- name: Fetch the fleet CA public key
+  hosts: controller
+  gather_facts: false
+
+  tasks:
+    - name: Read the CA public key from OpenBao
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: ssh_ca
+        openbao_read_field: public_key
+        openbao_read_into: _fleet_ca_public_key
+      tags:
+        - config
+
+- name: Trust the fleet CA on managed hosts
+  hosts: fleet
+  become: true
+  gather_facts: true
+
+  vars:
+    ansible_user: "{{ bootstrap_user }}"
+    ssh_hardening_ca_public_key: >-
+      {{ hostvars['controller']._fleet_ca_public_key | default('') }}
+
+  # `--limit` filters EVERY play, the fetch above included. Without this the run
+  # would be a green no-op: the key resolves to '' through the default, both CA
+  # tasks in the role skip on their `when`, the mesh-port drop-in reports ok,
+  # and the recap says changed=0 — indistinguishable from a host that was
+  # already configured. The same trap cost a Hawser rotation once (#47), and
+  # here it would be worse: the operator would go on to test a certificate
+  # login against a host that never got the CA.
+  pre_tasks:
+    - name: Assert the CA public key was read
+      ansible.builtin.assert:
+        that:
+          - hostvars['controller']._fleet_ca_public_key is defined
+          - hostvars['controller']._fleet_ca_public_key | length > 0
+        fail_msg: >-
+          The fetch play matched no hosts, so there is no CA key to install and
+          every host below would silently keep certificates disabled. A limit
+          that leaves out the controller looks exactly like this. Re-run with
+          the controller in the limit:
+          '{{ ansible_limit | default('<hosts>') }},controller'.
+      run_once: true
+      tags:
+        - config
+
+  tasks:
+    - name: Install the CA trust anchor
+      ansible.builtin.include_role:
+        name: ssh_hardening
+
+    # What a successful run does NOT prove: that a certificate login works. The
+    # role asserts sshd merged the directive, which rules out the silent
+    # failure; the credential end was proven separately by
+    # openbao-ssh-sign.yml. Putting the two together is a login, and a login is
+    # the acceptance test — performed by hand, once per host, before the next.
+    - name: Report what still has to be tried by hand
+      ansible.builtin.debug:
+        msg:
+          - "{{ inventory_hostname }} now accepts user certificates signed by
+             the fleet CA, for the principal named in the certificate."
+          - "authorized_keys is unchanged — the existing key is still the way in
+             and is not affected by anything above."
+          - "Prove it: sign a key with the Semaphore template
+             'Sign SSH certificate (test)', then ssh with -o CertificateFile
+             pointing at the result. Until that login succeeds, treat
+             certificate access on this host as untested."
+      tags:
+        - debug
+        - config

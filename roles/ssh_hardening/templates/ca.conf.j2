@@ -1,0 +1,6 @@
+# Managed by Ansible — roles/ssh_hardening. Do not edit by hand.
+#
+# Accept user certificates signed by the fleet CA. This ADDS a way in and takes
+# none away: authorized_keys is untouched, so the ordinary key keeps working and
+# a certificate that fails to verify is simply not a second credential.
+TrustedUserCAKeys {{ ssh_hardening_ca_path }}

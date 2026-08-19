@@ -22,6 +22,36 @@
     - config
     - ssh
 
+# The key is written BEFORE the drop-in that names it, and the order is not
+# cosmetic: TrustedUserCAKeys pointing at a file that is not there makes sshd
+# log an error on every authentication attempt. Both tasks skip together when
+# no key was supplied, so a host is never left holding one half.
+- name: Install the fleet CA public key
+  ansible.builtin.copy:
+    content: "{{ ssh_hardening_ca_public_key | trim }}\n"
+    dest: "{{ ssh_hardening_ca_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: ssh_hardening_ca_public_key | length > 0
+  notify: "reload sshd"
+  tags:
+    - config
+    - ssh
+
+- name: Trust user certificates signed by the fleet CA
+  ansible.builtin.template:
+    src: ca.conf.j2
+    dest: /etc/ssh/sshd_config.d/20-ansible-ca.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: ssh_hardening_ca_public_key | length > 0
+  notify: "reload sshd"
+  tags:
+    - config
+    - ssh
+
 # Runs before the reload handler fires (handlers run at play end), so a broken
 # merged config fails the play while the old sshd keeps serving connections.
 - name: Validate the merged sshd configuration
@@ -46,6 +76,36 @@
     host: 127.0.0.1
     port: "{{ ssh_hardening_mesh_port }}"
     timeout: 10
+  tags:
+    - config
+    - ssh
+
+# The same guard, for the half a listening port cannot prove. `sshd -t` says the
+# merged config parses; only `sshd -T` says what it merged. A drop-in that was
+# never included passes the first and is absent from the second — which is
+# exactly how certificate trust would come out looking installed and doing
+# nothing, discovered later by a login that quietly falls back to the key.
+- name: Read back the configuration sshd actually merged
+  ansible.builtin.command: /usr/sbin/sshd -T
+  register: _ssh_hardening_sshd_effective
+  changed_when: false
+  when: ssh_hardening_ca_public_key | length > 0
+  tags:
+    - config
+    - ssh
+
+- name: Assert sshd is serving certificate trust
+  ansible.builtin.assert:
+    that:
+      - ('trustedusercakeys ' ~ ssh_hardening_ca_path) in _ssh_hardening_sshd_effective.stdout
+    fail_msg: >-
+      sshd merged its configuration without TrustedUserCAKeys
+      {{ ssh_hardening_ca_path }}, so the drop-in at
+      /etc/ssh/sshd_config.d/20-ansible-ca.conf is being ignored — check that
+      /etc/ssh/sshd_config still carries its Include line. Nothing is broken:
+      authorized_keys is untouched and this host simply does not accept
+      certificates yet.
+  when: ssh_hardening_ca_public_key | length > 0
   tags:
     - config
     - ssh
