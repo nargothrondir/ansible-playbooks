@@ -107,6 +107,29 @@
           canonical deb822 source list. Defaults to the lab group; pass
           -e apt_sources_target=<host> in CLI args for one node at a time.
 
+      # The only way to exercise the agent half of openbao-ssh-sign.yml, and the
+      # reason it needs a template rather than a shell command: the playbook's
+      # default mode reads the public key out of `ssh-add -L`, and that agent
+      # exists only inside a Semaphore run. Semaphore starts one per task and
+      # exports SSH_AUTH_SOCK (local_executor.go:882); from the panel shell there
+      # is nothing to ask, and the playbook says so instead of guessing.
+      #
+      # Both fields stay EMPTY. The play targets controller through its own
+      # ssh_sign_target default, speaks only to the OpenBao API, and writes the
+      # certificate to /tmp inside the container — a limit naming a node would
+      # leave it with no hosts, and there is nothing to pass in CLI args.
+      #
+      # Nothing is changed by a run of this. The certificate it produces is
+      # public by construction and inert until a host trusts the CA, which no
+      # host does yet. It is a probe, kept because the next phase edits sshd on
+      # a live node and this is what says the credential side already works.
+      "Sign SSH certificate (test)":
+        playbook: playbooks/openbao-ssh-sign.yml
+        description: >-
+          Sign Semaphore's own SSH key with the fleet CA and print what came
+          back. Leave CLI args and Limit EMPTY. Changes nothing: no host trusts
+          the CA yet, so the certificate is a probe of the OpenBao side.
+
       # This playbook declares itself, and that is not a curiosity — it is what
       # ends the borrowing. Until now the only way to run it was to repoint an
       # existing template at it, which left that template named for a job it was
