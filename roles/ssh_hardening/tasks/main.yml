@@ -87,7 +87,7 @@
 # nothing, discovered later by a login that quietly falls back to the key.
 - name: Read back the configuration sshd actually merged
   ansible.builtin.command: /usr/sbin/sshd -T
-  register: _sshd_effective
+  register: _ssh_hardening_sshd_effective
   changed_when: false
   when: ssh_hardening_ca_public_key | length > 0
   tags:
@@ -97,7 +97,7 @@
 - name: Assert sshd is serving certificate trust
   ansible.builtin.assert:
     that:
-      - ('trustedusercakeys ' ~ ssh_hardening_ca_path) in _sshd_effective.stdout
+      - ('trustedusercakeys ' ~ ssh_hardening_ca_path) in _ssh_hardening_sshd_effective.stdout
     fail_msg: >-
       sshd merged its configuration without TrustedUserCAKeys
       {{ ssh_hardening_ca_path }}, so the drop-in at
