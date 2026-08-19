@@ -23,7 +23,17 @@
 #   path "auth/approle/role/semaphore/role-id" { capabilities = ["read"] }
 #   EOF
 #
-#   docker exec -it openbao bao token create -policy=openbao-bootstrap -ttl=30m -field=token
+# Capture the token into the variable rather than printing it — `-field=token`
+# on a terminal puts a live credential on screen and into scrollback:
+#
+#   cd /opt/ansible-playbooks
+#   BAO_TOKEN=$(docker exec openbao bao token create #     -policy=openbao-bootstrap -ttl=30m -field=token) && export BAO_TOKEN
+#   ansible-playbook -c local --ask-vault-pass playbooks/openbao-setup.yml
+#
+# -c local because the target is this machine and the panel shell holds no key
+# for the mesh address; --ask-vault-pass because the inventory is partly vaulted.
+# Rewrite the policy above whenever a path is added to it — the comment grants
+# nothing, and a stale policy fails with 403 halfway through a run.
 #
 # That token can build the structure and CANNOT READ A SINGLE SECRET — there is
 # no read capability on infra/data/* in the policy above. Leaked, it is worth

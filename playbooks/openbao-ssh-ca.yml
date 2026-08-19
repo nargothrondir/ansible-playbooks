@@ -24,8 +24,20 @@
 #   EOF
 #   docker exec -it openbao bao token create -policy=openbao-ssh-ca -ttl=30m -field=token
 #
-#   read -rs BAO_TOKEN && export BAO_TOKEN
-#   ansible-playbook -i ../infra-inventory/hosts.yml playbooks/openbao-ssh-ca.yml
+# Run it FROM THE PANEL, from the repository checkout, like this — Semaphore
+# supplies four things a shell does not, and every one of them cost a failed
+# attempt on 2026-08-19:
+#
+#   cd /opt/ansible-playbooks                        # ansible.cfg finds the
+#                                                    # inventory relative to here
+#   BAO_TOKEN=$(docker exec openbao bao token create #     -policy=openbao-ssh-ca -ttl=30m -field=token) && export BAO_TOKEN
+#   ansible-playbook -c local --ask-vault-pass playbooks/openbao-ssh-ca.yml
+#
+# -c local because the target IS this machine and the panel shell holds no key
+# for the mesh address the inventory carries; --ask-vault-pass because the
+# inventory is partly vaulted and only Semaphore has that password stored. The
+# token is captured into the variable rather than printed: `-field=token` on a
+# terminal puts a live credential on screen and into scrollback.
 #
 # The CA private key is generated INSIDE OpenBao and never leaves it: there is
 # no export path in this playbook and none should be added. Losing it means
@@ -134,14 +146,22 @@
       tags:
         - config
 
-    # 404 is the documented answer for "no CA configured yet", so it is an
-    # expected status rather than a failure — the guard below reads it.
+    # "No CA yet" is not a 404. Measured against OpenBao on 2026-08-19, a GET on
+    # a freshly mounted engine answers:
+    #
+    #   400  {"errors":["no default issuer currently configured"]}
+    #
+    # 404 is accepted too because it is what the documentation implies and what
+    # a future version may return; only 200 is read as "a CA exists", so a
+    # surprise status fails loudly rather than being mistaken for absence — the
+    # dangerous direction, since it would make the next task try to generate a
+    # CA over one already trusted by hosts.
     - name: Fetch the CA, if one exists
       ansible.builtin.uri:
         url: "{{ openbao_api }}/v1/{{ openbao_ssh_mount }}/config/ca"
         method: GET
         headers: "{{ _api_headers }}"
-        status_code: [200, 404]
+        status_code: [200, 400, 404]
       register: _ca
       check_mode: false
       tags:
@@ -164,8 +184,8 @@
           generate_signing_key: true
         status_code: [200, 204]
       register: _ca_created
-      changed_when: _ca.status == 404
-      when: _ca.status == 404
+      changed_when: _ca.status != 200
+      when: _ca.status != 200
       tags:
         - config
 
