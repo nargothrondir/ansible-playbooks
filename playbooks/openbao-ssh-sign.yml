@@ -1,0 +1,206 @@
+---
+# Sign a public key with the fleet CA and prove what came back (#74, phase 2).
+#
+# This playbook still touches NO host. It obtains a certificate and inspects it;
+# nothing trusts that certificate until roles/ssh_hardening installs the CA key,
+# which is the next phase.
+#
+# It exists in two modes because the two halves of the mechanism fail
+# differently and are worth separating:
+#
+#   FROM A FILE — pass ssh_sign_public_key_file. Proves the OpenBao side: the
+#   AppRole may call ssh/sign, the role issues what was asked for, and the
+#   certificate carries the right principals and lifetime. Runnable from the
+#   panel shell against a throwaway key.
+#
+#   FROM THE AGENT — the default. Reads the public half out of Semaphore's
+#   in-process ssh-agent with `ssh-add -L`, which only exists INSIDE a Semaphore
+#   run: Semaphore starts that agent per task and exports SSH_AUTH_SOCK
+#   (local_executor.go:882). Proves the half that cannot be tested anywhere else.
+#
+# Why an agent can serve a certificate it does not hold: ssh takes the two apart.
+# From ssh_config(5) on CertificateFile — "A corresponding private key must be
+# provided separately in order to use this certificate either from an
+# IdentityFile directive or -i flag to ssh(1), via ssh-agent(1), or via a
+# PKCS11Provider". So the private key stays in the agent, unexportable, and the
+# certificate is just a file beside it.
+#
+# From the panel shell, against a throwaway key:
+#
+#   cd /opt/ansible-playbooks
+#   ssh-keygen -t ed25519 -N '' -f /tmp/fleet-test -C 'ssh-ca phase 2'
+#   ansible-playbook -c local --ask-vault-pass playbooks/openbao-ssh-sign.yml \
+#     -e ssh_sign_public_key_file=/tmp/fleet-test.pub \
+#     -e openbao_addr=http://127.0.0.1:8200
+#
+# openbao_addr is overridden because the inventory value is the address the
+# SEMAPHORE CONTAINER uses (http://openbao:8200, a name on a Docker network);
+# from the host shell the same store answers on loopback. Getting this wrong
+# fails at the AppRole login with a DNS error, not with anything about SSH.
+#
+# The AppRole credential comes from the environment as everywhere else:
+# OPENBAO_SECRET_ID, from the Semaphore Variable Group in a run, exported by
+# hand for a shell test.
+
+- name: Sign a public key with the fleet SSH certificate authority
+  hosts: "{{ ssh_sign_target | default('controller') }}"
+  become: false
+  gather_facts: false
+
+  vars:
+    openbao_ssh_mount: ssh
+    openbao_ssh_role: fleet
+
+    # Which login the certificate is requested for. The role permits ansible and
+    # root; a certificate should ask for the one it needs rather than carry both,
+    # so an ordinary run cannot become a root login by accident.
+    ssh_sign_principal: "{{ bootstrap_user }}"
+
+    # Where the certificate lands. Not a secret — a certificate is public by
+    # construction, and useless without the private key that stays in the agent.
+    ssh_sign_cert_path: "{{ ssh_sign_cert_dir | default('/tmp') }}/fleet-cert.pub"
+
+  tasks:
+    # Reading a secret is also how the AppRole login happens: openbao-read.yml
+    # logs in on its first include and leaves _openbao_token for the rest of the
+    # play. ssh_ca is the natural thing to read — it is the CA this signature
+    # will chain to, and having it here lets the report show both halves.
+    - name: Fetch the CA public key, and with it an OpenBao token
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: ssh_ca
+        openbao_read_field: public_key
+        openbao_read_into: _fleet_ca_public_key
+      tags:
+        - config
+
+    - name: Read the public key from a file
+      ansible.builtin.slurp:
+        src: "{{ ssh_sign_public_key_file }}"
+      register: _pubkey_file
+      when: ssh_sign_public_key_file is defined
+      tags:
+        - config
+
+    # ssh-add -L prints every identity the agent holds, one per line. In a
+    # Semaphore run there is exactly one: the inventory's SSH key. Failure here
+    # is informative rather than fatal-by-accident — the assert below names the
+    # two ways it goes wrong.
+    - name: Read the public key from the ssh-agent
+      ansible.builtin.command: ssh-add -L
+      register: _agent_keys
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: ssh_sign_public_key_file is not defined
+      tags:
+        - config
+
+    - name: Assert the agent produced exactly one identity
+      ansible.builtin.assert:
+        that:
+          - _agent_keys.rc == 0
+          - (_agent_keys.stdout_lines | default([]) | length) == 1
+        fail_msg: >-
+          ssh-add -L returned rc={{ _agent_keys.rc | default('?') }} with
+          {{ _agent_keys.stdout_lines | default([]) | length }} identities.
+          rc=2 with no output means there is no agent to talk to — this mode only
+          works inside a Semaphore run, which starts one and exports
+          SSH_AUTH_SOCK; from a shell, pass ssh_sign_public_key_file instead.
+          More than one identity means the agent holds keys this playbook cannot
+          choose between, and signing the wrong one would produce a certificate
+          for a key nothing uses.
+      when: ssh_sign_public_key_file is not defined
+      tags:
+        - config
+
+    - name: Settle on the public key to sign
+      ansible.builtin.set_fact:
+        _public_key: >-
+          {{ (_pubkey_file.content | b64decode | trim)
+             if ssh_sign_public_key_file is defined
+             else (_agent_keys.stdout_lines | first | trim) }}
+      tags:
+        - config
+
+    # valid_principals is sent explicitly rather than left to default_user. The
+    # engine's own documentation recommends it, and it makes the request say what
+    # it wants instead of inheriting whatever the role was last configured with.
+    - name: Ask the CA to sign it
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/{{ openbao_ssh_mount }}/sign/{{ openbao_ssh_role }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ _openbao_token }}"
+        body_format: json
+        body:
+          public_key: "{{ _public_key }}"
+          valid_principals: "{{ ssh_sign_principal }}"
+        status_code: [200]
+      register: _signed
+      # Signing mints a credential; it changes nothing in the store, and a run
+      # that reports a change every time teaches nobody anything.
+      changed_when: false
+      no_log: true
+      tags:
+        - config
+
+    - name: Write the certificate beside nothing in particular
+      ansible.builtin.copy:
+        content: "{{ _signed.json.data.signed_key }}"
+        dest: "{{ ssh_sign_cert_path }}"
+        mode: "0644"
+      register: _cert_written
+      tags:
+        - config
+
+    # ssh-keygen is the authority on what the certificate actually says. Asking
+    # it, rather than trusting the request we sent, is the entire point of this
+    # phase: the request and the result are two different things, and only one
+    # of them is what a host will see.
+    - name: Read back what the certificate contains
+      ansible.builtin.command: "ssh-keygen -L -f {{ ssh_sign_cert_path }}"
+      register: _cert_details
+      changed_when: false
+      check_mode: false
+      tags:
+        - config
+
+    - name: Assert the certificate says what it must
+      ansible.builtin.assert:
+        that:
+          - "'Type: ssh-' in _cert_details.stdout"
+          - "'user certificate' in _cert_details.stdout"
+          - ssh_sign_principal in _cert_details.stdout
+          - "'permit-pty' in _cert_details.stdout"
+        fail_msg: >-
+          The certificate is not what the role should have issued. Expected a
+          user certificate for principal {{ ssh_sign_principal }} carrying
+          permit-pty. Full output follows in the next task; compare it against
+          the role with `bao read -format=json ssh/roles/{{ openbao_ssh_role }}`
+          — and read the JSON, not the CLI rendering, because the two disagree
+          about durations.
+      tags:
+        - config
+
+    - name: Report the certificate
+      ansible.builtin.debug:
+        msg: >-
+          {{ _cert_details.stdout_lines }}
+      tags:
+        - debug
+        - config
+
+    - name: Report what this proves
+      ansible.builtin.debug:
+        msg:
+          - "Signed a key obtained
+             {{ 'from ' ~ ssh_sign_public_key_file if ssh_sign_public_key_file is defined
+                else 'from the ssh-agent' }}."
+          - "Certificate written to {{ ssh_sign_cert_path }} — public, and inert
+             until a host trusts the CA."
+          - "No host has been changed. The CA these chain to is the key published
+             at infra/ssh_ca."
+      tags:
+        - debug
+        - config
