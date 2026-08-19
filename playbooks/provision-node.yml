@@ -14,6 +14,10 @@
 #                                    DNS name <node_name>.<netbird_dns_domain>
 #   node_country   (optional)        ISO-2 country code (e.g. PL); defaults to XX
 #   node_profile   (required)        config profile name; created if it does not exist
+#   node_root_password (optional, secret)
+#                                    root password, for a provider that offers no key
+#                                    injection; used once to install the admin key and
+#                                    never stored — see the seeding play below
 #
 # profile_domain is NOT a survey field any more. It is the name reality
 # advertises, and it is DERIVED from node_name — because while it was asked for
@@ -30,6 +34,11 @@
 # Prerequisites (manual, tracked in #39): the VPS is rented with the admin key
 # on root. That is the whole manual list — the workload stack is deployed by
 # the last play, so there is no second click any more (#136).
+#
+# Providers that hand out a ROOT PASSWORD instead of taking a key are served by
+# the optional survey field node_root_password: fill it in and the run installs
+# the key itself, in one play, before anything else touches the host. Leave it
+# empty when the key is already on root — which is the normal case.
 #
 # A full run takes roughly twenty minutes and reports to Telegram when it
 # finishes. Failures do NOT reach Telegram from here — see the last play.
@@ -132,6 +141,30 @@
           node_ip {{ node_ip }} belongs to an existing FLEET host — refusing
           to re-provision it via the one-click pipeline.
 
+    # Password authentication needs sshpass on the CONTROLLER, and Ansible's
+    # failure without it arrives at connection time — after the DNS record has
+    # been written and the Dockhand environment created. Ask here instead, where
+    # nothing has happened yet. Skipped entirely when no password was given, so
+    # the normal key path does not depend on sshpass being present at all.
+    - name: Check the controller can authenticate with a password
+      ansible.builtin.command: sshpass -V
+      register: _sshpass
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: node_root_password | default('') | length > 0
+
+    - name: Assert sshpass is installed
+      ansible.builtin.assert:
+        that:
+          - _sshpass.rc == 0
+        fail_msg: >-
+          A root password was supplied, but sshpass is not installed in the
+          Semaphore container and Ansible cannot do password authentication
+          without it. Either install it there, or put the admin key on root by
+          hand (ssh-copy-id) and re-run with the password field empty.
+      when: node_root_password | default('') | length > 0
+
     # Joined to new_vps (bootstrap_authorized_keys) and fleet (hawser vars) so
     # the roles below inherit the right group_vars. hawser_token is set as a
     # host var here, overriding the fleet mapping keyed by inventory_hostname.
@@ -152,6 +185,42 @@
 # host whose provisioning later fails is harmless — the next run overwrites it.
 - name: Point the node's name at its address
   ansible.builtin.import_playbook: dns-record.yml
+
+# Only for a provider that hands out a root password instead of taking a key.
+# One play, one task, one use of the password — and from the next play onwards
+# the run is identical to a key-injected node, because by then the key is there.
+#
+# ansible_password is a PLAY var on purpose. It dies with this play, so no later
+# play can inherit it and quietly fall back to password authentication against
+# an account that is key-only. Put on the in-memory host instead, it would
+# follow the run to the end.
+#
+# The password does not reach the process list: Ansible hands it to sshpass over
+# a file descriptor (-d), which is why sshpass is required rather than optional.
+#
+# Nothing here is cleaned up afterwards. Root keeps the admin key, which is
+# exactly the state a key-injected node is in — the same break-glass, reached by
+# a different road.
+- name: Seed the automation key on a password-only node
+  hosts: _provision_target
+  gather_facts: false
+  remote_user: root
+
+  vars:
+    ansible_password: "{{ node_root_password | default('') }}"
+
+  tasks:
+    - name: Install the admin key for root
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ item }}"
+        state: present
+      loop: "{{ bootstrap_authorized_keys }}"
+      loop_control:
+        label: "{{ item.split()[-1] | default('key') }}"
+      when: node_root_password | default('') | length > 0
+      tags:
+        - config
 
 - name: Bootstrap the automation user
   hosts: _provision_target

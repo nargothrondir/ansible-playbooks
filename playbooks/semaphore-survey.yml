@@ -100,6 +100,24 @@
             <node_name>.<netbird_dns_domain> (default)
           type: ""
           required: false
+        # type "secret" is not decoration. The value travels in the task's
+        # `secret` field, which TaskPool blanks before CreateTask and which is
+        # declared db:"-" — so it never reaches Semaphore's database, and the
+        # UI masks it in the log and the re-run dialog. Verified in the source
+        # at v2.19.7, the version we run, after first concluding the opposite
+        # from a block of constants in db/Template.go that is dead code.
+        #
+        # Optional, and empty is the normal case: providers that accept an SSH
+        # key on creation need nothing here.
+        - name: node_root_password
+          title: Root password
+          description: >-
+            Only for a provider that offers no SSH key injection. Used once to
+            install the admin key on root, then never again — the rest of the
+            run authenticates with that key. Leave empty when the key is
+            already on root
+          type: "secret"
+          required: false
         - name: squad_name
           title: Squad name
           description: >-
