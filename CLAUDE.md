@@ -282,17 +282,22 @@ One test decides where Dockerized software lives:
 - **Workload:** application containers deploy as Dockhand From-Git stacks —
   compose lives in the `docker-stacks` repo, the pinned image tag in git IS
   the deployed version, merging the bump IS the deploy. Secrets are Dockhand
-  secret env vars (`${VAR}` in compose), never committed. Delivery is
-  polling by default, because a mesh-only service has nothing for a webhook
-  to reach. An inbound webhook is allowed only where the endpoint is already
-  public for another reason AND the call is signature-verified — the
-  docker-stacks hook into Dockhand qualifies on both counts: agents already
-  reach it over the internet, and it rejects any POST whose HMAC does not
-  match. Opening a port to gain a webhook does not qualify.
-  **A webhook removes the delay you were relying on:** a merge now redeploys
-  immediately, so a change to the Semaphore stack restarts Semaphore — killing
-  any run in flight, and applying schema migrations at merge time rather than
-  at a moment you chose. Merge those deliberately.
+  secret env vars (`${VAR}` in compose), never committed. **Delivery is
+  polling, and the hour is a decision:** each From-Git stack carries its own
+  cron and Dockhand deploys it from git on that schedule — 09:00 UTC, an
+  afternoon in Karaganda, set by `dockhand-stack.yml`. A bad deploy breaks the
+  same whenever it lands; what the hour buys is somebody awake to see it. The
+  gap between merging and rolling out is the feature.
+  An inbound webhook is allowed only where the endpoint is already public for
+  another reason AND the call is signature-verified; opening a port to gain one
+  does not qualify. Dockhand has two and they are NOT interchangeable — measured
+  2026-08-19, after an evening spent believing a merge had deployed:
+  `/api/git/webhook/{repo}` deploys a single stack named after the repository,
+  which a multi-stack repo like docker-stacks does not have, so it changes
+  nothing here; `/api/git/stacks/{id}/webhook` is the one that reaches a
+  From-Git stack, at the price of a secret and a GitHub hook per stack.
+  Whichever is in use, know which — a merge that quietly deploys nothing looks
+  exactly like a merge that worked.
 - **Platform:** the layer Dockhand itself stands on is Ansible-provisioned:
   the Docker engine, Dockhand, Hawser, Netbird, Vault.
 - **DR path:** each workload SHOULD keep an Ansible role able to bring it up
