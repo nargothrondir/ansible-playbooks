@@ -47,6 +47,14 @@
     # matching on the tail of the URL keeps the account out of this file.
     _repo_slug: "{{ dockhand_stack_repo | default('docker-stacks') }}"
     _compose_path: "{{ dockhand_stack_compose | default('remnanode/docker-compose.yml') }}"
+    # When the scheduled sync deploys a merged change. Dockhand reads this cron
+    # in UTC — measured 2026-08-19, when the default '0 3 * * *' fired at 03:00
+    # UTC — so this is 14:00 in Karaganda, deliberately a working hour.
+    #
+    # The hour is the whole point of choosing polling over a webhook. A broken
+    # deploy breaks either way; what differs is whether anybody is awake when it
+    # lands. Delivery at 03:00 local would be discovered the next morning.
+    _stack_sync_cron: "{{ dockhand_stack_sync_cron | default('0 9 * * *') }}"
     # Reality camouflage: the decoy site served on 443 to anything that is not a
     # valid reality client. The compose file already reads ${CAMO_SITE} and
     # falls back to `converter`, so never setting it made every node serve the
@@ -212,6 +220,7 @@
               'composePath': _compose_path,
               'autoUpdate': true,
               'autoUpdateSchedule': 'daily',
+              'autoUpdateCron': _stack_sync_cron,
               'webhookEnabled': false} }}
         status_code: [200, 201, 409]
       register: _stack_created
@@ -275,6 +284,76 @@
           cannot be deployed from here. Check it in Dockhand before re-running.
       when: _stack_created.status | default(0) != 0
       tags:
+        - config
+
+    # Creation settles the schedule for a NEW stack only: a 409 means the stack
+    # already exists and POST changed nothing about it. Every node provisioned
+    # before this variable existed therefore still carries Dockhand's default
+    # '0 3 * * *', and would keep it forever — the same create-but-never-reconcile
+    # gap that let the Semaphore templates drift.
+    - name: Read the stack's current sync schedule
+      ansible.builtin.uri:
+        url: "{{ _dockhand_api }}/api/git/stacks/{{ _stack_id | int }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _dockhand_api_token }}"
+        status_code: [200]
+      register: _stack_settings
+      delegate_to: panel
+      no_log: true
+      changed_when: false
+      check_mode: false
+      tags:
+        - config
+
+    # Fetch-then-guard: the PUT fires only when the schedule is actually wrong,
+    # so a settled node reports changed=0.
+    #
+    # Every field the handler reads is sent back from current state, because it
+    # passes them straight into the update. webhookSecret is the deliberate
+    # exception — the handler keeps the stored one when the field is absent, and
+    # sending back a value we read would risk writing a masked placeholder over
+    # a real secret.
+    - name: Correct the stack's sync schedule
+      ansible.builtin.uri:
+        url: "{{ _dockhand_api }}/api/git/stacks/{{ _stack_id | int }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ _dockhand_api_token }}"
+        body_format: json
+        body: >-
+          {{ {'stackName': _stack_settings.json.stackName,
+              'composePath': _stack_settings.json.composePath,
+              'envFilePath': _stack_settings.json.envFilePath,
+              'autoUpdate': true,
+              'autoUpdateSchedule': _stack_settings.json.autoUpdateSchedule | default('daily'),
+              'autoUpdateCron': _stack_sync_cron,
+              'webhookEnabled': _stack_settings.json.webhookEnabled | default(false),
+              'contextDir': _stack_settings.json.contextDir,
+              'buildOnDeploy': _stack_settings.json.buildOnDeploy | default(false),
+              'noBuildCache': _stack_settings.json.noBuildCache | default(false),
+              'repullImages': _stack_settings.json.repullImages | default(false),
+              'forceRedeploy': _stack_settings.json.forceRedeploy | default(false)} }}
+        status_code: [200]
+      register: _stack_schedule_fixed
+      delegate_to: panel
+      no_log: true
+      when: >-
+        (_stack_settings.json.autoUpdateCron | default('')) != _stack_sync_cron
+        or not (_stack_settings.json.autoUpdate | default(false) | bool)
+      changed_when: _stack_schedule_fixed.status | default(0) == 200
+      tags:
+        - config
+
+    - name: Report the delivery schedule
+      ansible.builtin.debug:
+        msg: >-
+          {{ _stack_name }} on {{ _env_name }} syncs from git at
+          {{ _stack_sync_cron }} UTC
+          {{ '(corrected this run)' if _stack_schedule_fixed is changed
+             else '(already set)' }}.
+      tags:
+        - debug
         - config
 
     - name: Read the stack's environment variables
