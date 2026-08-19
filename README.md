@@ -71,6 +71,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | [playbooks/semaphore-inventory-repo.yml](playbooks/semaphore-inventory-repo.yml) | — (Semaphore API call; report-only without arguments) | control |
 | [playbooks/openbao.yml](playbooks/openbao.yml) | openbao | `openbao_target` (default: panel) |
 | [playbooks/openbao-setup.yml](playbooks/openbao-setup.yml) | — (OpenBao API: KV, policy, AppRole; run from the panel CLI with a short-lived token) | `openbao_setup_target` (default: panel) |
+| [playbooks/openbao-ssh-ca.yml](playbooks/openbao-ssh-ca.yml) | — (OpenBao API: SSH engine, CA and signing role for fleet logins; touches no host) | `openbao_setup_target` (default: panel) |
 | [playbooks/openbao-verify.yml](playbooks/openbao-verify.yml) | — (proves the AppRole → KV read chain; run from Semaphore) | `openbao_verify_target` (default: controller) |
 | [playbooks/mesh-ssh-check.yml](playbooks/mesh-ssh-check.yml) | — (SSH-over-mesh connectivity check) | control → mesh peers |
 
