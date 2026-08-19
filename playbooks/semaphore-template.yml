@@ -107,6 +107,25 @@
           canonical deb822 source list. Defaults to the lab group; pass
           -e apt_sources_target=<host> in CLI args for one node at a time.
 
+      # Phase 3 of the SSH CA: the first thing in that line of work that touches
+      # a host. Additive — the node gains certificate logins and keeps
+      # authorized_keys, so a failed certificate is not a lockout.
+      #
+      # Limit is REQUIRED and must carry the controller, like Sync Hawser and
+      # for the same reason: the CA key is read in a play targeting the
+      # controller, and a limit without it produces a green run that installed
+      # nothing. The playbook asserts rather than letting that pass.
+      #
+      # One host at a time, lab first, with a real certificate login in between.
+      # A run of this is not proof that certificates work — only that sshd
+      # merged the directive.
+      "Trust the fleet SSH CA":
+        playbook: playbooks/ssh-ca-trust.yml
+        description: >-
+          Install the fleet CA as a trust anchor on a node, so it accepts
+          certificates alongside the existing key. Set Limit to <host>,controller
+          — one host at a time, and log in with a certificate before the next.
+
       # The only way to exercise the agent half of openbao-ssh-sign.yml, and the
       # reason it needs a template rather than a shell command: the playbook's
       # default mode reads the public key out of `ssh-add -L`, and that agent

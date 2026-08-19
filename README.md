@@ -35,7 +35,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | [xanmod](roles/xanmod/README.md) | Install the XanMod performance kernel | — |
 | [netbird](roles/netbird/README.md) | Install the NetBird agent and join the mesh | — |
 | [ufw](roles/ufw/README.md) | Host firewall: public 22/443, mesh-only service ports on wt0 | — |
-| [ssh_hardening](roles/ssh_hardening/README.md) | Mesh-only sshd port (2200) for key-based automation | ufw |
+| [ssh_hardening](roles/ssh_hardening/README.md) | Mesh-only sshd port (2200) for key-based automation; optional trust anchor for the fleet SSH CA | ufw |
 | [crowdsec](roles/crowdsec/README.md) | SSH-only detection with progressive bans, nftables bouncer; central LAPI wiring laid in (inactive) | common |
 | [upgrade](roles/upgrade/README.md) | `apt update` + `full-upgrade` + `autoremove`, reboot if required | — |
 | [notify_telegram](roles/notify_telegram/README.md) | Send a message to a Telegram chat via the Bot API | — |
@@ -73,6 +73,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | [playbooks/openbao-setup.yml](playbooks/openbao-setup.yml) | — (OpenBao API: KV, policy, AppRole; run from the panel CLI with a short-lived token) | `openbao_setup_target` (default: panel) |
 | [playbooks/openbao-ssh-ca.yml](playbooks/openbao-ssh-ca.yml) | — (OpenBao API: SSH engine, CA and signing role for fleet logins; touches no host) | `openbao_setup_target` (default: panel) |
 | [playbooks/openbao-ssh-sign.yml](playbooks/openbao-ssh-sign.yml) | — (OpenBao API: sign a public key with the fleet CA and inspect the result; touches no host) | `ssh_sign_public_key_file`, `ssh_sign_principal`, `ssh_sign_target` (default: controller) |
+| [playbooks/ssh-ca-trust.yml](playbooks/ssh-ca-trust.yml) | ssh_hardening (installs the fleet CA as a trust anchor; keys keep working) | fleet, `<host>,controller` limit |
 | [playbooks/openbao-verify.yml](playbooks/openbao-verify.yml) | — (proves the AppRole → KV read chain; run from Semaphore) | `openbao_verify_target` (default: controller) |
 | [playbooks/mesh-ssh-check.yml](playbooks/mesh-ssh-check.yml) | — (SSH-over-mesh connectivity check) | control → mesh peers |
 
