@@ -68,6 +68,62 @@ Values are written to a `.env` beside the compose file, which compose reads
 automatically. `TOKEN` lives only there — `0600` (root-only), written by a task
 running with `no_log`, so it is neither world-readable nor logged.
 
+## Rotating a node's token
+
+Two Semaphore templates, run in order. Their input fields are the **opposite** of
+each other, which is the easiest thing to get wrong:
+
+| Template | CLI args | Limit |
+|---|---|---|
+| `Rotate Hawser token` | `-e node_name=<host> -e dockhand_force_rotate=true` | **empty** |
+| `Sync Hawser` | empty | `<host>,controller` |
+
+The rotation playbook targets the controller and speaks only to the OpenBao and
+Dockhand APIs — it never connects to the node, so a limit naming the node leaves
+the play with no hosts. The delivery playbook does connect, so its limit is
+required; `controller` belongs in it because a separate play there reads the
+token table out of OpenBao.
+
+Putting the `-e` arguments into Limit fails harmlessly: Ansible reads each word
+as a host pattern, matches nothing, and stops before any play runs.
+
+Rotation succeeded when the last line reads **`freshly minted and issued`**.
+`already registered` means `dockhand_force_rotate` did not arrive and no new
+token exists — do not run the delivery.
+
+Several nodes can be done in one pass: rotate each in turn (the playbook takes
+one DNS label at a time), then a single delivery run with
+`Limit: <a>,<b>,<c>,controller`.
+
+### The node takes up to five minutes to come back — that is normal
+
+Dockhand keeps a per-IP cooldown after a failed agent authentication,
+`HAWSER_AUTH_FAIL_COOLDOWN_MS`, five minutes at v1.0.41. The block is checked
+*before* the token is validated.
+
+So rotation always produces a wait: issuing the new token revokes the old one,
+the still-running old agent retries with the revoked token and puts its own
+address in the cooldown, and the replacement agent then serves that sentence
+before it is let in. Upstream clears the cooldown on a successful
+authentication — after the check that prevents one.
+
+Measured on fi 2026-08-17: container recreated 05:11:58, connection accepted
+05:15:02.
+
+The cooldown is per IP, so nodes do not delay each other and a batch is no
+slower than a single host.
+
+**Telling normal from broken**, in the agent's log
+(`docker logs hawser`, filter out the Docker API chatter):
+
+- `Connection failed: failed to receive welcome: server error:` with lengthening
+  pauses — the cooldown. Wait.
+- `Invalid token` — the wrong token reached the node. Investigate.
+
+`Welcome received, environment ID: 0` is not an error. Dockhand's welcome message
+carries no `environmentId` field at all despite declaring one in its type, so the
+agent prints the zero value; the binding is held server-side.
+
 ## Variables
 
 | Variable | Default | Description |
