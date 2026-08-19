@@ -81,8 +81,19 @@
     # authentication when RevokedKeys names a file it cannot read, so a KRL is a
     # lockout waiting for a typo. Treat it as an emergency lever; treat the TTL
     # as the mechanism.
-    openbao_ssh_ttl: "30m"
-    openbao_ssh_max_ttl: "1h"
+    #
+    # Seconds, not "30m", and the difference is not cosmetic. The API stores a
+    # duration and returns it as an INTEGER NUMBER OF SECONDS, while the CLI
+    # pretty-prints the same field as "30m" — measured 2026-08-19:
+    #
+    #   bao read ssh/roles/fleet              ttl  30m
+    #   bao read -format=json ssh/roles/fleet  "ttl": 1800
+    #
+    # A guard comparing the response with "30m" is therefore never satisfied, and
+    # the role is rewritten on every run. Reading the CLI output is what hid it:
+    # the human-facing rendering agreed with the playbook while the JSON did not.
+    openbao_ssh_ttl: 1800
+    openbao_ssh_max_ttl: 3600
 
     # The lookup runs on the CONTROLLER, so this picks up the operator's shell.
     _bao_token: "{{ lookup('env', 'BAO_TOKEN') }}"
@@ -255,7 +266,9 @@
         _need_ssh_role: >-
           {{ _ssh_role.status == 404
              or (_ssh_role.json.data.allowed_users | default('')) != _ssh_principals
-             or (_ssh_role.json.data.ttl | default(0) | string) != (openbao_ssh_ttl | string) }}
+             or (_ssh_role.json.data.default_user | default('')) != bootstrap_user
+             or (_ssh_role.json.data.ttl | default(0) | int) != (openbao_ssh_ttl | int)
+             or (_ssh_role.json.data.max_ttl | default(0) | int) != (openbao_ssh_max_ttl | int) }}
       tags:
         - config
 
@@ -296,7 +309,7 @@
       ansible.builtin.debug:
         msg:
           - "SSH engine at {{ openbao_ssh_mount }}/, role {{ openbao_ssh_role }},
-             principals {{ _ssh_principals }}, ttl {{ openbao_ssh_ttl }}."
+             principals {{ _ssh_principals }}, ttl {{ openbao_ssh_ttl }}s."
           - "CA public key (published to {{ openbao_kv_mount }}/{{ openbao_ssh_ca_kv_path }}):"
           - "{{ _ca_now.json.data.public_key }}"
           - "No host has been changed. Nodes trust this key only after
