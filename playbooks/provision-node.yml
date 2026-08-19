@@ -40,7 +40,7 @@
 # Read on the controller, before anything else: the target does not exist yet,
 # and even once it does it cannot reach OpenBao — the API is on a Docker
 # network the panel owns, not on the mesh.
-- name: Fetch the NetBird setup key
+- name: Fetch the secrets the run needs
   hosts: controller
   gather_facts: false
 
@@ -63,6 +63,20 @@
         openbao_read_path: netbird
         openbao_read_field: setup_key
         openbao_read_into: _netbird_setup_key
+      tags:
+        - config
+
+    # Read here rather than left to ssh-ca-trust.yml afterwards, because a node
+    # that has to be visited a second time to become a normal fleet member is a
+    # node somebody will forget to visit. This is also the cheapest place to
+    # fail: openbao-read.yml asserts the field exists, so a CA that is missing
+    # or unreadable stops the run before the target server is built at all.
+    - name: Fetch the fleet SSH CA public key from OpenBao
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: ssh_ca
+        openbao_read_field: public_key
+        openbao_read_into: _fleet_ca_public_key
       tags:
         - config
 
@@ -180,6 +194,11 @@
     # From OpenBao (#2), fetched by the first play. Overrides the group_vars
     # definition that reads the vault entry; both resolve to the same value.
     netbird_setup_key: "{{ hostvars['controller']._netbird_setup_key | default('') }}"
+    # Same source, same shape. Hands ssh_hardening the trust anchor so a node
+    # accepts fleet certificates from the moment it is built, alongside the key
+    # bootstrap puts in authorized_keys — never instead of it.
+    ssh_hardening_ca_public_key: >-
+      {{ hostvars['controller']._fleet_ca_public_key | default('') }}
   pre_tasks:
     # The node is registered in the panel by its mesh DNS name, so a missing
     # setup key must fail loudly HERE — otherwise the netbird role skips the
@@ -193,6 +212,22 @@
           field setup_key), so check that the Variable Group carrying
           OPENBAO_SECRET_ID is attached to this template. Without the mesh join
           the panel would be registered against a dead DNS name.
+
+    # Not fatal in the same way — a node without certificate trust still works,
+    # it is simply different from every other node in the fleet, and finding
+    # that out later means finding it out during an incident. The fetch play
+    # already fails on a missing field, so reaching here empty means the play
+    # was skipped rather than the secret being absent.
+    - name: Assert the fleet CA public key is available
+      ansible.builtin.assert:
+        that:
+          - ssh_hardening_ca_public_key | default('') | length > 0
+        fail_msg: >-
+          ssh_hardening_ca_public_key is empty, so this node would be built
+          trusting no certificate authority while the rest of the fleet trusts
+          one. It comes from OpenBao (infra/ssh_ca, field public_key) via the
+          first play of this run; an empty value here means that play did not
+          run for the controller.
   roles:
     # Ordered deliberately: patch the base first; open the automation SSH door;
     # lay the baseline (incl. deb822 prerequisites for the repo roles); give the

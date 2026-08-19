@@ -56,10 +56,12 @@ is serving the directive. The credential half is proven separately by
 the two together is a login, performed by hand once per host.
 
 The key itself comes from OpenBao at `infra/ssh_ca`, read on the controller and
-handed to the node by
-[playbooks/ssh-ca-trust.yml](../../playbooks/ssh-ca-trust.yml) — nodes cannot
-reach OpenBao, whose API is on a Docker network the panel owns rather than on
-the mesh.
+handed to the node — nodes cannot reach OpenBao, whose API is on a Docker
+network the panel owns rather than on the mesh. Two callers do that:
+[playbooks/provision-node.yml](../../playbooks/provision-node.yml) for a node
+being built, so it is a normal fleet member from the start, and
+[playbooks/ssh-ca-trust.yml](../../playbooks/ssh-ca-trust.yml) for one that
+already exists.
 
 ## Variables
 
