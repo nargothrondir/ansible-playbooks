@@ -12,6 +12,10 @@
 # not on the mesh — so the shape here is the same as the Hawser token table:
 # one play fetches, the next applies.
 #
+# For a node BEING BUILT this is unnecessary: provision-node.yml reads the same
+# key in its first play and hands it to the same role, so a new node trusts the
+# CA from the moment it exists. This playbook is for nodes that already do.
+#
 # ROLL IT OUT ONE HOST AT A TIME, starting with the lab node:
 #
 #   Limit: pl-1,controller

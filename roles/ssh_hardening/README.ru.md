@@ -56,10 +56,13 @@ Drop-in явно перечисляет и `Port 22`: первая директ�
 [playbooks/openbao-ssh-sign.yml](../../playbooks/openbao-ssh-sign.yml); их
 соединение и есть вход, который выполняется руками по одному разу на хост.
 
-Сам ключ лежит в OpenBao по пути `infra/ssh_ca`, читается на контроллере и
-передаётся ноде плейбуком
-[playbooks/ssh-ca-trust.yml](../../playbooks/ssh-ca-trust.yml) — ноды до
-OpenBao не достают, его API живёт в docker-сети панели, а не в меше.
+Сам ключ лежит в OpenBao по пути `infra/ssh_ca` и читается на контроллере:
+ноды до OpenBao не достают, его API живёт в docker-сети панели, а не в меше.
+Передают его ноде двое —
+[playbooks/provision-node.yml](../../playbooks/provision-node.yml) при сборке,
+чтобы нода была полноценным членом флота с самого начала, и
+[playbooks/ssh-ca-trust.yml](../../playbooks/ssh-ca-trust.yml) для той, что уже
+существует.
 
 ## Переменные
 
