@@ -71,6 +71,7 @@
 | [playbooks/semaphore-inventory-repo.yml](playbooks/semaphore-inventory-repo.yml) | — (вызов API Semaphore; без аргументов только отчёт) | control |
 | [playbooks/openbao.yml](playbooks/openbao.yml) | openbao | `openbao_target` (default: panel) |
 | [playbooks/openbao-setup.yml](playbooks/openbao-setup.yml) | — (API OpenBao: KV, политика, AppRole; запуск с CLI панели с коротким токеном) | `openbao_setup_target` (по умолчанию: panel) |
+| [playbooks/openbao-ssh-ca.yml](playbooks/openbao-ssh-ca.yml) | — (API OpenBao: SSH-движок, CA и роль подписи для входа на ноды; хостов не касается) | `openbao_setup_target` (по умолчанию: panel) |
 | [playbooks/openbao-verify.yml](playbooks/openbao-verify.yml) | — (проверяет цепочку AppRole → чтение KV; запускать из Semaphore) | `openbao_verify_target` (по умолчанию: controller) |
 | [playbooks/mesh-ssh-check.yml](playbooks/mesh-ssh-check.yml) | — (проверка SSH через меш) | control → mesh-пиры |
 

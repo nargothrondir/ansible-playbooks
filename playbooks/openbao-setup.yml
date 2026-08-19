@@ -16,6 +16,7 @@
 #   path "sys/mounts/infra"                    { capabilities = ["create", "update", "read"] }
 #   path "sys/policies/acl/infra-read"         { capabilities = ["create", "update", "read"] }
 #   path "sys/policies/acl/hawser-write"       { capabilities = ["create", "update", "read"] }
+#   path "sys/policies/acl/ssh-sign"           { capabilities = ["create", "update", "read"] }
 #   path "sys/auth"                            { capabilities = ["read", "list"] }
 #   path "sys/auth/approle"                    { capabilities = ["create", "update", "read", "sudo"] }
 #   path "auth/approle/role/semaphore"         { capabilities = ["create", "update", "read"] }
@@ -66,6 +67,7 @@
     openbao_kv_mount: infra
     openbao_policy_name: infra-read
     openbao_write_policy_name: hawser-write
+    openbao_ssh_policy_name: ssh-sign
     openbao_approle_name: semaphore
 
     # Read-only, and scoped to the KV mount only. KV v2 serves reads from
@@ -106,6 +108,18 @@
     openbao_write_policy_hcl: |
       path "{{ openbao_kv_mount }}/data/hawser" {
         capabilities = ["create", "update", "read"]
+      }
+
+    # Permission to ASK for a certificate, and nothing else: no read of the CA,
+    # no ability to change the role, no other path under the ssh mount. The
+    # controller signs with this; whoever holds the AppRole can obtain a
+    # 30-minute certificate for the fleet and cannot alter what that means.
+    #
+    # A different mount from infra/, so the precedence trap above does not apply
+    # here — nothing else in any policy matches this path.
+    openbao_ssh_policy_hcl: |
+      path "ssh/sign/fleet" {
+        capabilities = ["create", "update"]
       }
 
     # The lookup runs on the CONTROLLER, so this picks up the operator's shell.
@@ -242,6 +256,44 @@
       tags:
         - config
 
+    - name: Fetch the ssh signing policy, if any
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/policies/acl/{{ openbao_ssh_policy_name }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200, 404]
+      register: _ssh_policy
+      check_mode: false
+      tags:
+        - config
+
+    - name: Determine whether the ssh signing policy needs writing
+      ansible.builtin.set_fact:
+        _need_ssh_policy: >-
+          {{ _ssh_policy.status == 404
+             or (_ssh_policy.json.data.policy | default('')) != openbao_ssh_policy_hcl }}
+      tags:
+        - config
+
+    # Written here even when the SSH engine does not exist yet: a policy may
+    # reference a path that is not mounted, and creating it first means the
+    # AppRole below never points at a policy that is missing. openbao-ssh-ca.yml
+    # creates the engine itself.
+    - name: Write the ssh signing policy
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/policies/acl/{{ openbao_ssh_policy_name }}"
+        method: PUT
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body:
+          policy: "{{ openbao_ssh_policy_hcl }}"
+        status_code: [200, 204]
+      no_log: true
+      changed_when: _need_ssh_policy | bool
+      when: _need_ssh_policy | bool
+      tags:
+        - config
+
     - name: Fetch the enabled auth methods
       ansible.builtin.uri:
         url: "{{ openbao_api }}/v1/sys/auth"
@@ -292,7 +344,8 @@
         _need_role: >-
           {{ _role.status == 404
              or (_role.json.data.token_policies | default([]) | sort)
-                != ([openbao_policy_name, openbao_write_policy_name] | sort) }}
+                != ([openbao_policy_name, openbao_write_policy_name,
+                     openbao_ssh_policy_name] | sort) }}
       tags:
         - config
 
@@ -306,7 +359,8 @@
         headers: "{{ _api_headers }}"
         body_format: json
         body:
-          token_policies: ["{{ openbao_policy_name }}", "{{ openbao_write_policy_name }}"]
+          token_policies: ["{{ openbao_policy_name }}", "{{ openbao_write_policy_name }}",
+                           "{{ openbao_ssh_policy_name }}"]
           token_ttl: "20m"
           token_max_ttl: "1h"
           secret_id_ttl: 0

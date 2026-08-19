@@ -1,0 +1,286 @@
+---
+# Enable OpenBao's SSH secrets engine as a certificate authority for fleet
+# logins (#74), and publish its public key where the nodes can reach it.
+#
+# The point: Semaphore's automation key stops being the thing that opens every
+# node. Its private half stays in the Key Store agent, but what the host trusts
+# is a SHORT-LIVED certificate signed here — so a copy of the key alone proves
+# nothing, and access is bounded by a TTL rather than by whoever remembers to
+# edit authorized_keys.
+#
+# This playbook touches NO host. It creates the engine, the CA and the signing
+# role, and writes the CA public key into KV. Nodes are changed later by
+# roles/ssh_hardening, which reads that key and adds TrustedUserCAKeys ALONGSIDE
+# authorized_keys — never instead of it.
+#
+# Run it with a short-lived bootstrap token, the same way as openbao-setup.yml:
+#
+#   docker exec -i openbao bao policy write openbao-ssh-ca - <<'EOF'
+#   path "sys/mounts"                    { capabilities = ["read", "list"] }
+#   path "sys/mounts/ssh"                { capabilities = ["create", "update", "read"] }
+#   path "ssh/config/ca"                 { capabilities = ["create", "update", "read"] }
+#   path "ssh/roles/fleet"               { capabilities = ["create", "update", "read"] }
+#   path "infra/data/ssh_ca"             { capabilities = ["create", "update", "read"] }
+#   EOF
+#   docker exec -it openbao bao token create -policy=openbao-ssh-ca -ttl=30m -field=token
+#
+#   read -rs BAO_TOKEN && export BAO_TOKEN
+#   ansible-playbook -i ../infra-inventory/hosts.yml playbooks/openbao-ssh-ca.yml
+#
+# The CA private key is generated INSIDE OpenBao and never leaves it: there is
+# no export path in this playbook and none should be added. Losing it means
+# re-issuing the trust anchor on every host, which is survivable; leaking it
+# means anyone can mint a certificate for the fleet, which is not.
+#
+# Signing itself is NOT done here — that belongs to the run that needs it, and
+# the AppRole's permission to call ssh/sign lives in openbao-setup.yml with the
+# rest of its policies.
+
+- name: Create the SSH certificate authority in OpenBao
+  hosts: "{{ openbao_setup_target | default('panel') }}"
+  become: false
+  gather_facts: false
+
+  vars:
+    openbao_api: "http://127.0.0.1:8200"
+    openbao_kv_mount: infra
+    openbao_ssh_mount: ssh
+    openbao_ssh_role: fleet
+
+    # Where the CA public key is published for roles/ssh_hardening to read. It
+    # is NOT a secret — it is the value every host must trust — but KV is where
+    # this fleet already looks for things the controller must hand to a node,
+    # and a node cannot reach OpenBao itself.
+    openbao_ssh_ca_kv_path: ssh_ca
+
+    # Both principals the fleet actually logs in as. bootstrap_user is what
+    # every ordinary play connects with; root is what provision-node.yml uses on
+    # a brand-new machine. A certificate valid for only one of them would work
+    # until the day it silently did not.
+    _ssh_principals: "{{ bootstrap_user }},root"
+
+    # 30 minutes: longer than any run this fleet performs, short enough that a
+    # stolen certificate is worth little.
+    #
+    # This is the primary containment, and deliberately so. Certificates CAN be
+    # revoked — an OpenSSH KRL revokes by serial or key id — but a KRL is a file
+    # that must reach every host, which is the distribution problem this whole
+    # exercise exists to remove. Worse, sshd refuses ALL public-key
+    # authentication when RevokedKeys names a file it cannot read, so a KRL is a
+    # lockout waiting for a typo. Treat it as an emergency lever; treat the TTL
+    # as the mechanism.
+    openbao_ssh_ttl: "30m"
+    openbao_ssh_max_ttl: "1h"
+
+    # The lookup runs on the CONTROLLER, so this picks up the operator's shell.
+    _bao_token: "{{ lookup('env', 'BAO_TOKEN') }}"
+    _api_headers:
+      X-Vault-Token: "{{ _bao_token }}"
+
+  tasks:
+    - name: Assert a bootstrap token was supplied
+      ansible.builtin.assert:
+        that:
+          - _bao_token | length > 0
+        fail_msg: >-
+          BAO_TOKEN is empty. Mint a short-lived bootstrap token (see the header
+          of this file) and export it: `read -rs BAO_TOKEN && export BAO_TOKEN`.
+          Do not use the root token, and do not store either in Semaphore.
+      tags:
+        - config
+
+    - name: Assert the login principals are known
+      ansible.builtin.assert:
+        that:
+          - bootstrap_user | default('') | length > 0
+        fail_msg: >-
+          bootstrap_user is not defined, so the certificate role would be
+          created for root alone and every ordinary play would fail to log in
+          the moment authorized_keys is retired. It comes from the inventory's
+          group_vars — check that the inventory is the one ansible.cfg points at.
+      tags:
+        - config
+
+    - name: Fetch the enabled secret engines
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/mounts"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _mounts
+      check_mode: false
+      tags:
+        - config
+
+    - name: Determine whether the SSH engine is missing
+      ansible.builtin.set_fact:
+        _need_ssh_mount: >-
+          {{ (openbao_ssh_mount + '/')
+             not in (_mounts.json.data | default(_mounts.json, true)).keys() | list }}
+      tags:
+        - config
+
+    - name: Enable the SSH secrets engine
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/mounts/{{ openbao_ssh_mount }}"
+        method: POST
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body:
+          type: ssh
+        status_code: [200, 204]
+      changed_when: _need_ssh_mount | bool
+      when: _need_ssh_mount | bool
+      tags:
+        - config
+
+    # 404 is the documented answer for "no CA configured yet", so it is an
+    # expected status rather than a failure — the guard below reads it.
+    - name: Fetch the CA, if one exists
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/{{ openbao_ssh_mount }}/config/ca"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200, 404]
+      register: _ca
+      check_mode: false
+      tags:
+        - config
+
+    # generate_signing_key makes OpenBao create the pair itself. Submitting an
+    # existing private key is possible and deliberately not done: a key that was
+    # never outside the store cannot have been copied on the way in.
+    #
+    # Guarded because a second POST against a configured mount fails rather than
+    # replacing the CA — and replacing it would invalidate every certificate
+    # already trusted by every host.
+    - name: Generate the certificate authority
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/{{ openbao_ssh_mount }}/config/ca"
+        method: POST
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body:
+          generate_signing_key: true
+        status_code: [200, 204]
+      register: _ca_created
+      changed_when: _ca.status == 404
+      when: _ca.status == 404
+      tags:
+        - config
+
+    - name: Read the CA public key
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/{{ openbao_ssh_mount }}/config/ca"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _ca_now
+      changed_when: false
+      check_mode: false
+      tags:
+        - config
+
+    - name: Fetch the published CA key, if any
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/{{ openbao_kv_mount }}/data/{{ openbao_ssh_ca_kv_path }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200, 404]
+      register: _ca_published
+      check_mode: false
+      tags:
+        - config
+
+    - name: Determine whether the published key is missing or stale
+      ansible.builtin.set_fact:
+        _need_publish: >-
+          {{ _ca_published.status == 404
+             or (_ca_published.json.data.data.public_key | default(''))
+                != _ca_now.json.data.public_key }}
+      tags:
+        - config
+
+    # Published into KV because a node cannot reach OpenBao — its API is on a
+    # Docker network the panel owns. roles/ssh_hardening reads this the same way
+    # every other host-bound value is read, through tasks/openbao-read.yml.
+    - name: Publish the CA public key for the nodes
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/{{ openbao_kv_mount }}/data/{{ openbao_ssh_ca_kv_path }}"
+        method: POST
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body:
+          data:
+            public_key: "{{ _ca_now.json.data.public_key }}"
+        status_code: [200, 204]
+      changed_when: _need_publish | bool
+      when: _need_publish | bool
+      tags:
+        - config
+
+    - name: Fetch the signing role, if any
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/{{ openbao_ssh_mount }}/roles/{{ openbao_ssh_role }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200, 404]
+      register: _ssh_role
+      check_mode: false
+      tags:
+        - config
+
+    - name: Determine whether the signing role needs writing
+      ansible.builtin.set_fact:
+        _need_ssh_role: >-
+          {{ _ssh_role.status == 404
+             or (_ssh_role.json.data.allowed_users | default('')) != _ssh_principals
+             or (_ssh_role.json.data.ttl | default(0) | string) != (openbao_ssh_ttl | string) }}
+      tags:
+        - config
+
+    # allowed_users is an explicit list, not '*'. The engine's own documentation
+    # warns that '*' runs into an OpenSSH bug unless default_user or
+    # valid_principals is supplied, and an explicit list is what least privilege
+    # wants anyway: this role can mint certificates for these logins and no
+    # others.
+    #
+    # permit-pty is the only extension granted. Port forwarding and agent
+    # forwarding are not needed to run a playbook, and a certificate that cannot
+    # forward is a smaller thing to lose.
+    - name: Write the signing role
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/{{ openbao_ssh_mount }}/roles/{{ openbao_ssh_role }}"
+        method: POST
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body:
+          key_type: ca
+          allow_user_certificates: true
+          allowed_users: "{{ _ssh_principals }}"
+          default_user: "{{ bootstrap_user }}"
+          default_extensions:
+            permit-pty: ""
+          ttl: "{{ openbao_ssh_ttl }}"
+          max_ttl: "{{ openbao_ssh_max_ttl }}"
+        status_code: [200, 204]
+      changed_when: _need_ssh_role | bool
+      when: _need_ssh_role | bool
+      tags:
+        - config
+
+    # The public key is printed on purpose: it is the trust anchor every host
+    # will carry, it is not secret, and seeing it here is how the operator
+    # confirms the value that roles/ssh_hardening will later install.
+    - name: Report what exists now
+      ansible.builtin.debug:
+        msg:
+          - "SSH engine at {{ openbao_ssh_mount }}/, role {{ openbao_ssh_role }},
+             principals {{ _ssh_principals }}, ttl {{ openbao_ssh_ttl }}."
+          - "CA public key (published to {{ openbao_kv_mount }}/{{ openbao_ssh_ca_kv_path }}):"
+          - "{{ _ca_now.json.data.public_key }}"
+          - "No host has been changed. Nodes trust this key only after
+             roles/ssh_hardening runs, and authorized_keys stays in place."
+      tags:
+        - debug
+        - config
