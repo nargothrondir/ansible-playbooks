@@ -100,6 +100,19 @@
       tags:
         - config
 
+    # Read here because this playbook never did, and the beszel_agent role's
+    # defaults quietly supplied them from the encrypted inventory instead —
+    # which is why provisioning kept working while every other secret moved to
+    # OpenBao. Removing that default without adding this read breaks the last
+    # play of a twenty-minute run.
+    - name: Fetch the Beszel superuser credentials from OpenBao
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: beszel
+        openbao_read_into: _beszel_admin
+      tags:
+        - config
+
 # BEFORE the Dockhand play, and that ordering is the entire reason this play
 # exists separately. These checks used to sit with the add_host below, which
 # runs after the environment has been created and a Hawser token issued — so a
@@ -446,6 +459,14 @@
     # therefore will not create itself. Kept as a list so a second workload
     # does not need a second task — override to change what a node carries.
     provision_workload_volumes: "{{ workload_volumes | default(['angie-acme']) }}"
+    # From OpenBao, read in the first play. The role's defaults no longer name
+    # a vault variable, so this is now the only source.
+    beszel_agent_admin_email: >-
+      {{ (hostvars['controller']._beszel_admin | default({})).admin_email
+         | default('') }}
+    beszel_agent_admin_password: >-
+      {{ (hostvars['controller']._beszel_admin | default({})).admin_password
+         | default('') }}
   roles:
     - hawser
     # SSH-only detection + progressive bans; its nftables bouncer coexists with
