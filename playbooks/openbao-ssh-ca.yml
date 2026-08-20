@@ -20,6 +20,7 @@
 #   path "sys/mounts/ssh"                { capabilities = ["create", "update", "read"] }
 #   path "ssh/config/ca"                 { capabilities = ["create", "update", "read"] }
 #   path "ssh/roles/fleet"               { capabilities = ["create", "update", "read"] }
+#   path "ssh/roles/hosts"               { capabilities = ["create", "update", "read"] }
 #   path "infra/data/ssh_ca"             { capabilities = ["create", "update", "read"] }
 #   EOF
 #   docker exec -it openbao bao token create -policy=openbao-ssh-ca -ttl=30m -field=token
@@ -95,6 +96,40 @@
     openbao_ssh_ttl: 1800
     openbao_ssh_max_ttl: 3600
 
+    # The second signing role, for HOST certificates: a node proving it is
+    # itself, so a client verifies the signature instead of remembering a
+    # fingerprint. Separate from `fleet` because a role carries one TTL, and
+    # thirty minutes against ninety days will not share a row.
+    openbao_ssh_host_role: hosts
+
+    # Host principals are matched against these, and ONLY against these. From
+    # validateValidPrincipalForHosts in OpenBao's path_issue_sign.go: an exact
+    # match needs allow_bare_domains, a suffix match needs allow_subdomains, and
+    # there is no third rule.
+    #
+    # That is why this work required moving human logins from addresses to
+    # names: a bare IP can never be a principal here unless the IP itself is
+    # listed as a domain — and pl-1's mesh address changed the first time it was
+    # rebuilt, on 2026-08-20.
+    #
+    # Both zones, because both are real. netbird_dns_domain is the mesh name the
+    # panel already uses and does not depend on Cloudflare; infra_domain is the
+    # public record provision-node.yml creates, reachable from outside the mesh.
+    _ssh_host_domains: "{{ netbird_dns_domain }},{{ infra_domain }}"
+
+    # Ninety days, renewed by roles/ssh_hardening whenever fewer than thirty
+    # remain. A host key does not move between machines the way a user key does,
+    # so the short-TTL argument that governs `fleet` does not apply — and an
+    # expired host certificate is an operational failure rather than a
+    # containment one.
+    #
+    # NOTHING SCHEDULES THE RENEWAL YET. It happens when the role runs, and the
+    # role runs when somebody asks it to. Ninety days is chosen to make that gap
+    # survivable, not to make it correct; a periodic template is the fix, and it
+    # does not exist.
+    openbao_ssh_host_ttl: 7776000
+    openbao_ssh_host_max_ttl: 15552000
+
     # The lookup runs on the CONTROLLER, so this picks up the operator's shell.
     _bao_token: "{{ lookup('env', 'BAO_TOKEN') }}"
     _api_headers:
@@ -121,6 +156,23 @@
           created for root alone and every ordinary play would fail to log in
           the moment authorized_keys is retired. It comes from the inventory's
           group_vars — check that the inventory is the one ansible.cfg points at.
+      tags:
+        - config
+
+    # Both come from the inventory. An empty one would be written into
+    # allowed_domains as a stray comma, and the role would then accept a
+    # principal ending in "." — quietly wider than intended, and invisible until
+    # somebody looked at the role.
+    - name: Assert the host certificate domains are known
+      ansible.builtin.assert:
+        that:
+          - netbird_dns_domain | default('') | length > 0
+          - infra_domain | default('') | length > 0
+        fail_msg: >-
+          netbird_dns_domain and infra_domain must both be defined — they are
+          the only names a host certificate can be issued for, because OpenBao
+          matches host principals against allowed_domains and nothing else.
+          Both come from the inventory's group_vars.
       tags:
         - config
 
@@ -302,6 +354,66 @@
       tags:
         - config
 
+    - name: Fetch the host signing role, if any
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/{{ openbao_ssh_mount }}/roles/{{ openbao_ssh_host_role }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200, 404]
+      register: _ssh_host_role
+      check_mode: false
+      tags:
+        - config
+
+    # Compared field by field, and the durations as INTEGER SECONDS — the API
+    # stores what it is given and returns seconds, while the CLI pretty-prints
+    # the same value as "90d". Comparing against the pretty form is what made
+    # the fleet role rewrite itself on every run (2026-08-19).
+    - name: Determine whether the host signing role needs writing
+      ansible.builtin.set_fact:
+        _need_ssh_host_role: >-
+          {{ _ssh_host_role.status == 404
+             or (_ssh_host_role.json.data.allowed_domains | default('')) != _ssh_host_domains
+             or not (_ssh_host_role.json.data.allow_host_certificates | default(false))
+             or (_ssh_host_role.json.data.allow_user_certificates | default(false))
+             or not (_ssh_host_role.json.data.allow_subdomains | default(false))
+             or (_ssh_host_role.json.data.ttl | default(0) | int) != (openbao_ssh_host_ttl | int)
+             or (_ssh_host_role.json.data.max_ttl | default(0) | int) != (openbao_ssh_host_max_ttl | int) }}
+      tags:
+        - config
+
+    # allow_user_certificates is FALSE here and that is the point of a second
+    # role: this one cannot be talked into minting a login. A ninety-day
+    # certificate for the `ansible` principal would undo every containment
+    # argument made about the thirty-minute one.
+    #
+    # allow_bare_domains stays off. Nothing connects to `netbird.cloud` itself;
+    # allowing it would only widen what a signature can claim.
+    #
+    # No extensions: they are a user-certificate concept, and sshd ignores them
+    # on a host certificate. Sending none keeps the certificate saying exactly
+    # what it means.
+    - name: Write the host signing role
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/{{ openbao_ssh_mount }}/roles/{{ openbao_ssh_host_role }}"
+        method: POST
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body:
+          key_type: ca
+          allow_host_certificates: true
+          allow_user_certificates: false
+          allowed_domains: "{{ _ssh_host_domains }}"
+          allow_subdomains: true
+          allow_bare_domains: false
+          ttl: "{{ openbao_ssh_host_ttl }}"
+          max_ttl: "{{ openbao_ssh_host_max_ttl }}"
+        status_code: [200, 204]
+      changed_when: _need_ssh_host_role | bool
+      when: _need_ssh_host_role | bool
+      tags:
+        - config
+
     # The public key is printed on purpose: it is the trust anchor every host
     # will carry, it is not secret, and seeing it here is how the operator
     # confirms the value that roles/ssh_hardening will later install.
@@ -310,6 +422,9 @@
         msg:
           - "SSH engine at {{ openbao_ssh_mount }}/, role {{ openbao_ssh_role }},
              principals {{ _ssh_principals }}, ttl {{ openbao_ssh_ttl }}s."
+          - "Host role {{ openbao_ssh_host_role }}: domains {{ _ssh_host_domains }}
+             (subdomains only), ttl {{ openbao_ssh_host_ttl }}s. It cannot mint
+             user certificates."
           - "CA public key (published to {{ openbao_kv_mount }}/{{ openbao_ssh_ca_kv_path }}):"
           - "{{ _ca_now.json.data.public_key }}"
           - "No host has been changed. Nodes trust this key only after
