@@ -91,6 +91,23 @@
     - config
     - ssh
 
+# Caught here rather than by a puzzling comparison further down. The likeliest
+# way to get this wrong is YAML: an unquoted `no` becomes the boolean False and
+# stops matching anything at all.
+- name: Assert PermitRootLogin is a value sshd understands
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_permit_root_login in _ssh_hardening_root_login_rendered
+    fail_msg: >-
+      ssh_hardening_permit_root_login is
+      '{{ ssh_hardening_permit_root_login }}', which is not one of
+      {{ _ssh_hardening_root_login_rendered.keys() | list | join(', ') }}.
+      If you meant no or yes, quote it — YAML reads them as booleans.
+  when: ssh_hardening_disable_password_auth | bool
+  tags:
+    - config
+    - ssh
+
 - name: Retire password authentication
   ansible.builtin.template:
     src: auth.conf.j2
@@ -173,15 +190,27 @@
     that:
       - "'passwordauthentication no' in _ssh_hardening_sshd_effective.stdout"
       - "'kbdinteractiveauthentication no' in _ssh_hardening_sshd_effective.stdout"
-      - ('permitrootlogin ' ~ ssh_hardening_permit_root_login) in _ssh_hardening_sshd_effective.stdout
+      # Compared against how sshd RENDERS the setting, not against how it was
+      # written — see vars/main.yml. The two differ for prohibit-password on
+      # every OpenSSH the fleet runs.
+      - >-
+        (_ssh_hardening_sshd_effective.stdout_lines
+         | select('match', '^permitrootlogin ')
+         | map('regex_replace', '^permitrootlogin ', '')
+         | first | default(''))
+        in _ssh_hardening_root_login_rendered[ssh_hardening_permit_root_login]
     fail_msg: >-
-      sshd merged its configuration still accepting passwords, or with a
-      different PermitRootLogin than
+      sshd merged its configuration as
+      [{{ _ssh_hardening_sshd_effective.stdout_lines
+          | select('match', '^(passwordauthentication|kbdinteractiveauthentication|permitrootlogin) ')
+          | join('; ') }}],
+      but this run asked for passwords off and PermitRootLogin
       {{ ssh_hardening_permit_root_login }}. The drop-in at
-      /etc/ssh/sshd_config.d/30-ansible-auth.conf is being ignored — check that
-      /etc/ssh/sshd_config still carries its Include line, and check for a
-      later drop-in overriding it. Nothing is locked out; the host is simply
-      as reachable as it was before this ran.
+      /etc/ssh/sshd_config.d/30-ansible-auth.conf is being ignored, or an
+      earlier one overrides it — sshd takes the FIRST value it sees for these
+      keywords, so check /etc/ssh/sshd_config for a setting above its Include
+      line and for drop-ins sorting before 30-. Nothing is locked out; the host
+      is as reachable as it was before this ran.
   when: ssh_hardening_disable_password_auth | bool
   tags:
     - config
