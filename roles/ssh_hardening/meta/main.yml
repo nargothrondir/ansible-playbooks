@@ -2,7 +2,7 @@
 galaxy_info:
   role_name: ssh_hardening
   author: nargothrondir
-  description: SSH hardening — a mesh-only sshd port for key-based automation, and optional trust in the fleet SSH CA
+  description: SSH hardening — mesh-only sshd port, optional fleet SSH CA trust, optional retirement of password authentication
   license: MIT
   min_ansible_version: "2.15"
   platforms:

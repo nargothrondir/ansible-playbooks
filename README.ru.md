@@ -35,7 +35,7 @@
 | [xanmod](roles/xanmod/README.ru.md) | Установка производительного ядра XanMod | — |
 | [netbird](roles/netbird/README.ru.md) | Установка агента NetBird и вступление в меш | — |
 | [ufw](roles/ufw/README.ru.md) | Host-файрвол: публичные 22/443, сервисные порты только с wt0 | — |
-| [ssh_hardening](roles/ssh_hardening/README.ru.md) | Mesh-only порт sshd (2200) для автоматизации по ключу; опционально — якорь доверия к SSH CA флота | ufw |
+| [ssh_hardening](roles/ssh_hardening/README.ru.md) | Mesh-only порт sshd (2200) для автоматизации по ключу; опционально — якорь доверия к SSH CA флота; опционально — отказ от паролей | ufw |
 | [crowdsec](roles/crowdsec/README.ru.md) | Детект только по SSH с прогрессивными банами, nftables-баунсер; проводка к центральному LAPI заложена (неактивна) | common |
 | [upgrade](roles/upgrade/README.ru.md) | `apt update` + `full-upgrade` + `autoremove`, перезагрузка при необходимости | — |
 | [notify_telegram](roles/notify_telegram/README.ru.md) | Отправка сообщения в Telegram-чат через Bot API | — |
@@ -74,6 +74,7 @@
 | [playbooks/openbao-ssh-ca.yml](playbooks/openbao-ssh-ca.yml) | — (API OpenBao: SSH-движок, CA и роль подписи для входа на ноды; хостов не касается) | `openbao_setup_target` (по умолчанию: panel) |
 | [playbooks/openbao-ssh-sign.yml](playbooks/openbao-ssh-sign.yml) | — (API OpenBao: подписать публичный ключ ключом CA и проверить результат; хостов не касается) | `ssh_sign_public_key_file`, `ssh_sign_principal`, `ssh_sign_target` (по умолчанию: controller) |
 | [playbooks/ssh-ca-trust.yml](playbooks/ssh-ca-trust.yml) | ssh_hardening (ставит CA флота как якорь доверия; ключи продолжают работать) | fleet, лимит `<host>,controller` |
+| [playbooks/ssh-lockdown.yml](playbooks/ssh-lockdown.yml) | ssh_hardening (убирает вход по паролю и парольный root; отказывается, если у root нет ключа) | fleet, по одному хосту в лимите `<host>` |
 | [playbooks/openbao-verify.yml](playbooks/openbao-verify.yml) | — (проверяет цепочку AppRole → чтение KV; запускать из Semaphore) | `openbao_verify_target` (по умолчанию: controller) |
 | [playbooks/mesh-ssh-check.yml](playbooks/mesh-ssh-check.yml) | — (проверка SSH через меш) | control → mesh-пиры |
 

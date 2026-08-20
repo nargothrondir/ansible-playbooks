@@ -52,6 +52,58 @@
     - config
     - ssh
 
+# The guard that matters, and the reason this is not just another drop-in.
+# PermitRootLogin prohibit-password on a host where root has no key does not
+# harden anything — it removes the break-glass and leaves nothing in its place.
+# So look before writing, rather than trusting that the provider injected a key.
+#
+# Key authentication for the automation user needs no such check: this role is
+# running over SSH with a key right now, which is the proof.
+- name: Look at what root can currently log in with
+  ansible.builtin.slurp:
+    src: /root/.ssh/authorized_keys
+  register: _ssh_hardening_root_keys
+  failed_when: false
+  when:
+    - ssh_hardening_disable_password_auth | bool
+    - ssh_hardening_permit_root_login == 'prohibit-password'
+  tags:
+    - config
+    - ssh
+
+- name: Assert root keeps a way in that is not a password
+  ansible.builtin.assert:
+    that:
+      - _ssh_hardening_root_keys.content is defined
+      - (_ssh_hardening_root_keys.content | b64decode | trim) | length > 0
+    fail_msg: >-
+      /root/.ssh/authorized_keys is missing or empty, so setting
+      PermitRootLogin prohibit-password would leave root unreachable — this
+      host's only root access today is the password about to be switched off.
+      Install the admin key for root first (ssh-copy-id, or re-run
+      provision-node.yml with the root password field), or choose
+      ssh_hardening_permit_root_login=no deliberately, knowing that console
+      access at the provider becomes the only way back in.
+  when:
+    - ssh_hardening_disable_password_auth | bool
+    - ssh_hardening_permit_root_login == 'prohibit-password'
+  tags:
+    - config
+    - ssh
+
+- name: Retire password authentication
+  ansible.builtin.template:
+    src: auth.conf.j2
+    dest: /etc/ssh/sshd_config.d/30-ansible-auth.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: ssh_hardening_disable_password_auth | bool
+  notify: "reload sshd"
+  tags:
+    - config
+    - ssh
+
 # Runs before the reload handler fires (handlers run at play end), so a broken
 # merged config fails the play while the old sshd keeps serving connections.
 - name: Validate the merged sshd configuration
@@ -89,7 +141,9 @@
   ansible.builtin.command: /usr/sbin/sshd -T
   register: _ssh_hardening_sshd_effective
   changed_when: false
-  when: ssh_hardening_ca_public_key | length > 0
+  when: >-
+    ssh_hardening_ca_public_key | length > 0
+    or ssh_hardening_disable_password_auth | bool
   tags:
     - config
     - ssh
@@ -106,6 +160,29 @@
       authorized_keys is untouched and this host simply does not accept
       certificates yet.
   when: ssh_hardening_ca_public_key | length > 0
+  tags:
+    - config
+    - ssh
+
+# Reading it back is worth more here than anywhere else in the role. A drop-in
+# that sshd never included leaves the host accepting passwords while every sign
+# says otherwise — and unlike a missing CA, which merely fails to add a way in,
+# this one fails to remove one.
+- name: Assert sshd no longer accepts passwords
+  ansible.builtin.assert:
+    that:
+      - "'passwordauthentication no' in _ssh_hardening_sshd_effective.stdout"
+      - "'kbdinteractiveauthentication no' in _ssh_hardening_sshd_effective.stdout"
+      - ('permitrootlogin ' ~ ssh_hardening_permit_root_login) in _ssh_hardening_sshd_effective.stdout
+    fail_msg: >-
+      sshd merged its configuration still accepting passwords, or with a
+      different PermitRootLogin than
+      {{ ssh_hardening_permit_root_login }}. The drop-in at
+      /etc/ssh/sshd_config.d/30-ansible-auth.conf is being ignored — check that
+      /etc/ssh/sshd_config still carries its Include line, and check for a
+      later drop-in overriding it. Nothing is locked out; the host is simply
+      as reachable as it was before this ran.
+  when: ssh_hardening_disable_password_auth | bool
   tags:
     - config
     - ssh
