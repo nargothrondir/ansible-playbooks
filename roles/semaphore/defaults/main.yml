@@ -32,7 +32,14 @@ semaphore_db_dialect: sqlite
 # data volume so it persists across container recreation.
 semaphore_sqlite_db_file: /var/lib/semaphore/database.sqlite
 
-# Secrets — provide via ansible-vault (no defaults here):
-#   semaphore_admin_password
-#   semaphore_access_key_encryption   # base64-encoded 32 bytes:
-#                                     #   head -c 32 /dev/urandom | base64
+# Secrets — no defaults here, supplied by playbooks/semaphore.yml from OpenBao
+# (infra/semaphore):
+#   semaphore_admin_password          <- field admin_password
+#   semaphore_access_key_encryption   <- field access_key_encryption
+#                                        base64-encoded 32 bytes:
+#                                        head -c 32 /dev/urandom | base64
+#
+# access_key_encryption decrypts Semaphore's Key Store, where the SSH key that
+# Ansible connects with is held. Lose it and Semaphore cannot read its own
+# credentials — which is why it is one of the values that moved last, after the
+# store it now lives in was the only remaining question.

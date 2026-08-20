@@ -175,6 +175,33 @@ The two numbers must match. Use `docker exec -i`, never `-it`: with a TTY
 allocated, the pty inserts carriage returns at wrap boundaries and the byte
 count comes out too high.
 
+**Adding a field to a secret that already has others:** use `kv patch`, not
+`kv put`. Patch merges, so fields can go in one at a time — which with `put`
+would silently discard whatever was written before:
+
+```bash
+cd /opt/infra-inventory && ansible-vault view group_vars/control/vault.yml | python3 -c "import sys,yaml; sys.stdout.write(str(yaml.safe_load(sys.stdin)['semaphore_access_key_encryption']))" | docker exec -i openbao bao kv patch infra/semaphore access_key_encryption=-
+```
+
+`kv patch` needs more than read/write on the data path. It performs a preflight
+capability check, so its policy also needs:
+
+```hcl
+path "sys/internal/ui/mounts/*" { capabilities = ["read"] }
+path "sys/capabilities-self"    { capabilities = ["update"] }
+```
+
+Without them the CLI fails with a 403 on `sys/internal/ui/mounts/...` that says
+nothing about patching. Measured 2026-08-20, moving Semaphore's and Dockhand's
+own credentials into the store.
+
+Afterwards, confirm the pre-existing fields survived — if `api_token` is gone,
+patch behaved like put and it must be restored before anything else proceeds:
+
+```bash
+docker exec openbao bao kv get -format=json infra/semaphore | python3 -c 'import sys,json;print(", ".join(json.load(sys.stdin)["data"]["data"].keys()))'
+```
+
 **What does not fit this recipe:** a value that is a mapping rather than a
 scalar, such as hawser's per-host token table. That needs a layout decision
 first — one field per host, or one KV path per host — not a transcription.

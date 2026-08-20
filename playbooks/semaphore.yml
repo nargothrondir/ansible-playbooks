@@ -1,12 +1,28 @@
 ---
 # Deploy Semaphore (Ansible web UI) on the control node via Docker Compose.
 #
-# Secrets come from ansible-vault (group_vars/control/vault.yml):
-#   ansible-vault create group_vars/control/vault.yml
-#     semaphore_admin_password: "<strong password>"
-#     semaphore_access_key_encryption: "<base64 32 bytes>"  # head -c 32 /dev/urandom | base64
+# Secrets come from OpenBao — infra/semaphore, fields admin_password and
+# access_key_encryption. The ansible-vault entries stay as the cold copy until
+# backups are real (#7); nothing here reads them any more.
 #
-# Run from the panel CLI:  ansible-playbook playbooks/semaphore.yml --ask-vault-pass
+# Run from the panel CLI:
+#
+#   cd /opt/ansible-playbooks
+#   read -rs OPENBAO_SECRET_ID && export OPENBAO_SECRET_ID
+#   ansible-playbook -c local --ask-vault-pass playbooks/semaphore.yml \
+#     -e openbao_addr=http://127.0.0.1:8200
+#
+# openbao_addr is overridden because the inventory value is the address the
+# SEMAPHORE CONTAINER uses (a name on a Docker network); from the panel shell
+# the same store answers on loopback. --ask-vault-pass is still needed while
+# any encrypted group_vars file exists, even though this playbook no longer
+# reads one — Ansible decrypts what it loads for the host, not what is used.
+#
+# ORDER ON A PANEL REBUILD: openbao.yml, unseal, mint a secret_id, then this.
+# Semaphore's own credentials now live in the store it will later read from, so
+# the store has to exist first. That is the price of one secrets engine instead
+# of two, and it is a fixed order rather than a dependency loop: OpenBao itself
+# needs nothing from Semaphore.
 #
 # CLI only, and for two independent reasons. Applying this role restarts
 # Semaphore, and a task cannot restart the container it is running inside
@@ -15,9 +31,34 @@
 # "wherever Ansible runs". Naming the host fixes the aim; it does not make
 # running this from a template a good idea.
 
+- name: Fetch Semaphore's own credentials
+  hosts: controller
+  gather_facts: false
+
+  tasks:
+    # The whole secret: api_token belongs to other playbooks, and reading it
+    # here costs nothing while asking for two fields separately would be two
+    # round trips and two asserts.
+    - name: Read the Semaphore credentials from OpenBao
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: semaphore
+        openbao_read_into: _semaphore_secrets
+      tags:
+        - config
+
 - name: Deploy Semaphore on the panel host
   hosts: "{{ semaphore_target | default('panel') }}"
   become: true
   gather_facts: true
+
+  vars:
+    semaphore_admin_password: >-
+      {{ (hostvars['controller']._semaphore_secrets | default({})).admin_password
+         | default('') }}
+    semaphore_access_key_encryption: >-
+      {{ (hostvars['controller']._semaphore_secrets | default({})).access_key_encryption
+         | default('') }}
+
   roles:
     - role: semaphore

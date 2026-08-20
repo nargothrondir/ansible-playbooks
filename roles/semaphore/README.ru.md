@@ -24,8 +24,8 @@
 | `semaphore_admin_name` | `Admin` | Отображаемое имя |
 | `semaphore_admin_email` | `admin@localhost` | Email администратора |
 | `semaphore_db_dialect` | `sqlite` | Бэкенд БД (встроенный; bolt устарел) |
-| `semaphore_admin_password` | _(обязательно, vault)_ | Пароль администратора |
-| `semaphore_access_key_encryption` | _(обязательно, vault)_ | base64-ключ 32 байта |
+| `semaphore_admin_password` | _(обязательно, OpenBao `infra/semaphore`)_ | Пароль администратора |
+| `semaphore_access_key_encryption` | _(обязательно, OpenBao `infra/semaphore`)_ | base64-ключ 32 байта; расшифровывает Key Store — при потере Semaphore не прочитает собственные учётные данные |
 
 Сгенерировать ключ шифрования один раз: `head -c 32 /dev/urandom | base64`.
 

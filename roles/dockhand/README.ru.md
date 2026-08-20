@@ -21,7 +21,7 @@
 | `dockhand_bind` | `127.0.0.1:3040` | Привязка UI на хосте (за прокси) |
 | `dockhand_data_dir` | `/opt/dockhand` | Каталог compose-файла (данные — в томе) |
 | `dockhand_puid` / `dockhand_pgid` | `1000` | UID/GID пользователя в контейнере |
-| `dockhand_encryption_key` | _(обязательна, vault)_ | Base64 AES-256 ключ (44 символа) для шифрования кредов |
+| `dockhand_encryption_key` | _(обязательна, OpenBao `infra/dockhand`)_ | Base64 AES-256 ключ (44 символа); расшифровывает сохранённые креды — другой ключ не вернёт доступ, а сделает базу нечитаемой |
 
 `dockhand_encryption_key` — base64 от 32 байт (`openssl rand -base64 32`),
 задаётся через ansible-vault.

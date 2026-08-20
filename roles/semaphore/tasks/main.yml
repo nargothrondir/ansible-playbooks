@@ -6,7 +6,11 @@
       - semaphore_access_key_encryption | default('') | length > 0
     fail_msg: >
       semaphore requires semaphore_admin_password and
-      semaphore_access_key_encryption (provide them via ansible-vault).
+      semaphore_access_key_encryption. They come from OpenBao
+      (infra/semaphore, fields admin_password and access_key_encryption) via
+      playbooks/semaphore.yml. Empty here usually means that playbook's first
+      play did not run — check OPENBAO_SECRET_ID is exported and that
+      openbao_addr points where the store actually answers.
   tags:
     - config
 

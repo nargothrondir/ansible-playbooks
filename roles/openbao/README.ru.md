@@ -178,6 +178,33 @@ cd /opt/infra-inventory && ansible-vault view group_vars/all/vault.yml | python3
 псевдотерминалом pty вставляет возвраты каретки на переносах, и счёт байтов
 получается завышенным.
 
+**Добавление поля к секрету, где уже есть другие:** нужен `kv patch`, а не
+`kv put`. Patch дописывает, поэтому поля можно класть по одному — с `put` это
+молча стёрло бы всё записанное раньше:
+
+```bash
+cd /opt/infra-inventory && ansible-vault view group_vars/control/vault.yml | python3 -c "import sys,yaml; sys.stdout.write(str(yaml.safe_load(sys.stdin)['semaphore_access_key_encryption']))" | docker exec -i openbao bao kv patch infra/semaphore access_key_encryption=-
+```
+
+`kv patch` требует больше, чем чтение и запись по пути данных: он делает
+предварительную проверку прав, поэтому его политике нужны ещё
+
+```hcl
+path "sys/internal/ui/mounts/*" { capabilities = ["read"] }
+path "sys/capabilities-self"    { capabilities = ["update"] }
+```
+
+Без них CLI падает с 403 на `sys/internal/ui/mounts/...`, где про патч не
+сказано ни слова. Измерено 2026-08-20, при переносе собственных учётных данных
+Semaphore и Dockhand.
+
+После записи убедись, что прежние поля уцелели: если `api_token` пропал, patch
+сработал как put, и его надо вернуть прежде всего остального.
+
+```bash
+docker exec openbao bao kv get -format=json infra/semaphore | python3 -c 'import sys,json;print(", ".join(json.load(sys.stdin)["data"]["data"].keys()))'
+```
+
 **Под этот рецепт не подходит** значение-отображение, а не скаляр — например
 таблица токенов hawser по хостам. Ей сначала нужно решение о раскладке: поле на
 хост или отдельный путь KV на хост, — а не механический перенос.

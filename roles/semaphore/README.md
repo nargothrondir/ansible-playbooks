@@ -24,8 +24,8 @@ Requires Docker with the Compose v2 plugin on the target host.
 | `semaphore_admin_name` | `Admin` | Admin display name |
 | `semaphore_admin_email` | `admin@localhost` | Admin email |
 | `semaphore_db_dialect` | `sqlite` | Database backend (embedded; bolt deprecated) |
-| `semaphore_admin_password` | _(required, vaulted)_ | Admin password |
-| `semaphore_access_key_encryption` | _(required, vaulted)_ | base64 32-byte key |
+| `semaphore_admin_password` | _(required, OpenBao `infra/semaphore`)_ | Admin password |
+| `semaphore_access_key_encryption` | _(required, OpenBao `infra/semaphore`)_ | base64 32-byte key; decrypts the Key Store — losing it makes Semaphore unable to read its own credentials |
 
 Generate the encryption key once: `head -c 32 /dev/urandom | base64`.
 

@@ -5,7 +5,10 @@
       - dockhand_encryption_key | default('') | length == 44
     fail_msg: >
       dockhand_encryption_key must be a base64-encoded 32-byte key (44 chars).
-      Generate one with: openssl rand -base64 32
+      It comes from OpenBao (infra/dockhand, field encryption_key) via
+      playbooks/dockhand.yml; empty usually means that playbook's first play
+      did not run. Generate a NEW one only for a first install — on an existing
+      Dockhand a different key makes the stored data unreadable.
   tags:
     - config
 
