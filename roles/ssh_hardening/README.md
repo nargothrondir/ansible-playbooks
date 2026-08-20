@@ -108,8 +108,13 @@ drop-in sshd never included leaves the host accepting passwords while
 everything else says otherwise. A missing CA merely fails to add a way in; this
 fails to *remove* one, which is the failure that looks like success.
 
-[playbooks/ssh-lockdown.yml](../../playbooks/ssh-lockdown.yml) applies it, one
-host at a time. A reload does not drop the connection it runs over, so open a
+Two callers apply it.
+[playbooks/provision-node.yml](../../playbooks/provision-node.yml) sets the flag
+inside its base-system play, so a node is locked down as it is built — safe
+there because that play is already connected with the automation key, and the
+bootstrap play before it reached root by key.
+[playbooks/ssh-lockdown.yml](../../playbooks/ssh-lockdown.yml) is for nodes that
+already exist, one host at a time. A reload does not drop the connection it runs over, so open a
 fresh session to the host before moving on.
 
 ## Variables

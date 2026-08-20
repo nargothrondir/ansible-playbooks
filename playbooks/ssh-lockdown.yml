@@ -8,6 +8,10 @@
 # left the original door open. CrowdSec bans the brute force, which is a fence
 # around an open door.
 #
+# For a node BEING BUILT this is unnecessary: provision-node.yml sets the same
+# flag inside its base-system play, so a new node is locked down as it is built.
+# This playbook is for the nodes that already exist.
+#
 # THIS PLAYBOOK CAN LOCK YOU OUT, which is why it is separate from
 # ssh-ca-trust.yml rather than another flag on it. Two things protect the run:
 #
