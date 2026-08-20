@@ -93,8 +93,16 @@
     # A guard comparing the response with "30m" is therefore never satisfied, and
     # the role is rewritten on every run. Reading the CLI output is what hid it:
     # the human-facing rendering agreed with the playbook while the JSON did not.
-    openbao_ssh_ttl: 1800
-    openbao_ssh_max_ttl: 3600
+    # An hour, raised from thirty minutes once Semaphore began signing a
+    # certificate per run: provisioning takes about fifteen minutes and reboots
+    # into a new kernel partway, so connections are re-established well after
+    # the start. Thirty minutes left no margin for the run that goes long, and
+    # the failure would arrive mid-build.
+    #
+    # Still bounded, and the boundary is what matters. An hour against a
+    # permanent key is a different class of credential, not a smaller one.
+    openbao_ssh_ttl: 3600
+    openbao_ssh_max_ttl: 7200
 
     # The second signing role, for HOST certificates: a node proving it is
     # itself, so a client verifies the signature instead of remembering a
