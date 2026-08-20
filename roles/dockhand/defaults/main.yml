@@ -17,6 +17,10 @@ dockhand_puid: 1000
 dockhand_pgid: 1000
 
 # Base64-encoded AES-256 key for credential encryption (44 chars).
-# Provide via ansible-vault (group_vars/control/vault.yml):
-#   dockhand_encryption_key: "<openssl rand -base64 32>"
-# Intentionally not defined here.
+# Supplied by playbooks/dockhand.yml from OpenBao (infra/dockhand, field
+# encryption_key). Intentionally not defined here.
+#
+# It DECRYPTS what Dockhand has stored. A different key does not restore
+# access, it produces a Dockhand that cannot read its own database — so this is
+# not a credential to be rotated casually, and losing it is unrecoverable in a
+# way a token never is.

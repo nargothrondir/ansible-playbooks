@@ -1,11 +1,29 @@
 ---
 # Deploy Dockhand (Docker management UI) on the control node.
 #
-# Needs dockhand_encryption_key from ansible-vault (group_vars/control/vault.yml):
-#   ansible-vault edit group_vars/control/vault.yml
-#     dockhand_encryption_key: "<openssl rand -base64 32>"
+# The encryption key comes from OpenBao — infra/dockhand, field encryption_key.
+# The ansible-vault entry stays as the cold copy until backups are real (#7);
+# nothing here reads it any more.
 #
-# Run:  ansible-playbook playbooks/dockhand.yml --ask-vault-pass
+# THAT KEY IS NOT A PASSWORD. It decrypts what Dockhand has stored, so a
+# different one does not restore access — it produces a Dockhand that cannot
+# read its own database. Losing it is unrecoverable in a way a token never is,
+# which is why it was the last value to move and why #7 comes before the
+# encrypted copy is deleted.
+#
+# Run from the panel CLI:
+#
+#   cd /opt/ansible-playbooks
+#   read -rs OPENBAO_SECRET_ID && export OPENBAO_SECRET_ID
+#   ansible-playbook -c local --ask-vault-pass playbooks/dockhand.yml \
+#     -e openbao_addr=http://127.0.0.1:8200
+#
+# From a Semaphore template the openbao_addr override is wrong and must be
+# omitted: inside the container the inventory value is the correct one. Unlike
+# semaphore.yml, running this from a template is fine — Dockhand does not
+# execute the playbook.
+#
+# ORDER ON A PANEL REBUILD: openbao.yml, unseal, mint a secret_id, then this.
 #
 # NOT `hosts: control`. The `controller` host is ansible_connection: local,
 # which means "wherever Ansible runs" — the panel from its CLI, but the
@@ -13,9 +31,28 @@
 # targeting the group would deploy Dockhand inside that container and report
 # success (#96). Name the host instead.
 
+- name: Fetch Dockhand's encryption key
+  hosts: controller
+  gather_facts: false
+
+  tasks:
+    - name: Read the Dockhand encryption key from OpenBao
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: dockhand
+        openbao_read_field: encryption_key
+        openbao_read_into: _dockhand_encryption_key
+      tags:
+        - config
+
 - name: Deploy Dockhand on the panel host
   hosts: "{{ dockhand_target | default('panel') }}"
   become: true
   gather_facts: true
+
+  vars:
+    dockhand_encryption_key: >-
+      {{ hostvars['controller']._dockhand_encryption_key | default('') }}
+
   roles:
     - role: dockhand
