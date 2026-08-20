@@ -19,6 +19,11 @@
 #                                    injection; used once to install the admin key and
 #                                    never stored — see the seeding play below
 #
+# The finished node accepts NO passwords, from anyone, and root only by key.
+# That happens inside the base-system play, not as a separate step: see
+# ssh_hardening_disable_password_auth there. A provider image that allowed root
+# with a password stops allowing it partway through this run.
+#
 # profile_domain is NOT a survey field any more. It is the name reality
 # advertises, and it is DERIVED from node_name — because while it was asked for
 # it could disagree with the certificate, which is issued for
@@ -268,6 +273,22 @@
     # bootstrap puts in authorized_keys — never instead of it.
     ssh_hardening_ca_public_key: >-
       {{ hostvars['controller']._fleet_ca_public_key | default('') }}
+    # A node is locked down as it is built, not visited again afterwards.
+    #
+    # Safe HERE specifically, and the position is the argument. By this play the
+    # previous one has created the automation user and this connection is using
+    # its key — which is the role's proof that key authentication works. Root is
+    # covered too: the bootstrap play reached it BY KEY, so the key the role
+    # checks for is the one that just worked. On a password-only node the
+    # seeding play put it there minutes earlier.
+    #
+    # Early rather than at the end because the node sits on a public IP for the
+    # twenty minutes this run takes, and until this line it accepts whatever the
+    # provider's image accepted.
+    #
+    # -e ssh_hardening_disable_password_auth=false turns it off for one run;
+    # extra vars outrank play vars.
+    ssh_hardening_disable_password_auth: true
   pre_tasks:
     # The node is registered in the panel by its mesh DNS name, so a missing
     # setup key must fail loudly HERE — otherwise the netbird role skips the
