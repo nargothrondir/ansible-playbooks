@@ -23,3 +23,15 @@ ssh_hardening_ca_public_key: ""
 # world-readable by convention and holds nothing secret — a CA public key is
 # published on purpose.
 ssh_hardening_ca_path: /etc/ssh/trusted-user-ca.pub
+
+# Retire password authentication and password-based root login. OFF BY DEFAULT
+# and that is not timidity: this is the one setting in the role that can end
+# with nobody able to reach the host. Turn it on per host during a rollout, then
+# flip this default once the fleet is through.
+ssh_hardening_disable_password_auth: false
+
+# What root is allowed to do once passwords are gone. `prohibit-password` keeps
+# root reachable BY KEY — the provider's admin key, which is the break-glass
+# that depends on neither OpenBao nor NetBird. `no` closes that door too and
+# should only follow a deliberate decision about what replaces it.
+ssh_hardening_permit_root_login: prohibit-password

@@ -107,6 +107,23 @@
           canonical deb822 source list. Defaults to the lab group; pass
           -e apt_sources_target=<host> in CLI args for one node at a time.
 
+      # The only template here that can end with nobody able to reach a host,
+      # and it is deliberately not folded into "Trust the fleet SSH CA": that
+      # one adds a credential, this one removes two.
+      #
+      # Limit is REQUIRED, and unlike the CA template it must NOT carry the
+      # controller — nothing is read from OpenBao, because a lockdown needs no
+      # secret. One host at a time, lab first, and open a NEW session to the
+      # host before moving on: the reload does not drop the connection the run
+      # is using, so a broken result stays invisible until the next login.
+      "Lock down SSH authentication":
+        playbook: playbooks/ssh-lockdown.yml
+        description: >-
+          Turn off password authentication and password-based root login on a
+          node. Set Limit to ONE host. The role refuses if root has no key,
+          because there the password is root's only way in. Verify a fresh
+          login before the next host.
+
       # Phase 3 of the SSH CA: the first thing in that line of work that touches
       # a host. Additive — the node gains certificate logins and keeps
       # authorized_keys, so a failed certificate is not a lockout.

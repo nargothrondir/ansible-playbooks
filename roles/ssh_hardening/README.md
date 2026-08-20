@@ -63,6 +63,44 @@ being built, so it is a normal fleet member from the start, and
 [playbooks/ssh-ca-trust.yml](../../playbooks/ssh-ca-trust.yml) for one that
 already exists.
 
+## Retiring passwords
+
+The role's third optional job, off unless `ssh_hardening_disable_password_auth`
+is true. It writes `/etc/ssh/sshd_config.d/30-ansible-auth.conf` with three
+directives and no more.
+
+`KbdInteractiveAuthentication no` is not redundant beside
+`PasswordAuthentication no`. With only the latter, PAM still accepts a password
+through keyboard-interactive, and the host reports itself hardened while
+remaining exactly as reachable as before. Both lines, always.
+
+`PermitRootLogin` defaults to `prohibit-password`, not `no`. Root stays
+reachable **by key** — the provider's admin key, which is the break-glass that
+depends on neither OpenBao nor NetBird nor this role. Closing that door as well
+is a separate decision, and it should be made knowing that the provider's
+console becomes the only way back.
+
+**This is the one setting here that can end with nobody able to reach the
+host**, so it defaults to off and is rolled out per host. Two things guard it,
+and they are guards of different kinds:
+
+- The automation user needs no check. The role is running over SSH with a key
+  at the moment it writes the file, which is the proof that key authentication
+  works on this host.
+- Root does need one. The role reads `/root/.ssh/authorized_keys` and refuses to
+  set `prohibit-password` if it is missing or empty — on such a host the
+  password *is* root's only way in, and switching it off would remove the
+  break-glass rather than harden it.
+
+Afterwards `sshd -T` is read back, as for the CA. It matters more here: a
+drop-in sshd never included leaves the host accepting passwords while
+everything else says otherwise. A missing CA merely fails to add a way in; this
+fails to *remove* one, which is the failure that looks like success.
+
+[playbooks/ssh-lockdown.yml](../../playbooks/ssh-lockdown.yml) applies it, one
+host at a time. A reload does not drop the connection it runs over, so open a
+fresh session to the host before moving on.
+
 ## Variables
 
 | Variable | Default | Description |
@@ -71,6 +109,8 @@ already exists.
 | `ssh_hardening_public_port` | `22` | The host's canonical public sshd port kept in the drop-in; override on hosts deliberately off 22 |
 | `ssh_hardening_ca_public_key` | `""` | Fleet CA public key (`infra/ssh_ca` in OpenBao). Empty leaves sshd's credentials untouched; a value installs certificate trust alongside `authorized_keys` |
 | `ssh_hardening_ca_path` | `/etc/ssh/trusted-user-ca.pub` | Where that key is written. Public by construction, world-readable |
+| `ssh_hardening_disable_password_auth` | `false` | Retire password auth and password root login. Off by default — the one setting here that can lock everyone out |
+| `ssh_hardening_permit_root_login` | `prohibit-password` | What root may do once passwords are gone. `no` closes the key path too and needs a deliberate replacement |
 
 ## Dependencies
 

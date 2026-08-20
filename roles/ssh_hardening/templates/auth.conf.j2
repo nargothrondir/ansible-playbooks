@@ -1,0 +1,9 @@
+# Managed by Ansible — roles/ssh_hardening. Do not edit by hand.
+#
+# KbdInteractiveAuthentication is not redundant. With PasswordAuthentication no
+# alone, PAM still accepts a password through keyboard-interactive, and the host
+# reports itself hardened while remaining exactly as reachable as before. Both
+# lines, always.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin {{ ssh_hardening_permit_root_login }}

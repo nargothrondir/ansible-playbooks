@@ -1,0 +1,61 @@
+---
+# Retire password authentication on an existing node (#30, and the gap found
+# while adding the root-password provisioning path).
+#
+# Nothing in this repository disabled passwords until now. A node whose provider
+# image accepted root with a password went on accepting it after provisioning:
+# the run created the automation user, laid down keys and installed the CA, and
+# left the original door open. CrowdSec bans the brute force, which is a fence
+# around an open door.
+#
+# THIS PLAYBOOK CAN LOCK YOU OUT, which is why it is separate from
+# ssh-ca-trust.yml rather than another flag on it. Two things protect the run:
+#
+#   The automation user needs no proof — this playbook reaches the host over SSH
+#   with a key, so key authentication demonstrably works before anything is
+#   written.
+#
+#   Root does. The role refuses to set PermitRootLogin prohibit-password on a
+#   host whose /root/.ssh/authorized_keys is missing or empty, because there the
+#   password IS root's only way in.
+#
+# ONE HOST AT A TIME, lab first:
+#
+#   Limit: pl-1
+#
+# No controller in the limit: nothing here is read from OpenBao. That is the
+# opposite of ssh-ca-trust.yml, and the reason is that a lockdown needs no
+# secret — it removes credentials rather than installing one.
+#
+# Undoing it: delete /etc/ssh/sshd_config.d/30-ansible-auth.conf and reload
+# sshd. Reaching the host to do that is the whole problem, so verify a key login
+# from a second terminal BEFORE closing the one you have open.
+
+- name: Retire password authentication on managed hosts
+  hosts: fleet
+  become: true
+  gather_facts: true
+
+  vars:
+    ansible_user: "{{ bootstrap_user }}"
+    ssh_hardening_disable_password_auth: true
+
+  tasks:
+    - name: Apply the SSH authentication policy
+      ansible.builtin.include_role:
+        name: ssh_hardening
+
+    - name: Report what changed and what to check
+      ansible.builtin.debug:
+        msg:
+          - "{{ inventory_hostname }} no longer accepts passwords, and root may
+             log in only by key ({{ ssh_hardening_permit_root_login }})."
+          - "Key access for {{ bootstrap_user }} was proven by this run
+             connecting at all. Root access was checked by reading its
+             authorized_keys, not by using it."
+          - "Before moving to the next host: open a NEW session to this one.
+             A reload does not drop the connection you are reading this over,
+             so a broken configuration stays invisible until the next login."
+      tags:
+        - debug
+        - config
