@@ -41,9 +41,14 @@
     ssh_hardening_disable_password_auth: true
 
   tasks:
+    # public: true so the report below can name what the role decided. Role
+    # defaults are in scope only while the role runs; without this the closing
+    # debug fails on an undefined ssh_hardening_permit_root_login — after the
+    # host has already been reconfigured, which is the worst place to fail.
     - name: Apply the SSH authentication policy
       ansible.builtin.include_role:
         name: ssh_hardening
+        public: true
 
     - name: Report what changed and what to check
       ansible.builtin.debug:
