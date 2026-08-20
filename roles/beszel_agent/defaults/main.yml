@@ -40,8 +40,13 @@ beszel_agent_token: ""
 # so there is no manual UI step and no per-node token to vault. Superuser
 # credentials + the owner (dashboard) user email are required for this.
 beszel_agent_register: true
-beszel_agent_admin_email: "{{ vault_beszel_admin_email | default('') }}"
-beszel_agent_admin_password: "{{ vault_beszel_admin_password | default('') }}"
+# Empty, and supplied by the playbook from OpenBao (infra/beszel, fields
+# admin_email and admin_password). They used to default to vault_beszel_admin_*
+# from the encrypted inventory, which made this the last role in the repository
+# still reading ansible-vault — and hid the fact that provision-node.yml never
+# fetched them at all.
+beszel_agent_admin_email: ""
+beszel_agent_admin_password: ""
 beszel_agent_owner_email: ""                        # dashboard owner; empty = the sole/first user
 beszel_agent_system_name: "{{ inventory_hostname }}"   # system name in the hub
 beszel_agent_system_host: "{{ inventory_hostname }}"   # display host (WebSocket = nominal)
