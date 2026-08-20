@@ -115,7 +115,18 @@
     # Both zones, because both are real. netbird_dns_domain is the mesh name the
     # panel already uses and does not depend on Cloudflare; infra_domain is the
     # public record provision-node.yml creates, reachable from outside the mesh.
-    _ssh_host_domains: "{{ netbird_dns_domain }},{{ infra_domain }}"
+    #
+    # A LIST, and overridable, because moving to a different domain is not an
+    # instant. The new name has to work before the old one stops: DNS has to
+    # propagate, every client's known_hosts has to be re-pointed, and every node
+    # has to be re-signed. During that overlap the role must accept all three
+    # names, which a fixed pair of variables cannot express.
+    #
+    # Set openbao_ssh_host_domains in group_vars (or -e for one run) to widen it;
+    # the default is what this fleet uses today.
+    openbao_ssh_host_domains: >-
+      {{ [netbird_dns_domain, infra_domain] }}
+    _ssh_host_domains: "{{ openbao_ssh_host_domains | join(',') }}"
 
     # Ninety days, renewed by roles/ssh_hardening whenever fewer than thirty
     # remain. A host key does not move between machines the way a user key does,
@@ -166,13 +177,19 @@
     - name: Assert the host certificate domains are known
       ansible.builtin.assert:
         that:
-          - netbird_dns_domain | default('') | length > 0
-          - infra_domain | default('') | length > 0
+          - openbao_ssh_host_domains | length > 0
+          - openbao_ssh_host_domains | select('equalto', '') | list | length == 0
         fail_msg: >-
-          netbird_dns_domain and infra_domain must both be defined — they are
-          the only names a host certificate can be issued for, because OpenBao
-          matches host principals against allowed_domains and nothing else.
-          Both come from the inventory's group_vars.
+          openbao_ssh_host_domains resolved to
+          {{ openbao_ssh_host_domains | to_json }}, which is empty or contains
+          an empty entry. By default it is [netbird_dns_domain, infra_domain]
+          from the inventory's group_vars, so an empty entry means one of those
+          is undefined. It matters more than it looks: an empty string joins
+          into a stray comma, and the role would then accept any principal
+          ending in a dot — wider than intended and invisible unless somebody
+          reads the role back. These names are the ONLY ones a host certificate
+          can be issued for; OpenBao matches host principals against
+          allowed_domains and nothing else.
       tags:
         - config
 
