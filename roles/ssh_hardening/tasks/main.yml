@@ -121,6 +121,140 @@
     - config
     - ssh
 
+# Measured ON THE NODE, in the node's own clock and with the node's own
+# ssh-keygen. Parsing the timestamp on the controller would compare a local time
+# printed there against a local time read here, and the two are not the same
+# fleet-wide — a difference that would surface as a certificate renewed early or
+# not at all, months from now.
+#
+# Empty output means no certificate, an unreadable one, or a format this cannot
+# read. All three are answered the same way: sign one. The safe direction.
+- name: Measure what the current host certificate has left
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      end=$(ssh-keygen -L -f {{ ssh_hardening_host_cert_path | quote }} 2>/dev/null \
+            | sed -n 's/.*Valid: from .* to \(.*\)$/\1/p')
+      [ -n "$end" ] || exit 0
+      echo $(( ( $(date -d "$end" +%s) - $(date +%s) ) / 86400 ))
+    executable: /bin/bash
+  register: _ssh_hardening_host_cert_left
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ssh_hardening_host_cert | bool
+  tags:
+    - config
+    - ssh
+
+- name: Read what the current host certificate claims
+  ansible.builtin.command: "ssh-keygen -L -f {{ ssh_hardening_host_cert_path }}"
+  register: _ssh_hardening_host_cert_text
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ssh_hardening_host_cert | bool
+  tags:
+    - config
+    - ssh
+
+# TWO conditions, not one, and the second is the one that would have been
+# missed. A certificate keeps working after the fleet moves to a different
+# domain — still signed, still unexpired — while its principals name something
+# nobody types any more. Expiry alone would never notice.
+#
+# Missing principals only. An EXTRA one is left alone deliberately: during a
+# domain move the old name must keep working until every client has been
+# re-pointed, and re-signing it away is what would break that overlap.
+- name: Decide whether the host certificate must be issued or renewed
+  ansible.builtin.set_fact:
+    _ssh_hardening_host_cert_needed: >-
+      {{ (_ssh_hardening_host_cert_left.stdout | default('') | trim) == ''
+         or ((_ssh_hardening_host_cert_left.stdout | trim | int)
+             < (ssh_hardening_host_cert_renew_days | int))
+         or ((ssh_hardening_host_principals
+              | reject('in', _ssh_hardening_host_cert_text.stdout | default(''))
+              | list | length) > 0) }}
+  when: ssh_hardening_host_cert | bool
+  tags:
+    - config
+    - ssh
+
+- name: Read this host's public host key
+  ansible.builtin.slurp:
+    src: "{{ ssh_hardening_host_key }}"
+  register: _ssh_hardening_host_pubkey
+  when:
+    - ssh_hardening_host_cert | bool
+    - _ssh_hardening_host_cert_needed | bool
+  tags:
+    - config
+    - ssh
+
+# Delegated because the NODE cannot reach OpenBao — its API is on a Docker
+# network the panel owns, not on the mesh. become: false because the delegation
+# target is the controller, where this play's privilege escalation has no
+# business.
+#
+# changed_when: false — signing mints a credential and alters nothing in the
+# store. The change is the file written below.
+- name: Ask the CA to sign this host's key
+  ansible.builtin.uri:
+    url: >-
+      {{ ssh_hardening_openbao_addr }}/v1/{{ ssh_hardening_openbao_ssh_mount }}/sign/{{ ssh_hardening_openbao_host_role }}
+    method: POST
+    headers:
+      X-Vault-Token: "{{ ssh_hardening_openbao_token }}"
+    body_format: json
+    body:
+      cert_type: host
+      public_key: "{{ _ssh_hardening_host_pubkey.content | b64decode | trim }}"
+      valid_principals: "{{ ssh_hardening_host_principals | join(',') }}"
+    status_code: [200]
+  register: _ssh_hardening_host_signed
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  no_log: true
+  when:
+    - ssh_hardening_host_cert | bool
+    - _ssh_hardening_host_cert_needed | bool
+  tags:
+    - config
+    - ssh
+
+- name: Install the host certificate
+  ansible.builtin.copy:
+    content: "{{ _ssh_hardening_host_signed.json.data.signed_key }}"
+    dest: "{{ ssh_hardening_host_cert_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - ssh_hardening_host_cert | bool
+    - _ssh_hardening_host_cert_needed | bool
+  notify: "reload sshd"
+  tags:
+    - config
+    - ssh
+
+# Written every run, not only when the certificate was refreshed: the drop-in
+# and the certificate are two separate pieces of state, and a node that somehow
+# has one without the other should be corrected rather than left consistent with
+# nothing.
+- name: Present the host certificate to clients
+  ansible.builtin.template:
+    src: hostcert.conf.j2
+    dest: /etc/ssh/sshd_config.d/40-ansible-hostcert.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: ssh_hardening_host_cert | bool
+  notify: "reload sshd"
+  tags:
+    - config
+    - ssh
+
 # Runs before the reload handler fires (handlers run at play end), so a broken
 # merged config fails the play while the old sshd keeps serving connections.
 - name: Validate the merged sshd configuration
@@ -161,6 +295,7 @@
   when: >-
     ssh_hardening_ca_public_key | length > 0
     or ssh_hardening_disable_password_auth | bool
+    or ssh_hardening_host_cert | bool
   tags:
     - config
     - ssh
@@ -215,3 +350,41 @@
   tags:
     - config
     - ssh
+
+# The same "green but broken" guard, for the piece whose failure is quietest of
+# the three. A missing CA fails to add a login; a missing lockdown fails to
+# remove one; a missing host certificate simply leaves clients doing what they
+# already did — comparing fingerprints — and nobody notices until a rebuild
+# produces the banner this was meant to end.
+#
+# `sshd -T` renders the directive as a lowercased keyword and the path as given:
+# dump_cfg_strarray(sHostCertificate, ...) in OpenSSH's servconf.c, unchanged
+# between the versions on Debian 12 and 13.
+- name: Assert sshd is presenting its certificate
+  ansible.builtin.assert:
+    that:
+      - ('hostcertificate ' ~ ssh_hardening_host_cert_path) in _ssh_hardening_sshd_effective.stdout
+    fail_msg: >-
+      sshd merged its configuration without hostcertificate
+      {{ ssh_hardening_host_cert_path }}, so clients still verify this host by
+      remembered fingerprint. Check that /etc/ssh/sshd_config carries its
+      Include line and that the certificate file exists — sshd ignores a
+      HostCertificate it cannot read, and says so only in its own log.
+  when: ssh_hardening_host_cert | bool
+  tags:
+    - config
+    - ssh
+
+- name: Report the host certificate
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} presents a host certificate for
+      {{ ssh_hardening_host_principals | join(', ') }}
+      {{ '(issued this run)' if (_ssh_hardening_host_cert_needed | default(false) | bool)
+         else '(' ~ (_ssh_hardening_host_cert_left.stdout | default('?') | trim) ~ ' days left)' }}.
+      Clients need one @cert-authority line in known_hosts to benefit; without
+      it nothing changes for them.
+  when: ssh_hardening_host_cert | bool
+  tags:
+    - debug
+    - config

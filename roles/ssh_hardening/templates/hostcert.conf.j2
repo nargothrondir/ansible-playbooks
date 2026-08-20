@@ -1,0 +1,7 @@
+# Managed by Ansible — roles/ssh_hardening. Do not edit by hand.
+#
+# Present this certificate for the matching host key. A client carrying one
+# @cert-authority line then verifies the signature instead of comparing a
+# remembered fingerprint — which is what makes a rebuilt node trusted again the
+# moment it is signed, rather than after everyone edits known_hosts.
+HostCertificate {{ ssh_hardening_host_cert_path }}

@@ -35,7 +35,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | [xanmod](roles/xanmod/README.md) | Install the XanMod performance kernel | — |
 | [netbird](roles/netbird/README.md) | Install the NetBird agent and join the mesh | — |
 | [ufw](roles/ufw/README.md) | Host firewall: public 22/443, mesh-only service ports on wt0 | — |
-| [ssh_hardening](roles/ssh_hardening/README.md) | Mesh-only sshd port (2200) for key-based automation; optional trust anchor for the fleet SSH CA; optional retirement of password auth | ufw |
+| [ssh_hardening](roles/ssh_hardening/README.md) | Mesh-only sshd port (2200) for key-based automation; optional fleet SSH CA trust, password retirement and host certificate | ufw |
 | [crowdsec](roles/crowdsec/README.md) | SSH-only detection with progressive bans, nftables bouncer; central LAPI wiring laid in (inactive) | common |
 | [upgrade](roles/upgrade/README.md) | `apt update` + `full-upgrade` + `autoremove`, reboot if required | — |
 | [notify_telegram](roles/notify_telegram/README.md) | Send a message to a Telegram chat via the Bot API | — |
