@@ -92,6 +92,17 @@ and they are guards of different kinds:
   password *is* root's only way in, and switching it off would remove the
   break-glass rather than harden it.
 
+Quote the value if you set it to `yes` or `no` — YAML reads both as booleans,
+and the role asserts on that before writing anything.
+
+`sshd -T` does not always print back what the file says. OpenSSH keeps
+`PermitRootLogin` as a table where several names share one value and prints the
+first name matching it; at the OpenSSH versions on Debian 12 and 13 that table
+lists `without-password` before `prohibit-password`, so the config we write
+reads back under the older spelling. Upstream has since swapped the two, which
+is why `vars/main.yml` maps each setting to a *list* of acceptable renderings
+rather than one string.
+
 Afterwards `sshd -T` is read back, as for the CA. It matters more here: a
 drop-in sshd never included leaves the host accepting passwords while
 everything else says otherwise. A missing CA merely fails to add a way in; this

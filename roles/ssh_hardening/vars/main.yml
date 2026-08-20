@@ -1,0 +1,28 @@
+---
+# What `sshd -T` prints for each PermitRootLogin setting, which is NOT always
+# what the configuration file says.
+#
+# OpenSSH keeps the option as a table of name->value where several names share
+# one value, and the dump prints the FIRST name matching the value. At V_9_2_P1
+# and V_10_0_P1 — Debian 12 and 13 — that table lists without-password ahead of
+# prohibit-password, so a config saying prohibit-password reads back as
+# without-password. Upstream main has since swapped the two.
+#
+# Hence a list per setting rather than a string: the assert has to accept either
+# spelling, or it breaks on whichever OpenSSH the fleet is running that year.
+# Comparing against what we wrote is what failed on pl-1, task #300.
+#
+# Keys are quoted because YAML would otherwise read yes/no as booleans.
+_ssh_hardening_root_login_rendered:
+  "prohibit-password":
+    - without-password
+    - prohibit-password
+  "without-password":
+    - without-password
+    - prohibit-password
+  "forced-commands-only":
+    - forced-commands-only
+  "yes":
+    - "yes"
+  "no":
+    - "no"
