@@ -19,6 +19,12 @@
 #                                    injection; used once to install the admin key and
 #                                    never stored — see the seeding play below
 #
+# REBUILDING A HOST THE INVENTORY ALREADY KNOWS — wiping the lab node and
+# running this pipeline is how the pipeline gets tested — needs the host named
+# in CLI args: -e provision_rebuild_host=<name>. The address alone is refused,
+# because the address alone is what a typo produces. The failure message names
+# the host it found, so the flag can be pasted from it.
+#
 # The finished node accepts NO passwords, from anyone, and root only by key.
 # That happens inside the base-system play, not as a separate step: see
 # ssh_hardening_disable_password_auth there. A provider image that allowed root
@@ -130,14 +136,51 @@
     # fleet (managed + lab). Residual gap: addresses the inventory does not
     # contain (e.g. the panel's PUBLIC IP — its inventory address is the mesh
     # IP) cannot be caught here.
+    #
+    # Resolved to a NAME rather than a yes/no, because the name is what makes
+    # the override below safe to have at all.
+    - name: Find any inventory host already at this address
+      ansible.builtin.set_fact:
+        _existing_host: >-
+          {{ groups['fleet'] | default([])
+             | map('extract', hostvars)
+             | selectattr('ansible_host', 'defined')
+             | selectattr('ansible_host', 'equalto', node_ip)
+             | map(attribute='inventory_hostname')
+             | list | first | default('') }}
+
+    # Rebuilding a machine that is already in the inventory is a REAL workflow —
+    # wiping the lab node and running this pipeline is how the pipeline itself
+    # gets tested — so refusing outright would mean editing the private
+    # inventory for every test run. A guard people route around gets routed
+    # around carelessly.
+    #
+    # So the override names the host instead of asserting confidence. A mistyped
+    # address resolves to some other host, and the flag then does not match, so
+    # the typo is still caught. Satisfying it by accident would mean typing the
+    # name of a machine you did not mean to touch.
     - name: Assert the target is not an existing fleet host
       ansible.builtin.assert:
         that:
-          - node_ip not in (groups['fleet'] | default([])
-                            | map('extract', hostvars, 'ansible_host') | list)
+          - _existing_host | length == 0
+            or _existing_host == (provision_rebuild_host | default(''))
         fail_msg: >-
-          node_ip {{ node_ip }} belongs to an existing FLEET host — refusing
-          to re-provision it via the one-click pipeline.
+          node_ip {{ node_ip }} is {{ _existing_host }} in the inventory, and
+          this pipeline builds nodes from scratch — running it here would
+          rebuild a machine that already serves.
+          If {{ _existing_host }} really has been wiped and is meant to be
+          rebuilt, say so by name in CLI args:
+          -e provision_rebuild_host={{ _existing_host }}
+
+    # Loud, and not tagged debug: an override that scrolls past silently is an
+    # override nobody remembers using.
+    - name: Report that an existing host is being rebuilt
+      ansible.builtin.debug:
+        msg: >-
+          REBUILDING {{ _existing_host }} at {{ node_ip }} — this is not a new
+          node. Everything on it is expected to be gone already; nothing here
+          checks that, and nothing here backs anything up.
+      when: _existing_host | length > 0
 
     # Password authentication needs sshpass on the CONTROLLER, and Ansible's
     # own failure without it arrives at connection time — by which point the
@@ -202,6 +245,13 @@
           - fleet
         ansible_host: "{{ node_ip }}"
         ansible_user: root
+        # Stated rather than inherited, and it matters for a REBUILD: a host
+        # already in the inventory may carry the automation port from the last
+        # time it was provisioned, while the freshly installed image it now
+        # runs listens on 22 and nothing else. add_host wins over the file, so
+        # first contact goes to the port that actually exists. For a genuinely
+        # new node this is the value it already had.
+        ansible_port: 22
         hawser_token: "{{ _hawser_token }}"
 
 # Early on purpose, and only after the asserts above have validated node_name
