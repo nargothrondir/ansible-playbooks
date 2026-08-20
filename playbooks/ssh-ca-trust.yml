@@ -1,5 +1,17 @@
 ---
-# Teach a node to trust the fleet SSH certificate authority (#74, phase 3).
+# Teach a node to trust the fleet SSH certificate authority, and give it a
+# certificate of its own (#74, phases 3 and 5).
+#
+# Two directions of one CA. TrustedUserCAKeys lets the node believe a USER who
+# presents a signed certificate; HostCertificate lets a user believe the NODE.
+# The second is what ends the "REMOTE HOST IDENTIFICATION HAS CHANGED" banner
+# after a rebuild — and that banner is what teaches people to type yes without
+# reading it.
+#
+# Connecting BY NAME is not a preference here, it is a precondition. OpenBao
+# matches host principals against domains and nothing else, so a certificate can
+# never cover a bare address; a node reached by IP is verified the old way no
+# matter what it presents.
 #
 # This is the first phase that changes a host. What it changes is additive: the
 # node gains a second way to accept a login, and loses none. authorized_keys is
@@ -51,6 +63,23 @@
     ssh_hardening_ca_public_key: >-
       {{ hostvars['controller']._fleet_ca_public_key | default('') }}
 
+    # The other direction of the same CA. The play above proves a USER to a
+    # host; these three prove the HOST to a user, so a rebuilt node stops
+    # producing the identification-changed banner on every client that ever
+    # reached it.
+    #
+    # The token is the one openbao-read.yml minted on the controller for the
+    # fetch above — reused rather than re-authenticated, which is the whole
+    # reason that file keeps it as a fact.
+    ssh_hardening_openbao_token: >-
+      {{ hostvars['controller']._openbao_token | default('') }}
+    ssh_hardening_openbao_addr: "{{ openbao_addr | default('') }}"
+    # Which names this host claims. openbao-ssh-ca.yml decides which are
+    # permitted at all; the two must agree or the signing request is refused —
+    # by design, since a certificate for a name the CA never sanctioned is
+    # exactly what allowed_domains exists to prevent.
+    ssh_hardening_host_domains: "{{ openbao_ssh_host_domains | default([netbird_dns_domain, infra_domain]) }}"
+
   # `--limit` filters EVERY play, the fetch above included. Without this the run
   # would be a green no-op: the key resolves to '' through the default, both CA
   # tasks in the role skip on their `when`, the mesh-port drop-in reports ok,
@@ -95,6 +124,16 @@
              'Sign SSH certificate (test)', then ssh with -o CertificateFile
              pointing at the result. Until that login succeeds, treat
              certificate access on this host as untested."
+          - "The host now presents its own certificate too, but no client
+             benefits until known_hosts carries a line naming this CA. One
+             line, on each machine that connects:
+             @cert-authority *.{{ ssh_hardening_host_domains | join(',*.') }}
+             <the CA public key from infra/ssh_ca>"
+          - "Connect BY NAME to see it work. An address can never match a host
+             certificate: OpenBao matches host principals against domains and
+             nothing else, so ssh to
+             {{ inventory_hostname }}.{{ ssh_hardening_host_domains | first }}
+             rather than to the IP."
       tags:
         - debug
         - config

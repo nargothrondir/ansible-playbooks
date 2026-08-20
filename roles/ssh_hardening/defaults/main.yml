@@ -35,3 +35,42 @@ ssh_hardening_disable_password_auth: false
 # that depends on neither OpenBao nor NetBird. `no` closes that door too and
 # should only follow a deliberate decision about what replaces it.
 ssh_hardening_permit_root_login: prohibit-password
+
+# --- Host certificates -------------------------------------------------------
+# The node proving it is itself, so a client verifies a signature instead of
+# remembering a fingerprint. Without this, every rebuild produces the
+# "REMOTE HOST IDENTIFICATION HAS CHANGED" banner on every machine that ever
+# connected — and that banner is what teaches people to type yes without
+# reading it.
+#
+# Requires an OpenBao token, because the certificate is signed by the CA and a
+# node cannot reach OpenBao. The signing request is delegated to the controller.
+ssh_hardening_openbao_token: ""
+ssh_hardening_openbao_addr: "{{ openbao_addr | default('') }}"
+ssh_hardening_openbao_ssh_mount: ssh
+ssh_hardening_openbao_host_role: hosts
+
+# The names this host answers to. Derived rather than listed, because the
+# derivation is the same for every node and a hand-written list drifts.
+# openbao-ssh-ca.yml decides which domains may appear at all; this decides which
+# of them THIS host claims.
+ssh_hardening_host_domains: []
+ssh_hardening_host_principals: >-
+  {{ ssh_hardening_host_domains
+     | map('regex_replace', '^', inventory_hostname ~ '.') | list }}
+
+# ed25519 because it is what every current Debian sshd generates and what
+# clients negotiate; the certificate is bound to one key, so this names which.
+ssh_hardening_host_key: /etc/ssh/ssh_host_ed25519_key.pub
+ssh_hardening_host_cert_path: /etc/ssh/ssh_host_ed25519_key-cert.pub
+
+# Re-sign once fewer than this many days remain. Wide, because nothing schedules
+# a renewal run yet: the certificate is refreshed when the role happens to run.
+ssh_hardening_host_cert_renew_days: 30
+
+# On when there is a token to sign with and a name to sign for. Both halves
+# come from the playbook, so a role run that was not given them leaves host
+# identity exactly as it found it.
+ssh_hardening_host_cert: >-
+  {{ (ssh_hardening_openbao_token | length > 0)
+     and (ssh_hardening_host_principals | length > 0) }}

@@ -359,6 +359,19 @@
     # -e ssh_hardening_disable_password_auth=false turns it off for one run;
     # extra vars outrank play vars.
     ssh_hardening_disable_password_auth: true
+    # And a certificate of its own, so the node is verifiable rather than
+    # merely remembered from the first time somebody connected. The token is
+    # the one the first play already holds; the signing request is delegated to
+    # the controller, because the node cannot reach OpenBao.
+    #
+    # The mesh name is not resolvable yet at this point — netbird joins later in
+    # this same play — and that is fine: a principal is a string in a
+    # certificate, not a lookup.
+    ssh_hardening_openbao_token: >-
+      {{ hostvars['controller']._openbao_token | default('') }}
+    ssh_hardening_openbao_addr: "{{ openbao_addr | default('') }}"
+    ssh_hardening_host_domains: >-
+      {{ openbao_ssh_host_domains | default([netbird_dns_domain, infra_domain]) }}
   pre_tasks:
     # The node is registered in the panel by its mesh DNS name, so a missing
     # setup key must fail loudly HERE — otherwise the netbird role skips the

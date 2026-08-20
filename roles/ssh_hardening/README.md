@@ -117,6 +117,52 @@ bootstrap play before it reached root by key.
 already exist, one host at a time. A reload does not drop the connection it runs over, so open a
 fresh session to the host before moving on.
 
+## Presenting a host certificate
+
+The fourth optional job, and the other direction of the same CA. `TrustedUserCAKeys`
+lets the node believe a user; `HostCertificate` lets a user believe the node.
+
+Off unless the role is given an OpenBao token and at least one domain. The node
+cannot reach OpenBao, so the signing request is delegated to the controller —
+the node only reads its own public host key and receives the certificate back.
+
+**Connect by name or this does nothing.** OpenBao matches host principals
+against `allowed_domains` and nothing else, so a certificate can never cover a
+bare address. A node reached by IP is verified the old way whatever it presents.
+
+Clients need one line in `known_hosts`, and until it is there nothing changes
+for them:
+
+```
+@cert-authority *.mesh.example,*.public.example ssh-rsa AAAA…  # the key at infra/ssh_ca
+```
+
+### When it re-signs
+
+Two conditions, and the second is the one that is easy to miss:
+
+- fewer than `ssh_hardening_host_cert_renew_days` remain, or
+- a principal the host should claim is absent from the certificate.
+
+A certificate keeps working after the fleet moves to a different domain — still
+signed, still unexpired — while naming something nobody types any more. Expiry
+alone would never notice.
+
+An **extra** principal is left alone on purpose. During a domain move the old
+name must keep working until every client has been re-pointed, and re-signing it
+away is exactly what would break that overlap.
+
+The remaining life is measured **on the node**, with its own `ssh-keygen` and
+its own clock. Parsing the timestamp on the controller would compare one local
+time against another, and the fleet does not share a timezone — a mistake that
+would surface months later as a certificate renewed early or not at all.
+
+### Renewal is not scheduled
+
+The certificate is refreshed when this role runs, and the role runs when
+somebody asks it to. Ninety days is chosen to make that gap survivable, not to
+make it correct. A periodic template is the fix and it does not exist yet.
+
 ## Variables
 
 | Variable | Default | Description |
@@ -127,6 +173,10 @@ fresh session to the host before moving on.
 | `ssh_hardening_ca_path` | `/etc/ssh/trusted-user-ca.pub` | Where that key is written. Public by construction, world-readable |
 | `ssh_hardening_disable_password_auth` | `false` | Retire password auth and password root login. Off by default — the one setting here that can lock everyone out |
 | `ssh_hardening_permit_root_login` | `prohibit-password` | What root may do once passwords are gone. `no` closes the key path too and needs a deliberate replacement |
+| `ssh_hardening_openbao_token` | `""` | Token used to sign this host's key. Empty leaves host identity untouched |
+| `ssh_hardening_host_domains` | `[]` | Domains this host claims, one principal each as `<inventory_hostname>.<domain>` |
+| `ssh_hardening_host_cert_renew_days` | `30` | Re-sign once fewer than this many days remain |
+| `ssh_hardening_host_cert_path` | `/etc/ssh/ssh_host_ed25519_key-cert.pub` | Where the certificate is written |
 
 ## Dependencies
 

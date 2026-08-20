@@ -35,7 +35,7 @@
 | [xanmod](roles/xanmod/README.ru.md) | Установка производительного ядра XanMod | — |
 | [netbird](roles/netbird/README.ru.md) | Установка агента NetBird и вступление в меш | — |
 | [ufw](roles/ufw/README.ru.md) | Host-файрвол: публичные 22/443, сервисные порты только с wt0 | — |
-| [ssh_hardening](roles/ssh_hardening/README.ru.md) | Mesh-only порт sshd (2200) для автоматизации по ключу; опционально — якорь доверия к SSH CA флота; опционально — отказ от паролей | ufw |
+| [ssh_hardening](roles/ssh_hardening/README.ru.md) | Mesh-only порт sshd (2200) для автоматизации по ключу; опционально — доверие к SSH CA флота, отказ от паролей и собственный сертификат хоста | ufw |
 | [crowdsec](roles/crowdsec/README.ru.md) | Детект только по SSH с прогрессивными банами, nftables-баунсер; проводка к центральному LAPI заложена (неактивна) | common |
 | [upgrade](roles/upgrade/README.ru.md) | `apt update` + `full-upgrade` + `autoremove`, перезагрузка при необходимости | — |
 | [notify_telegram](roles/notify_telegram/README.ru.md) | Отправка сообщения в Telegram-чат через Bot API | — |
