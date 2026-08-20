@@ -1,0 +1,112 @@
+---
+# Obtain a short-lived SSH certificate for the key Semaphore is about to connect
+# with, and leave its path in _fleet_ssh_cert_path.
+#
+# Include it ONCE, in a play targeting the controller, before any play that
+# connects to a node:
+#
+#   - name: Get a certificate for this run
+#     ansible.builtin.include_tasks: tasks/ssh-cert.yml
+#
+# and then, in each play that connects:
+#
+#   vars:
+#     ansible_ssh_common_args: >-
+#       -o CertificateFile={{ hostvars['controller']._fleet_ssh_cert_path }}
+#
+# WHY A FILE AND NOT THE AGENT. ssh takes the two apart: the private key stays
+# in Semaphore's per-task agent, unexportable, and the certificate is an
+# ordinary public file beside it. From ssh_config(5) on CertificateFile — "A
+# corresponding private key must be provided separately ... via ssh-agent(1)".
+# Nothing secret is written here; a certificate without its key opens nothing.
+#
+# WHY PER RUN AND NOT ON A SCHEDULE. A certificate per run means a serial per
+# run, and the node's auth log then distinguishes one Semaphore task from
+# another. A single certificate refreshed on a timer would make every run look
+# identical — reintroducing exactly the shape this work exists to remove, and
+# answering none of the traceability gap in the archive's #165.
+#
+# Requires _openbao_token, which tasks/openbao-read.yml leaves behind on its
+# first include. Include this AFTER at least one secret has been read.
+
+- name: Assert an OpenBao token is already held
+  ansible.builtin.assert:
+    that:
+      - _openbao_token is defined
+      - _openbao_token | length > 0
+    fail_msg: >-
+      tasks/ssh-cert.yml needs the token that tasks/openbao-read.yml leaves
+      behind, so include it after at least one secret has been read in this
+      play. Reading a secret is also how the AppRole login happens.
+  tags:
+    - config
+
+# One line in a Semaphore run: the inventory key, loaded into the agent this
+# task's process was given. More than one means the agent holds keys this
+# cannot choose between, and signing the wrong one produces a certificate for
+# a key nothing uses.
+- name: Read the public key Semaphore will connect with
+  ansible.builtin.command: ssh-add -L
+  register: _fleet_ssh_agent_keys
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags:
+    - config
+
+- name: Assert the agent produced exactly one identity
+  ansible.builtin.assert:
+    that:
+      - _fleet_ssh_agent_keys.rc == 0
+      - (_fleet_ssh_agent_keys.stdout_lines | default([]) | length) == 1
+    fail_msg: >-
+      ssh-add -L returned rc={{ _fleet_ssh_agent_keys.rc | default('?') }} with
+      {{ _fleet_ssh_agent_keys.stdout_lines | default([]) | length }} identities.
+      rc=2 with no output means there is no agent — this only works inside a
+      Semaphore run, which starts one per task and exports SSH_AUTH_SOCK.
+  tags:
+    - config
+
+# A unique path per run, so two tasks running in parallel cannot overwrite each
+# other's certificate mid-connection.
+- name: Make a place for this run's certificate
+  ansible.builtin.tempfile:
+    state: file
+    suffix: -fleet-cert.pub
+  register: _fleet_ssh_cert_file
+  changed_when: false
+  tags:
+    - config
+
+- name: Ask the CA to sign it
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/{{ openbao_ssh_mount | default('ssh') }}/sign/{{ openbao_ssh_role | default('fleet') }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ _openbao_token }}"
+    body_format: json
+    body:
+      public_key: "{{ _fleet_ssh_agent_keys.stdout_lines | first | trim }}"
+      valid_principals: "{{ bootstrap_user }}"
+    status_code: [200]
+  register: _fleet_ssh_signed
+  # Signing mints a credential and changes nothing in the store.
+  changed_when: false
+  no_log: true
+  tags:
+    - config
+
+- name: Write the certificate where ssh will look for it
+  ansible.builtin.copy:
+    content: "{{ _fleet_ssh_signed.json.data.signed_key }}"
+    dest: "{{ _fleet_ssh_cert_file.path }}"
+    mode: "0644"
+  changed_when: false
+  tags:
+    - config
+
+- name: Remember the certificate for the plays that connect
+  ansible.builtin.set_fact:
+    _fleet_ssh_cert_path: "{{ _fleet_ssh_cert_file.path }}"
+  tags:
+    - config

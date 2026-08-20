@@ -40,6 +40,21 @@
       tags:
         - config
 
+    # The first playbook to connect with a certificate rather than with the key
+    # alone. Deliberately this one: it auto-runs on every merge to main against
+    # the lab node, so the path gets exercised constantly and fails where it
+    # costs nothing.
+    #
+    # The key is STILL in authorized_keys, so a broken certificate path is
+    # invisible in the run — ssh simply falls back. Proving it works therefore
+    # means reading the node's auth log for the serial, not reading a green
+    # recap. Removing the key is what makes this loud, and that is a later,
+    # deliberate step.
+    - name: Get a certificate for this run
+      ansible.builtin.include_tasks: tasks/ssh-cert.yml
+      tags:
+        - config
+
 - name: Deploy Hawser edge agents
   hosts: fleet
   become: true
@@ -47,6 +62,12 @@
 
   vars:
     ansible_user: "{{ bootstrap_user }}"
+    # Present the certificate signed above. Unconditional on purpose: an empty
+    # path would make ssh refuse the option outright, which is the loud failure
+    # wanted here. The pre_tasks guard below already covers the one way it can
+    # legitimately be absent — a limit that excluded the controller.
+    ansible_ssh_common_args: >-
+      -o CertificateFile={{ hostvars['controller']._fleet_ssh_cert_path | default('') }}
     # Overrides the group_vars definition that reads the vault mapping. Both
     # resolve to the same value; this one comes from OpenBao.
     hawser_token: >-
@@ -64,6 +85,7 @@
       ansible.builtin.assert:
         that:
           - hostvars['controller']._hawser_tokens is defined
+          - hostvars['controller']._fleet_ssh_cert_path is defined
         fail_msg: >-
           The token table play matched no hosts, so every token here is empty
           and every deploy below would skip silently. A limit that leaves out
