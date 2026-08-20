@@ -127,8 +127,20 @@
     #
     # A different mount from infra/, so the precedence trap above does not apply
     # here — nothing else in any policy matches this path.
+    # Two roles, two lines, and no wildcard. `ssh/sign/*` would have covered
+    # both and would also cover whatever role is added next, sight unseen — the
+    # difference between a policy that grants what it names and one that grants
+    # what it happens to match.
+    #
+    # fleet mints USER certificates, 30 minutes, for logging in. hosts mints
+    # HOST certificates, months, proving a node is itself. Separate roles
+    # because a single role carries one TTL, and those two numbers are three
+    # orders of magnitude apart.
     openbao_ssh_policy_hcl: |
       path "ssh/sign/fleet" {
+        capabilities = ["create", "update"]
+      }
+      path "ssh/sign/hosts" {
         capabilities = ["create", "update"]
       }
 
