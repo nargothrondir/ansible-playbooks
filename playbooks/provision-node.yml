@@ -94,21 +94,20 @@
       tags:
         - config
 
-# Before the target is built, because the in-memory host below carries the
-# token: the environment is created (or found) on the panel and the token comes
-# back as a fact on `controller`.
-- name: Ensure the Dockhand environment exists
-  ansible.builtin.import_playbook: dockhand-environment.yml
-
-- name: Build the target server as an in-memory host
+# BEFORE the Dockhand play, and that ordering is the entire reason this play
+# exists separately. These checks used to sit with the add_host below, which
+# runs after the environment has been created and a Hawser token issued — so a
+# run stopped by the fleet-host guard had already reissued the management token
+# of the very node it was refusing to touch. Measured on task #306, where an
+# existing node's own address was entered by accident.
+#
+# Nothing before this point creates anything: the first play only reads
+# secrets. So this is the last moment at which a bad request costs nothing.
+- name: Validate the request before anything is created
   hosts: localhost
   connection: local
   gather_facts: false
-  vars:
-    # An explicit -e hawser_token wins; otherwise take what the play above
-    # produced. Resolved once here so the assert and add_host cannot disagree.
-    _hawser_token: >-
-      {{ hawser_token | default(hostvars['controller'].hawser_token | default(''), true) }}
+
   tasks:
     - name: Assert survey parameters are provided
       ansible.builtin.assert:
@@ -121,22 +120,16 @@
           # dedup on re-runs — require lowercase input outright.
           - node_name is match('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')
           - node_profile is defined and node_profile | length > 0
-          # hawser_token is asserted against the play above rather than the
-          # survey: it now comes from dockhand-environment.yml, and an empty one
-          # means that play found neither a stored token nor a way to make one.
-          - _hawser_token | length > 0
         fail_msg: >
           Required survey vars: node_ip, node_name (>=3, DNS-safe: lowercase
-          letters, digits, hyphens), node_profile. hawser_token is produced by
-          dockhand-environment.yml — an empty one means that play did not run
-          or could not reach Dockhand.
+          letters, digits, hyphens), node_profile.
 
     # Guardrail: a mistyped node_ip must never re-provision a production
     # machine (a real near-miss — a serving node's address was entered by
     # accident and only a rejected root key stopped the run). Checks the whole
-    # fleet (managed + lab). Residual gap: addresses the inventory does not contain
-    # (e.g. the panel's PUBLIC IP — its inventory address is the mesh IP)
-    # cannot be caught here.
+    # fleet (managed + lab). Residual gap: addresses the inventory does not
+    # contain (e.g. the panel's PUBLIC IP — its inventory address is the mesh
+    # IP) cannot be caught here.
     - name: Assert the target is not an existing fleet host
       ansible.builtin.assert:
         that:
@@ -147,10 +140,10 @@
           to re-provision it via the one-click pipeline.
 
     # Password authentication needs sshpass on the CONTROLLER, and Ansible's
-    # failure without it arrives at connection time — after the DNS record has
-    # been written and the Dockhand environment created. Ask here instead, where
-    # nothing has happened yet. Skipped entirely when no password was given, so
-    # the normal key path does not depend on sshpass being present at all.
+    # own failure without it arrives at connection time — by which point the
+    # DNS record is written and the Dockhand environment created. Skipped
+    # entirely when no password was given, so the normal key path does not
+    # depend on sshpass being present at all.
     - name: Check the controller can authenticate with a password
       ansible.builtin.command: sshpass -V
       register: _sshpass
@@ -169,6 +162,33 @@
           without it. Either install it there, or put the admin key on root by
           hand (ssh-copy-id) and re-run with the password field empty.
       when: node_root_password | default('') | length > 0
+
+# Before the target is built, because the in-memory host below carries the
+# token: the environment is created (or found) on the panel and the token comes
+# back as a fact on `controller`.
+- name: Ensure the Dockhand environment exists
+  ansible.builtin.import_playbook: dockhand-environment.yml
+
+- name: Build the target server as an in-memory host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    # An explicit -e hawser_token wins; otherwise take what the play above
+    # produced. Resolved once here so the assert and add_host cannot disagree.
+    _hawser_token: >-
+      {{ hawser_token | default(hostvars['controller'].hawser_token | default(''), true) }}
+  tasks:
+    # The survey is validated in the play above; what is left here is the one
+    # check that could not be, because the token does not exist until the
+    # Dockhand play has run.
+    - name: Assert the Hawser token was produced
+      ansible.builtin.assert:
+        that:
+          - _hawser_token | length > 0
+        fail_msg: >
+          hawser_token is produced by dockhand-environment.yml — an empty one
+          means that play did not run or could not reach Dockhand.
 
     # Joined to new_vps (bootstrap_authorized_keys) and fleet (hawser vars) so
     # the roles below inherit the right group_vars. hawser_token is set as a
