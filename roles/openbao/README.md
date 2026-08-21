@@ -32,7 +32,7 @@ can be written to swap. Mitigate on the host: zram keeps swapped pages in RAM
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `openbao_image` | `ghcr.io/openbao/openbao:2.6.1` | Pinned image. Release tags carry a leading `v`; image tags do not. |
+| `openbao_image` | `ghcr.io/openbao/openbao:2.6.2` | Pinned image. Release tags carry a leading `v`; image tags do not. |
 | `openbao_container_name` | `openbao` | Container name. |
 | `openbao_restart_policy` | `unless-stopped` | Docker restart policy. |
 | `openbao_data_dir` | `/opt/openbao` | Host directory for the compose file and the rendered config. |

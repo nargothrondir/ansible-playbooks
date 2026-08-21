@@ -34,7 +34,7 @@ root-токен ровно один раз — они не должны прох
 
 | Переменная | По умолчанию | Назначение |
 |---|---|---|
-| `openbao_image` | `ghcr.io/openbao/openbao:2.6.1` | Запиненный образ. У релизов тег с ведущей `v`, у образов — без. |
+| `openbao_image` | `ghcr.io/openbao/openbao:2.6.2` | Запиненный образ. У релизов тег с ведущей `v`, у образов — без. |
 | `openbao_container_name` | `openbao` | Имя контейнера. |
 | `openbao_restart_policy` | `unless-stopped` | Политика перезапуска Docker. |
 | `openbao_data_dir` | `/opt/openbao` | Каталог на хосте для compose-файла и отрендеренного конфига. |
