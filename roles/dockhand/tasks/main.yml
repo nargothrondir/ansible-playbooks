@@ -36,6 +36,9 @@
     owner: root
     group: root
     mode: "0600"
+    # See roles/semaphore for why: a changed compose file should leave behind
+    # what it replaced, since the secrets in it rule out --diff.
+    backup: true
   tags:
     - config
 

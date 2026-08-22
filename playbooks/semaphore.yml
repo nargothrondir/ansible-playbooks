@@ -24,6 +24,21 @@
 # of two, and it is a fixed order rather than a dependency loop: OpenBao itself
 # needs nothing from Semaphore.
 #
+# THE RECREATE CAN LEAVE THE CONTAINER WITH NO NETWORKS. Measured 2026-08-22:
+# `docker compose up` after a failed start brought Semaphore back with an empty
+# NetworkSettings.Networks, so Angie answered 502 while the application itself
+# was healthy — `Server is running` in the log, /api/ping answering `pong` from
+# inside. A stale docker-proxy from the previous container held 127.0.0.1:3000
+# through it.
+#
+# Do not chase the application. Diagnose with
+#
+#   docker inspect -f '{{ '{{' }}json .NetworkSettings.Networks{{ '}}' }}' semaphore
+#
+# and if it is empty, recreate the container from Dockhand — that reattaches
+# the networks, where a plain `docker compose up` did not. Nothing is lost: the
+# data lives in named volumes.
+#
 # CLI only, and for two independent reasons. Applying this role restarts
 # Semaphore, and a task cannot restart the container it is running inside
 # (#96, #83). Separately, `hosts: control` would have aimed at that container

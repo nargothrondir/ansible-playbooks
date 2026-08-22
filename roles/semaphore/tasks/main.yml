@@ -41,6 +41,13 @@
     owner: root
     group: root
     mode: "0600"
+    # Keeps the previous file when this one differs. The task runs with no_log,
+    # so a change here is reported without saying what changed — and on
+    # 2026-08-22 that left "the compose file changed but the image did not"
+    # unanswerable, because the old copy was already gone. The backup carries
+    # the same secrets as the file beside it, at the same 0600, so it widens
+    # nothing; --diff would, by printing them into the run log.
+    backup: true
   no_log: true
   tags:
     - config
