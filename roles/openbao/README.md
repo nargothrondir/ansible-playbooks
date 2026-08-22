@@ -254,6 +254,27 @@ open and written by the running server; a file-level copy is taken
 mid-transaction and restores as a torn database. The snapshot endpoint is the
 consistent image, taken online.
 
+### What is inside one
+
+A snapshot is a gzip-compressed tar of three members, per
+`internal/physical/raft/snapshot/archive.go` upstream:
+
+| | |
+|---|---|
+| `meta.json` | JSON-encoded snapshot metadata from Raft |
+| `state.bin` | the store itself, sealed with the barrier key |
+| `SHA256SUMS` | SHA-256 sums of the other two |
+
+The file is named `.snap` rather than `.tar.gz` deliberately. It *is* a
+gzipped tar, but unpacking it is never the right move — `state.bin` is
+encrypted and there is nothing to edit. The only useful thing to do with the
+file is hand it to `bao operator raft snapshot restore`, and the extension
+should point there.
+
+The backup playbook uses `SHA256SUMS` to check the artifact before uploading
+it, which catches a truncated download that a size check would pass. That is a
+statement about the file, not about whether it restores.
+
 ### What the snapshot is worth without the unseal shares
 
 Nothing. It is sealed with the barrier key, which is why shipping it to a chat
