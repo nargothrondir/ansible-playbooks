@@ -17,6 +17,7 @@
 #   path "sys/policies/acl/infra-read"         { capabilities = ["create", "update", "read"] }
 #   path "sys/policies/acl/hawser-write"       { capabilities = ["create", "update", "read"] }
 #   path "sys/policies/acl/ssh-sign"           { capabilities = ["create", "update", "read"] }
+#   path "sys/policies/acl/snapshot-read"      { capabilities = ["create", "update", "read"] }
 #   path "sys/auth"                            { capabilities = ["read", "list"] }
 #   path "sys/auth/approle"                    { capabilities = ["create", "update", "read", "sudo"] }
 #   path "auth/approle/role/semaphore"         { capabilities = ["create", "update", "read"] }
@@ -78,6 +79,7 @@
     openbao_policy_name: infra-read
     openbao_write_policy_name: hawser-write
     openbao_ssh_policy_name: ssh-sign
+    openbao_snapshot_policy_name: snapshot-read
     openbao_approle_name: semaphore
 
     # Read-only, and scoped to the KV mount only. KV v2 serves reads from
@@ -142,6 +144,20 @@
       }
       path "ssh/sign/hosts" {
         capabilities = ["create", "update"]
+      }
+
+    # One capability, and it is not a smaller version of infra-read — it is a
+    # different thing. A raft snapshot carries what the KV policy can already
+    # read AND what it cannot: the policies themselves, the auth configuration,
+    # and the SSH CA's private key, which no API exposes at all.
+    #
+    # It is all sealed with the barrier, so the file is useless without the
+    # unseal shares. That is what makes shipping it off the panel acceptable —
+    # and what makes the shares, kept in a password manager, the thing whose
+    # loss is unrecoverable.
+    openbao_snapshot_policy_hcl: |
+      path "sys/storage/raft/snapshot" {
+        capabilities = ["read"]
       }
 
     # The lookup runs on the CONTROLLER, so this picks up the operator's shell.
@@ -316,6 +332,41 @@
       tags:
         - config
 
+    - name: Fetch the snapshot policy, if any
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/policies/acl/{{ openbao_snapshot_policy_name }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200, 404]
+      register: _snapshot_policy
+      check_mode: false
+      tags:
+        - config
+
+    - name: Determine whether the snapshot policy needs writing
+      ansible.builtin.set_fact:
+        _need_snapshot_policy: >-
+          {{ _snapshot_policy.status == 404
+             or (_snapshot_policy.json.data.policy | default(''))
+                != openbao_snapshot_policy_hcl }}
+      tags:
+        - config
+
+    - name: Write the snapshot policy
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/policies/acl/{{ openbao_snapshot_policy_name }}"
+        method: PUT
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body:
+          policy: "{{ openbao_snapshot_policy_hcl }}"
+        status_code: [200, 204]
+      no_log: true
+      changed_when: _need_snapshot_policy | bool
+      when: _need_snapshot_policy | bool
+      tags:
+        - config
+
     - name: Fetch the enabled auth methods
       ansible.builtin.uri:
         url: "{{ openbao_api }}/v1/sys/auth"
@@ -367,7 +418,8 @@
           {{ _role.status == 404
              or (_role.json.data.token_policies | default([]) | sort)
                 != ([openbao_policy_name, openbao_write_policy_name,
-                     openbao_ssh_policy_name] | sort) }}
+                     openbao_ssh_policy_name, openbao_snapshot_policy_name]
+                    | sort) }}
       tags:
         - config
 
@@ -382,7 +434,8 @@
         body_format: json
         body:
           token_policies: ["{{ openbao_policy_name }}", "{{ openbao_write_policy_name }}",
-                           "{{ openbao_ssh_policy_name }}"]
+                           "{{ openbao_ssh_policy_name }}",
+                           "{{ openbao_snapshot_policy_name }}"]
           token_ttl: "20m"
           token_max_ttl: "1h"
           secret_id_ttl: 0

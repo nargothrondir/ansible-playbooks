@@ -124,6 +124,23 @@
           because there the password is root's only way in. Verify a fresh
           login before the next host.
 
+      # Daily, and the hour is chosen: 08:00 UTC is an hour before the From-Git
+      # stacks deploy, so the day's snapshot is of the state the day is about to
+      # change, and a failure lands in the morning rather than overnight.
+      #
+      # Both fields stay EMPTY. The play targets controller and speaks only to
+      # the OpenBao and Telegram APIs.
+      #
+      # A green run means a file reached the chat. It does NOT mean the backup
+      # restores — that drill needs the unseal shares, which Semaphore does not
+      # have and must never have.
+      "Back up OpenBao":
+        playbook: playbooks/openbao-backup.yml
+        description: >-
+          Snapshot OpenBao and send it to Telegram. Leave CLI args and Limit
+          EMPTY. Proves an upload, not a restore — perform the drill in
+          roles/openbao/README.md separately.
+
       # Phase 3 of the SSH CA: the first thing in that line of work that touches
       # a host. Additive — the node gains certificate logins and keeps
       # authorized_keys, so a failed certificate is not a lockout.
