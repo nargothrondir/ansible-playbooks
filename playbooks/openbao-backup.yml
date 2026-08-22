@@ -204,11 +204,13 @@
             _backup_topic: >-
               {{ _telegram.backup_topic_id
                  | default(_telegram.updates_topic_id | default(''), true) }}
+            # The version is not decoration: a snapshot taken by a newer
+            # OpenBao may not restore into an older one, and six months from
+            # now this line is what says which image to bring up.
             _backup_caption: >-
               OpenBao snapshot {{ _backup_stamp }} ·
               {{ (_snapshot_stat.stat.size / 1024 / 1024) | round(2) }} MB ·
-              v{{ _bao_health.json.version | default('?') }} ·
-              sealed with the barrier, useless without the unseal shares
+              v{{ _bao_health.json.version | default('?') }}
           changed_when: true  # spec-ok: sending a message always changes the chat
           no_log: true
           tags:
