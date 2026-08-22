@@ -1,0 +1,178 @@
+---
+# Take a snapshot of OpenBao and send it out of the panel (#7).
+#
+# WHY A SNAPSHOT AND NOT A COPY OF THE DATA DIRECTORY. Storage is integrated
+# Raft, which is BoltDB: a live file the server holds open and writes to. A
+# file-level copy is taken mid-transaction and restores as a torn database —
+# and you find that out during a restore, which is the worst moment to find
+# anything out. sys/storage/raft/snapshot is the consistent point-in-time
+# image, taken online, with no pause.
+#
+# WHY SENDING IT TO A CHAT IS NOT RECKLESS. The snapshot is sealed with the
+# barrier key. What leaves here is ciphertext, and restoring it needs the
+# unseal shares — which live in a password manager and never touch this fleet.
+# That is also the whole risk, stated plainly:
+#
+#   THE ARCHIVE ACCUMULATES AND IS NOT ROTATED. Every snapshot stays in that
+#   chat forever. If the unseal shares ever leak, the entire history becomes
+#   readable at once — including secrets rotated long ago. A destination with
+#   retention would bound that; this one does not, and it was chosen knowing so.
+#
+# WHAT THIS PLAYBOOK CANNOT DO IS PROVE THE BACKUP WORKS. A file arriving in a
+# chat is evidence of an upload, not of a restore. The drill is manual, needs
+# the unseal shares, and is written up in roles/openbao/README.md. Perform it,
+# or this is a habit rather than a backup.
+#
+# Runs from Semaphore on a schedule. The snapshot is written inside the
+# Semaphore container, uploaded, and removed — it is never left on the panel.
+#
+# From the panel CLI instead:
+#
+#   cd /opt/ansible-playbooks
+#   ansible-playbook -c local --ask-vault-pass playbooks/openbao-backup.yml \
+#     -e openbao_addr=http://127.0.0.1:8200
+
+- name: Back up OpenBao
+  hosts: controller
+  gather_facts: true
+
+  vars:
+    # Telegram refuses an upload past a limit its public documentation does not
+    # state for the cloud API — only that a self-hosted Bot API server raises it
+    # to 2000 MB. So this guards with a conservative number rather than an
+    # invented one, and the size is reported on every run so the trend is
+    # visible long before it matters. Today the store is a handful of KV
+    # secrets, two SSH roles and some policies.
+    openbao_backup_max_mb: 40
+
+    _backup_stamp: "{{ ansible_date_time.iso8601_basic_short }}"
+    _backup_path: "/tmp/openbao-{{ _backup_stamp }}.snap"
+
+  tasks:
+    - name: Back it up and ship it
+      block:
+        # Reading a secret is also how the AppRole login happens, and this run
+        # needs both halves: the bot token to send with, and the token's
+        # snapshot-read capability to fetch with.
+        - name: Fetch the Telegram credentials
+          ansible.builtin.include_tasks: tasks/openbao-read.yml
+          vars:
+            openbao_read_path: telegram
+            openbao_read_into: _telegram
+          tags:
+            - config
+
+        - name: Ask OpenBao which version is about to be snapshotted
+          ansible.builtin.uri:
+            url: "{{ openbao_addr }}/v1/sys/health"
+            method: GET
+            status_code: [200, 429, 472, 473, 501, 503]
+          register: _bao_health
+          changed_when: false
+          check_mode: false
+          tags:
+            - config
+
+        # The response body IS the snapshot, so it goes straight to a file.
+        - name: Take the snapshot
+          ansible.builtin.uri:
+            url: "{{ openbao_addr }}/v1/sys/storage/raft/snapshot"
+            method: GET
+            headers:
+              X-Vault-Token: "{{ _openbao_token }}"
+            dest: "{{ _backup_path }}"
+            status_code: [200]
+          register: _snapshot
+          # Reading state changes nothing in the store. The change is the file,
+          # and the file is deleted before this play ends.
+          changed_when: false
+          no_log: true
+          tags:
+            - config
+
+        - name: Measure it
+          ansible.builtin.stat:
+            path: "{{ _backup_path }}"
+          register: _snapshot_stat
+          tags:
+            - config
+
+        # Fails BEFORE the upload rather than letting Telegram reject it with an
+        # error that says nothing about why. An empty file is the more alarming
+        # case of the two: it means the snapshot endpoint answered 200 with
+        # nothing, and a zero-byte backup that uploads cleanly is exactly the
+        # kind of success nobody questions.
+        - name: Assert the snapshot is neither empty nor too large to send
+          ansible.builtin.assert:
+            that:
+              - _snapshot_stat.stat.size > 0
+              - _snapshot_stat.stat.size < (openbao_backup_max_mb | int * 1024 * 1024)
+            fail_msg: >-
+              The snapshot is {{ _snapshot_stat.stat.size }} bytes. Zero means
+              the endpoint returned nothing and there is no backup — check that
+              the AppRole token carries the snapshot-read policy. Larger than
+              {{ openbao_backup_max_mb }} MB means this destination has been
+              outgrown and the snapshot needs somewhere with real retention;
+              see the header of this file for why that was a known limit.
+          tags:
+            - config
+
+        # form-multipart with a filename pointing at a local path is how the uri
+        # module uploads a real file: the bytes are read as-is, where putting
+        # them through a lookup would mangle a binary body.
+        #
+        # no_log because the bot token is in the URL. The report below is what
+        # makes a successful run legible, since this task cannot show anything.
+        - name: Send it to Telegram
+          ansible.builtin.uri:
+            url: >-
+              https://api.telegram.org/bot{{ _telegram.bot_token }}/sendDocument
+            method: POST
+            body_format: form-multipart
+            body: >-
+              {{ {'chat_id': _telegram.chat_id | string,
+                  'caption': _backup_caption,
+                  'document': {'filename': _backup_path,
+                               'mime_type': 'application/octet-stream'}}
+                 | combine({'message_thread_id': _backup_topic | string}
+                           if (_backup_topic | string | length > 0) else {}) }}
+            status_code: [200]
+          vars:
+            # A topic of its own if the chat has one, otherwise wherever the
+            # update reports go, otherwise General. Same fallback chain as
+            # provision-node.yml, for the same reason: a missing topic id should
+            # move the message, not fail the run.
+            _backup_topic: >-
+              {{ _telegram.backup_topic_id
+                 | default(_telegram.updates_topic_id | default(''), true) }}
+            _backup_caption: >-
+              OpenBao snapshot {{ _backup_stamp }} ·
+              {{ (_snapshot_stat.stat.size / 1024 / 1024) | round(2) }} MB ·
+              v{{ _bao_health.json.version | default('?') }} ·
+              sealed with the barrier, useless without the unseal shares
+          changed_when: true  # spec-ok: sending a message always changes the chat
+          no_log: true
+          tags:
+            - config
+
+        - name: Report what left the panel
+          ansible.builtin.debug:
+            msg: >-
+              Snapshot {{ _backup_stamp }} sent —
+              {{ (_snapshot_stat.stat.size / 1024 / 1024) | round(2) }} MB from
+              OpenBao v{{ _bao_health.json.version | default('?') }}.
+              This proves an upload, NOT a restore. The drill is in
+              roles/openbao/README.md and needs the unseal shares.
+          tags:
+            - debug
+            - config
+
+      # The snapshot is the whole store in one file. It does not get to survive
+      # a failure in the middle of this play.
+      always:
+        - name: Remove the local copy
+          ansible.builtin.file:
+            path: "{{ _backup_path }}"
+            state: absent
+          tags:
+            - config

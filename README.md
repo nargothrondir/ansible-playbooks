@@ -75,6 +75,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | [playbooks/openbao-ssh-sign.yml](playbooks/openbao-ssh-sign.yml) | — (OpenBao API: sign a public key with the fleet CA and inspect the result; touches no host) | `ssh_sign_public_key_file`, `ssh_sign_principal`, `ssh_sign_target` (default: controller) |
 | [playbooks/ssh-ca-trust.yml](playbooks/ssh-ca-trust.yml) | ssh_hardening (installs the fleet CA as a trust anchor; keys keep working) | fleet, `<host>,controller` limit |
 | [playbooks/ssh-lockdown.yml](playbooks/ssh-lockdown.yml) | ssh_hardening (retires password auth and password root login; refuses if root has no key) | fleet, one host per `<host>` limit |
+| [playbooks/openbao-backup.yml](playbooks/openbao-backup.yml) | — (raft snapshot to Telegram, daily from Semaphore; proves an upload, not a restore) | controller |
 | [playbooks/openbao-verify.yml](playbooks/openbao-verify.yml) | — (proves the AppRole → KV read chain; run from Semaphore) | `openbao_verify_target` (default: controller) |
 | [playbooks/mesh-ssh-check.yml](playbooks/mesh-ssh-check.yml) | — (SSH-over-mesh connectivity check) | control → mesh peers |
 

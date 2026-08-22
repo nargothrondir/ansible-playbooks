@@ -241,6 +241,79 @@ old value stays readable at `bao kv get -version=<n> infra/hawser`. Pruning is
 hygiene; a credential that actually leaked is dealt with by rotating it — the
 token is replaced everywhere it is used — not by dropping it here.
 
+## Backups and the restore drill
+
+`playbooks/openbao-backup.yml` takes a snapshot through
+`sys/storage/raft/snapshot` and sends it to Telegram, daily, from a Semaphore
+schedule. It is the whole store in one file: KV, policies, auth configuration,
+and the SSH CA's private key — which no API exposes and which has no other copy
+anywhere.
+
+**Never back up the data directory instead.** Integrated Raft is BoltDB, held
+open and written by the running server; a file-level copy is taken
+mid-transaction and restores as a torn database. The snapshot endpoint is the
+consistent image, taken online.
+
+### What the snapshot is worth without the unseal shares
+
+Nothing. It is sealed with the barrier key, which is why shipping it to a chat
+is acceptable. The corollary is the part that matters: **the unseal shares are
+the backup.** Lose them and every snapshot ever taken is noise. They belong in
+a password manager, off this fleet, and nowhere else.
+
+The reverse is also true and less obvious: every snapshot ever sent stays in
+that chat, so a leak of the shares makes the entire history readable at once,
+including secrets rotated since. That is the known cost of a destination
+without retention.
+
+### The drill
+
+**A file arriving in the chat proves an upload, not a restore.** Nothing in the
+automation can prove more, because a restore needs the unseal shares and
+Semaphore does not have them. Do this by hand, on a throwaway container, never
+against the live store. Quarterly is a reasonable cadence; after any change to
+the seal, mandatory.
+
+Download the newest snapshot from the chat to the panel, then:
+
+```bash
+docker run -d --name bao-drill -p 127.0.0.1:8300:8200   -e BAO_ADDR=http://127.0.0.1:8200 ghcr.io/openbao/openbao:2.6.2 server -dev
+```
+
+`-dev` starts unsealed with its own throwaway keys, which is all the restore
+needs to get in the door. Initialise nothing.
+
+```bash
+docker cp <snapshot> bao-drill:/tmp/drill.snap
+docker exec -e BAO_TOKEN=<the dev root token from the container log> bao-drill   bao operator raft snapshot restore -force /tmp/drill.snap
+```
+
+`-force` is required whenever the target's seal does not match the snapshot's,
+which is always true for a fresh container. Its own summary in the source:
+*bypasses checks ensuring the current Autounseal or Shamir keys are consistent
+with the snapshot data*.
+
+**After the restore the container's own keys are void.** It is now the old
+store, so unseal it with the ORIGINAL shares — the ones in the password
+manager. This is the step the drill exists to rehearse, and the step people get
+wrong at 3am.
+
+```bash
+docker exec -it bao-drill bao operator unseal   # repeat for a quorum
+docker exec -e BAO_TOKEN=<original root or a valid token> bao-drill   bao kv get -field=public_key infra/ssh_ca
+```
+
+The drill passed if that last command prints the CA public key that the fleet
+actually trusts. Then:
+
+```bash
+docker rm -f bao-drill
+```
+
+A restore onto the real panel is the same, minus `-dev`: deploy `openbao.yml`,
+initialise, restore with `-force`, and unseal with the original shares. The
+keys the fresh instance printed at init are discarded by the restore.
+
 ## Dependencies
 
 No `meta` dependencies, but Docker must already be present — apply the `docker`
