@@ -39,13 +39,14 @@
   gather_facts: false
 
   vars:
-    # Telegram refuses an upload past a limit its public documentation does not
-    # state for the cloud API — only that a self-hosted Bot API server raises it
-    # to 2000 MB. So this guards with a conservative number rather than an
-    # invented one, and the size is reported on every run so the trend is
-    # visible long before it matters. Today the store is a handful of KV
-    # secrets, two SSH roles and some policies.
-    openbao_backup_max_mb: 40
+    # Bounded by the DOWNLOAD side, not the upload side. A bot may send a larger
+    # document than it can fetch back, and this playbook fetches it back to
+    # prove what arrived — a backup that cannot be verified is worth less than
+    # one that can, so the smaller of the two limits is the one that governs.
+    # The size is reported on every run so the trend is visible long before it
+    # matters. Today the store is a handful of KV secrets, two SSH roles and
+    # some policies, around 70 KB.
+    openbao_backup_max_mb: 20
 
     # Derived from a FACT set in pre_tasks, never from now() directly. A play
     # var holding {{ now(...) }} is re-evaluated at every reference, so the path
@@ -176,34 +177,70 @@
           tags:
             - config
 
-        # form-multipart with a filename pointing at a local path is how the uri
-        # module uploads a real file: the bytes are read as-is, where putting
-        # them through a lookup would mangle a binary body.
+        - name: Check the controller can upload a binary body
+          ansible.builtin.command: curl --version
+          register: _curl
+          changed_when: false
+          failed_when: _curl.rc != 0
+          check_mode: false
+          tags:
+            - config
+
+        # NOT ansible.builtin.uri with form-multipart. At ansible-core 2.20.8 a
+        # file part is base64-encoded and there is no way to turn that off:
         #
-        # no_log because the bot token is in the URL. The report below is what
-        # makes a successful run legible, since this task cannot show anything.
-        - name: Send it to Telegram
-          ansible.builtin.uri:
-            url: >-
-              https://api.telegram.org/bot{{ _telegram.bot_token }}/sendDocument
-            method: POST
-            body_format: form-multipart
-            body: >-
-              {{ {'chat_id': _telegram.chat_id | string,
-                  'caption': _backup_caption,
-                  'document': {'filename': _backup_path,
-                               'mime_type': 'application/octet-stream'}}
-                 | combine({'message_thread_id': _backup_topic | string}
-                           if (_backup_topic | string | length > 0) else {}) }}
-            status_code: [200]
-          vars:
-            # A topic of its own if the chat has one, otherwise wherever the
-            # update reports go, otherwise General. Same fallback chain as
-            # provision-node.yml, for the same reason: a missing topic id should
-            # move the message, not fail the run.
-            _backup_topic: >-
+        #   multipart_encoding_str = value.get('multipart_encoding') or 'base64'
+        #   encoders_dict = {"base64": ..., "7or8bit": ...}
+        #
+        # Telegram stores what it receives, so every snapshot sent that way was
+        # base64 TEXT of a snapshot — an archive that passed the local integrity
+        # check, uploaded cleanly, reported success, and would have failed at
+        # `gzip: invalid header` on the day it was needed. Found by the restore
+        # drill on 2026-08-22, not by any green run.
+        #
+        # Newer ansible-core can send a part unencoded; ours cannot, and a
+        # backup should not depend on which one the container happens to carry.
+        #
+        # AND THEN IT READS THE FILE BACK. The local artifact being intact says
+        # nothing about what arrived — that was precisely the blind spot. This
+        # downloads the stored document and compares SHA-256 with what was sent.
+        #
+        # The script exits 0 whatever happens and reports a verdict on stdout,
+        # so failed_when distinguishes "the round trip is broken" from "curl is
+        # missing", which need different responses.
+        - name: Send it to Telegram and read it back
+          ansible.builtin.shell:
+            cmd: |
+              api="https://api.telegram.org/bot$BOT_TOKEN"
+              resp=$(curl -sS -X POST "$api/sendDocument" \
+                       -F "chat_id=$CHAT_ID" \
+                       ${TOPIC_ID:+-F "message_thread_id=$TOPIC_ID"} \
+                       -F "caption=$CAPTION" \
+                       -F "document=@$SNAP;type=application/octet-stream") \
+                || { echo UPLOAD_FAILED; exit 0; }
+              case "$resp" in *'"ok":true'*) : ;; *) echo UPLOAD_REJECTED; exit 0 ;; esac
+              fid=$(printf '%s' "$resp" | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["document"]["file_id"])' 2>/dev/null) \
+                || { echo NO_FILE_ID; exit 0; }
+              fpath=$(curl -sS "$api/getFile?file_id=$fid" | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["file_path"])' 2>/dev/null) \
+                || { echo NO_FILE_PATH; exit 0; }
+              back=$(mktemp) || exit 1
+              trap 'rm -f "$back"' EXIT
+              curl -sS -o "$back" "https://api.telegram.org/file/bot$BOT_TOKEN/$fpath" \
+                || { echo DOWNLOAD_FAILED; exit 0; }
+              sent=$(sha256sum "$SNAP" | cut -d' ' -f1)
+              got=$(sha256sum "$back" | cut -d' ' -f1)
+              [ "$sent" = "$got" ] || { echo "MISMATCH sent=$sent got=$got"; exit 0; }
+              echo ROUNDTRIP_OK
+            executable: /bin/sh
+          environment:
+            BOT_TOKEN: "{{ _telegram.bot_token }}"
+            CHAT_ID: "{{ _telegram.chat_id | string }}"
+            TOPIC_ID: >-
               {{ _telegram.backup_topic_id
-                 | default(_telegram.updates_topic_id | default(''), true) }}
+                 | default(_telegram.updates_topic_id | default(''), true) | string }}
+            CAPTION: "{{ _backup_caption }}"
+            SNAP: "{{ _backup_path }}"
+          vars:
             # The version is not decoration: a snapshot taken by a newer
             # OpenBao may not restore into an older one, and six months from
             # now this line is what says which image to bring up.
@@ -211,7 +248,9 @@
               OpenBao snapshot {{ _backup_stamp }} ·
               {{ (_snapshot_stat.stat.size / 1024 / 1024) | round(2) }} MB ·
               v{{ _bao_health.json.version | default('?') }}
-          changed_when: true  # spec-ok: sending a message always changes the chat
+          register: _telegram_send
+          changed_when: (_telegram_send.stdout | trim) == 'ROUNDTRIP_OK'
+          failed_when: (_telegram_send.stdout | trim) != 'ROUNDTRIP_OK'
           no_log: true
           tags:
             - config
@@ -219,10 +258,10 @@
         - name: Report what left the panel
           ansible.builtin.debug:
             msg: >-
-              Snapshot {{ _backup_stamp }} sent —
+              Snapshot {{ _backup_stamp }} sent and read back byte-identical —
               {{ (_snapshot_stat.stat.size / 1024 / 1024) | round(2) }} MB from
               OpenBao v{{ _bao_health.json.version | default('?') }}.
-              This proves an upload, NOT a restore. The drill is in
+              That is delivery, NOT restorability. The drill is in
               roles/openbao/README.md and needs the unseal shares.
           tags:
             - debug

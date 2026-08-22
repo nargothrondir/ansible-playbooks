@@ -271,9 +271,20 @@ encrypted and there is nothing to edit. The only useful thing to do with the
 file is hand it to `bao operator raft snapshot restore`, and the extension
 should point there.
 
-The backup playbook uses `SHA256SUMS` to check the artifact before uploading
-it, which catches a truncated download that a size check would pass. That is a
-statement about the file, not about whether it restores.
+The backup playbook checks the artifact twice, and the two checks answer
+different questions. `SHA256SUMS` from inside the archive says the file on disk
+is intact. Then the uploaded document is **downloaded again and compared by
+SHA-256** with what was sent, which says the bytes in the chat are the bytes
+that left.
+
+That second check exists because its absence hid a real failure. `uri` with
+`form-multipart` base64-encodes a file part at ansible-core 2.20.8 and offers no
+way to disable it, so every snapshot sent that way was base64 *text* of a
+snapshot: intact on disk, uploaded cleanly, reported green, and unrestorable.
+The upload now goes through `curl`.
+
+Neither check says anything about whether the snapshot restores. Only the drill
+does.
 
 ### What the snapshot is worth without the unseal shares
 
