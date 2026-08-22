@@ -295,45 +295,98 @@ Semaphore does not have them. Do this by hand, on a throwaway container, never
 against the live store. Quarterly is a reasonable cadence; after any change to
 the seal, mandatory.
 
-Download the newest snapshot from the chat to the panel, then:
+Download the newest snapshot from the chat to the panel, then start a throwaway
+instance **with raft storage**. `-dev` will not do: it runs on inmem, and the
+restore handler refuses anything else —
 
-```bash
-docker run -d --name bao-drill -p 127.0.0.1:8300:8200   -e BAO_ADDR=http://127.0.0.1:8200 ghcr.io/openbao/openbao:2.6.2 server -dev
+```go
+raftStorage, ok := b.Core.underlyingPhysical.(*raft.RaftBackend)
+if !ok {
+    return logical.ErrorResponse("raft storage is not in use"), ...
+}
 ```
 
-`-dev` starts unsealed with its own throwaway keys, which is all the restore
-needs to get in the door. Initialise nothing.
+The image writes `BAO_LOCAL_CONFIG` to `/openbao/config/local.json` and loads
+the directory, so the whole configuration fits in one environment variable. Use
+the image version the snapshot's caption names — a snapshot from a newer
+OpenBao may not restore into an older one.
+
+```bash
+docker run -d --name bao-drill -p 127.0.0.1:8300:8200 -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_LOCAL_CONFIG='{"storage":{"raft":{"path":"/openbao/file","node_id":"drill"}},"listener":[{"tcp":{"address":"0.0.0.0:8200","tls_disable":true}}],"api_addr":"http://127.0.0.1:8200","cluster_addr":"http://127.0.0.1:8201","disable_mlock":true}' ghcr.io/openbao/openbao:2.6.1 server
+```
+
+Port 8300, so nothing can be aimed at the live store by accident.
+
+It comes up uninitialised, so give it throwaway keys. They exist only to get far
+enough to run the restore, which then discards them:
+
+```bash
+docker exec bao-drill bao operator init -key-shares=1 -key-threshold=1
+```
+
+Unseal with the key it just printed, then restore:
+
+```bash
+docker exec bao-drill bao operator unseal <drill unseal key>
+```
 
 ```bash
 docker cp <snapshot> bao-drill:/tmp/drill.snap
-docker exec -e BAO_TOKEN=<the dev root token from the container log> bao-drill   bao operator raft snapshot restore -force /tmp/drill.snap
+```
+
+```bash
+docker exec -e BAO_TOKEN=<drill root token> bao-drill bao operator raft snapshot restore -force /tmp/drill.snap
 ```
 
 `-force` is required whenever the target's seal does not match the snapshot's,
-which is always true for a fresh container. Its own summary in the source:
-*bypasses checks ensuring the current Autounseal or Shamir keys are consistent
-with the snapshot data*.
+which is always true here. Its own summary in the source: *bypasses checks
+ensuring the current Autounseal or Shamir keys are consistent with the snapshot
+data*.
 
-**After the restore the container's own keys are void.** It is now the old
-store, so unseal it with the ORIGINAL shares — the ones in the password
-manager. This is the step the drill exists to rehearse, and the step people get
-wrong at 3am.
-
-```bash
-docker exec -it bao-drill bao operator unseal   # repeat for a quorum
-docker exec -e BAO_TOKEN=<original root or a valid token> bao-drill   bao kv get -field=public_key infra/ssh_ca
-```
-
-The drill passed if that last command prints the CA public key that the fleet
-actually trusts. Then:
+**Now the drill keys are void.** The container has become the old store and
+seals itself. Unseal it with the ORIGINAL shares from the password manager —
+this is the step the drill exists to rehearse:
 
 ```bash
-docker rm -f bao-drill
+docker exec -it bao-drill bao operator unseal
 ```
 
-A restore onto the real panel is the same, minus `-dev`: deploy `openbao.yml`,
-initialise, restore with `-force`, and unseal with the original shares. The
-keys the fresh instance printed at init are discarded by the restore.
+Repeat to the original threshold, then:
+
+```bash
+docker exec bao-drill bao status
+```
+
+**Unsealed is the result.** It means the master key inside the snapshot is the
+one those shares open — the snapshot is the real store, not a file that merely
+looks like one. Together with the archive's own SHA256SUMS, checked at backup
+time, that is as far as verification goes without a token.
+
+To go further and read actual data, authenticate with the AppRole as any
+playbook would. `role_id` is in the inventory and is not a secret; the
+`secret_id` must be one that already existed when the snapshot was taken —
+reaching for a freshly minted one is the obvious mistake, and it will not exist
+in the restored store:
+
+```bash
+docker exec bao-drill bao write auth/approle/login role_id=<role_id> secret_id=<secret_id>
+```
+
+```bash
+docker exec -e BAO_TOKEN=<the token that returned> bao-drill bao kv get -field=public_key infra/ssh_ca
+```
+
+The drill passed if that prints the CA public key the fleet actually trusts.
+Then remove the container along with its anonymous volume:
+
+```bash
+docker rm -fv bao-drill
+```
+
+A restore onto the real panel is the same shape without the throwaway
+container: deploy `openbao.yml`, initialise, restore with `-force`, and unseal
+with the original shares. The keys the fresh instance printed at init are
+discarded by the restore.
 
 ## Dependencies
 
