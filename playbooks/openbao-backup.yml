@@ -47,13 +47,30 @@
     # secrets, two SSH roles and some policies.
     openbao_backup_max_mb: 40
 
-    # UTC on purpose, and not from a gathered fact. ansible_date_time is a
-    # top-level fact, which INJECT_FACTS_AS_VARS deprecates — the same warning
-    # apt_sources was cleaned of. It is also LOCAL time, and the panel, the
-    # nodes and the operator do not share a timezone: a backup's name should
-    # read the same for all three. provision-node.yml settled this already.
-    _backup_stamp: "{{ now(utc=true, fmt='%Y%m%dT%H%M%S') }}"
-    _backup_path: "/tmp/openbao-{{ _backup_stamp }}.snap"
+    # Derived from a FACT set in pre_tasks, never from now() directly. A play
+    # var holding {{ now(...) }} is re-evaluated at every reference, so the path
+    # changed between writing the snapshot and uploading it — the file was
+    # written as ...T072453 and looked for as ...T072454. ansible_date_time did
+    # not have that problem because a fact is computed once; now() is a
+    # function. Measured on task #330.
+    #
+    # default() so the always-block below can still run if the play failed
+    # before pre_tasks got there; removing a path that does not exist is fine.
+    _backup_path: "/tmp/openbao-{{ _backup_stamp | default('unknown') }}.snap"
+
+  # Before the block, so the timestamp exists for the cleanup in `always` even
+  # if the very first task fails.
+  #
+  # UTC on purpose. ansible_date_time would also be stable, but it is LOCAL time
+  # and a top-level fact that INJECT_FACTS_AS_VARS deprecates; the panel, the
+  # nodes and the operator do not share a timezone, and a backup's name should
+  # read the same for all three.
+  pre_tasks:
+    - name: Fix the timestamp for this run
+      ansible.builtin.set_fact:
+        _backup_stamp: "{{ now(utc=true, fmt='%Y%m%dT%H%M%S') }}"
+      tags:
+        - config
 
   tasks:
     - name: Back it up and ship it
