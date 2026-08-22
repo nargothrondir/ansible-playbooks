@@ -141,6 +141,41 @@
           tags:
             - config
 
+        # A snapshot is a gzip-compressed tar of exactly three members, per
+        # internal/physical/raft/snapshot/archive.go upstream:
+        #
+        #   meta.json   - JSON-encoded snapshot metadata from Raft
+        #   state.bin   - Encoded snapshot data from Raft
+        #   SHA256SUMS  - SHA-256 sums of the above two files
+        #
+        # Which means the format carries its own integrity check, and using it
+        # costs nothing on a file this size. `size > 0` would happily pass a
+        # truncated download; this will not.
+        #
+        # It still proves NOTHING about restorability — state.bin is sealed with
+        # the barrier and only a real restore exercises that. This says the
+        # artifact is intact, not that it works.
+        - name: Verify the snapshot is an intact archive
+          ansible.builtin.shell:
+            cmd: |
+              d=$(mktemp -d) || exit 1
+              trap 'rm -rf "$d"' EXIT
+              tar -xzf {{ _backup_path | quote }} -C "$d" 2>/dev/null || { echo NOT_A_GZIP_TAR; exit 0; }
+              for f in meta.json state.bin SHA256SUMS; do
+                [ -f "$d/$f" ] || { echo "MISSING:$f"; exit 0; }
+              done
+              cd "$d" && sha256sum -c SHA256SUMS >/dev/null 2>&1 || { echo CHECKSUM_MISMATCH; exit 0; }
+              echo INTACT
+            executable: /bin/sh
+          register: _snapshot_verify
+          changed_when: false
+          # The script exits 0 whatever it finds and says so on stdout, so the
+          # verdict is this condition rather than a shell status that could also
+          # mean "tar is missing from the image".
+          failed_when: (_snapshot_verify.stdout | trim) != 'INTACT'
+          tags:
+            - config
+
         # form-multipart with a filename pointing at a local path is how the uri
         # module uploads a real file: the bytes are read as-is, where putting
         # them through a lookup would mangle a binary body.
