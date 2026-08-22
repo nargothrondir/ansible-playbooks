@@ -34,7 +34,9 @@
 
 - name: Back up OpenBao
   hosts: controller
-  gather_facts: true
+  # No facts needed: the only thing this play wanted from them was a timestamp,
+  # and now(utc=true) gives a better one — see _backup_stamp.
+  gather_facts: false
 
   vars:
     # Telegram refuses an upload past a limit its public documentation does not
@@ -45,7 +47,12 @@
     # secrets, two SSH roles and some policies.
     openbao_backup_max_mb: 40
 
-    _backup_stamp: "{{ ansible_date_time.iso8601_basic_short }}"
+    # UTC on purpose, and not from a gathered fact. ansible_date_time is a
+    # top-level fact, which INJECT_FACTS_AS_VARS deprecates — the same warning
+    # apt_sources was cleaned of. It is also LOCAL time, and the panel, the
+    # nodes and the operator do not share a timezone: a backup's name should
+    # read the same for all three. provision-node.yml settled this already.
+    _backup_stamp: "{{ now(utc=true, fmt='%Y%m%dT%H%M%S') }}"
     _backup_path: "/tmp/openbao-{{ _backup_stamp }}.snap"
 
   tasks:
