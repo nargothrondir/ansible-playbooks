@@ -2,7 +2,7 @@
 # Example inventory — the group layout the playbooks and roles expect.
 #
 # The real inventory (addresses, host names, group_vars, host_vars and the
-# ansible-vault files) lives in a SEPARATE PRIVATE repository; Semaphore
+# group_vars) lives in a SEPARATE PRIVATE repository; Semaphore
 # already clones it independently of this one. This file exists so the public
 # repository still documents the structure the code depends on.
 #

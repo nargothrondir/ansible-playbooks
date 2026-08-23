@@ -12,7 +12,7 @@
 #
 # Run (node_address defaults to <node_name>.<netbird_dns_domain>, the mesh name;
 # pass it explicitly only for nodes reached over a public address):
-#   ansible-playbook playbooks/new-node.yml --ask-vault-pass \
+#   ansible-playbook playbooks/new-node.yml \
 #     -e node_name=lab -e node_country=DE -e node_profile=<profile-name>
 
 - name: Register a node in the Remnawave panel
@@ -56,9 +56,7 @@
           Required: -e node_name=<name> -e node_address=<ip-or-host>, plus
           remnawave_panel_url in group_vars/control.
 
-    # Read the API token from OpenBao (#2). The vault entry stays in place as
-    # the cold fallback until backups are real (#7): reverting this switch is
-    # reverting the commit, not editing anything on a server.
+    # Read the API token from OpenBao (#2).
     - name: Fetch the Remnawave API token
       ansible.builtin.include_tasks: tasks/openbao-read.yml
       vars:

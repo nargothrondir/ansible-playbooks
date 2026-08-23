@@ -29,7 +29,7 @@
 #
 #   cd /opt/ansible-playbooks
 #   ssh-keygen -t ed25519 -N '' -f /tmp/fleet-test -C 'ssh-ca phase 2'
-#   ansible-playbook -c local --ask-vault-pass playbooks/openbao-ssh-sign.yml \
+#   ansible-playbook -c local playbooks/openbao-ssh-sign.yml \
 #     -e ssh_sign_public_key_file=/tmp/fleet-test.pub \
 #     -e openbao_addr=http://127.0.0.1:8200
 #

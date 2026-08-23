@@ -6,8 +6,8 @@
 
 Разворачивает [OpenBao](https://openbao.org/) на хосте панели через Docker
 Compose, со встроенным Raft-хранилищем. OpenBao — хранилище runtime-секретов,
-на которое переезжает флот (issue #2); `ansible-vault` остаётся для секретов,
-привязанных к репозиторию.
+которым пользуется флот (issue #2). Оно единственное: зашифрованных файлов в
+репозиториях больше нет.
 
 **Роль только разворачивает.** `bao operator init` печатает Shamir-доли и
 root-токен ровно один раз — они не должны проходить ни через Ansible, ни через
@@ -127,63 +127,41 @@ docker exec -it openbao bao operator unseal            # x3
 кворума долей нельзя, так что это помеха, а не компрометация — но держать
 постоянную дверь ради операции раз в год невыгодно.
 
-### Перенос секрета из ansible-vault
+### Запись секрета в хранилище
 
-Оба конца находятся на панели, поэтому значение может вообще не появляться на
-экране и не проходить через буфер обмена — заодно исчезает риск потерять символ
-на переносе строки. Длинный JWT руками выделить практически невозможно.
+Значению не нужно появляться на экране или проходить через буфер обмена — это
+заодно снимает риск потерять символ на переносе строки: длинный JWT руками
+не выделяется.
 
-**Одно поле:**
+**Одно поле.** `read -rs` не отображает ввод и не оставляет его в истории
+шелла; конвейер отдаёт значение в CLI через stdin, так что оно не попадает и в
+список аргументов:
 
 ```bash
-cd /opt/infra-inventory && ansible-vault view group_vars/all/vault.yml | python3 -c "import sys,yaml; sys.stdout.write(str(yaml.safe_load(sys.stdin)['vault_netbird_setup_key']))" | docker exec -i openbao bao kv put infra/netbird setup_key=-
+read -rs -p 'setup key: ' V && echo && printf '%s' "$V" | docker exec -i openbao bao kv put infra/netbird setup_key=- && unset V
 ```
 
-`yaml.safe_load` разбирает файл правильно при любой форме записи — в кавычках
-или блочным скаляром на несколько строк. `str()` нужен потому, что числовое
-значение (id чата, id темы) строкой не является и записаться не сможет.
-
-**Несколько полей — обязательно, если в секрете их больше одного:**
+**Несколько полей — обязательно, если в секрете их больше одного.**
 
 `bao kv put` **заменяет секрет целиком**. Запись по одному полю молча стирает
-всё, что записано раньше, поэтому многополевые секреты пишутся одним вызовом,
-JSON'ом через поток:
+всё записанное раньше, поэтому многополевой секрет пишется одним вызовом, JSON
+через stdin:
 
 ```bash
-cd /opt/infra-inventory && ansible-vault view group_vars/all/vault.yml | python3 -c "
-import sys, json, yaml
-v = yaml.safe_load(sys.stdin)
-json.dump({
-    'bot_token': str(v['vault_telegram_bot_token']),
-    'chat_id': str(v['vault_telegram_chat_id']),
-    'updates_topic_id': str(v.get('vault_telegram_updates_topic_id', '')),
-}, sys.stdout)
-" | docker exec -i openbao bao kv put infra/telegram -
+python3 -c "import json,sys,getpass; json.dump({'bot_token': getpass.getpass('bot_token: '), 'chat_id': input('chat_id: ')}, sys.stdout)" | docker exec -i openbao bao kv put infra/telegram -
 ```
 
-Одинокий `-` вместо пар «ключ=значение» заставляет CLI прочитать весь секрет
-как JSON из потока. Проверено на 2.6.1 (2026-08-05, таблица hawser из пяти
-хостов перенесена одним вызовом). `bao kv patch` — вариант, когда надо изменить
-только часть полей.
-
-**Проверка, ничего не выводя на экран:**
-
-```bash
-docker exec -i openbao bao kv get -field=setup_key infra/netbird | tr -d '
-' | wc -c
-cd /opt/infra-inventory && ansible-vault view group_vars/all/vault.yml | python3 -c "import sys,yaml; print(len(str(yaml.safe_load(sys.stdin)['vault_netbird_setup_key'])))"
-```
-
-Числа должны совпасть. Используйте `docker exec -i`, но не `-it`: с выделенным
-псевдотерминалом pty вставляет возвраты каретки на переносах, и счёт байтов
-получается завышенным.
+`getpass` для секретных частей, `input` для несекретных — chat id не
+чувствителен и набирать его вслепую незачем. Одиночный `-` вместо пар
+ключ-значение заставляет CLI прочитать весь секрет как JSON со stdin. Проверено
+на 2.6.1 (2026-08-05, таблица hawser на пять хостов одним вызовом).
 
 **Добавление поля к секрету, где уже есть другие:** нужен `kv patch`, а не
 `kv put`. Patch дописывает, поэтому поля можно класть по одному — с `put` это
 молча стёрло бы всё записанное раньше:
 
 ```bash
-cd /opt/infra-inventory && ansible-vault view group_vars/control/vault.yml | python3 -c "import sys,yaml; sys.stdout.write(str(yaml.safe_load(sys.stdin)['semaphore_access_key_encryption']))" | docker exec -i openbao bao kv patch infra/semaphore access_key_encryption=-
+read -rs -p 'value: ' V && echo && printf '%s' "$V" | docker exec -i openbao bao kv patch infra/semaphore access_key_encryption=- && unset V
 ```
 
 `kv patch` требует больше, чем чтение и запись по пути данных: он делает
@@ -195,22 +173,24 @@ path "sys/capabilities-self"    { capabilities = ["update"] }
 ```
 
 Без них CLI падает с 403 на `sys/internal/ui/mounts/...`, где про патч не
-сказано ни слова. Измерено 2026-08-20, при переносе собственных учётных данных
-Semaphore и Dockhand.
+сказано ни слова. Измерено 2026-08-20.
 
-После записи убедись, что прежние поля уцелели: если `api_token` пропал, patch
-сработал как put, и его надо вернуть прежде всего остального.
+**Проверка без вывода значения.** Сравни сохранённую длину с ожидаемой — 44 для
+base64-ключа в 32 байта, и так далее:
+
+```bash
+docker exec -i openbao bao kv get -field=access_key_encryption infra/semaphore | wc -c
+```
+
+`docker exec -i`, никогда `-it`: с выделенным псевдотерминалом pty вставляет
+возвраты каретки на переносах, и счёт байтов получается завышенным.
+
+И убедись, что прежние поля уцелели — если поле, которое было, пропало, значит
+`patch` сработал как `put`, и его надо вернуть прежде всего остального:
 
 ```bash
 docker exec openbao bao kv get -format=json infra/semaphore | python3 -c 'import sys,json;print(", ".join(json.load(sys.stdin)["data"]["data"].keys()))'
 ```
-
-**Под этот рецепт не подходит** значение-отображение, а не скаляр — например
-таблица токенов hawser по хостам. Ей сначала нужно решение о раскладке: поле на
-хост или отдельный путь KV на хост, — а не механический перенос.
-
-**Запись в vault остаётся.** Её удаление — последний шаг всей миграции, после
-того как заработают бэкапы (#7), а не часть переноса отдельного секрета.
 
 ### Удаление поля из многополевого секрета
 

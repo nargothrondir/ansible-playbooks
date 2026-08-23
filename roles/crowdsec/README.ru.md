@@ -35,7 +35,7 @@
 | `crowdsec_central_lapi_enabled` | `false` | Репортить в центральную LAPI панели (на весь флот) вместо локальной. |
 | `crowdsec_central_lapi_url` | `""` | URL центральной LAPI по mesh (при активации). |
 | `crowdsec_central_lapi_login` | `{{ inventory_hostname }}` | Логин машины, зарегистрированной на панели (при активации). |
-| `crowdsec_central_lapi_password` | `""` | Пароль машины — **через ansible-vault** (при активации). |
+| `crowdsec_central_lapi_password` | `""` | Пароль машины — класть в OpenBao при активации. |
 
 ### Почему бунсер регистрируется явно
 

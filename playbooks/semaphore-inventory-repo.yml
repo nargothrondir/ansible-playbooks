@@ -76,9 +76,7 @@
          and (semaphore_to_inventory | length > 0) }}
 
   tasks:
-    # Read the API token from OpenBao (#2). The vault entry stays in place as
-    # the cold fallback until backups are real (#7): reverting this switch is
-    # reverting the commit, not editing anything on a server.
+    # Read the API token from OpenBao (#2).
     - name: Fetch the Semaphore API token
       ansible.builtin.include_tasks: tasks/openbao-read.yml
       vars:

@@ -2,21 +2,19 @@
 # Deploy Semaphore (Ansible web UI) on the control node via Docker Compose.
 #
 # Secrets come from OpenBao — infra/semaphore, fields admin_password and
-# access_key_encryption. The ansible-vault entries stay as the cold copy until
-# backups are real (#7); nothing here reads them any more.
+# access_key_encryption. Nothing in this fleet reads ansible-vault any more —
+# the encrypted files were retired once OpenBao had proven backups (#7).
 #
 # Run from the panel CLI:
 #
 #   cd /opt/ansible-playbooks
 #   read -rs OPENBAO_SECRET_ID && export OPENBAO_SECRET_ID
-#   ansible-playbook -c local --ask-vault-pass playbooks/semaphore.yml \
+#   ansible-playbook -c local playbooks/semaphore.yml \
 #     -e openbao_addr=http://127.0.0.1:8200
 #
 # openbao_addr is overridden because the inventory value is the address the
 # SEMAPHORE CONTAINER uses (a name on a Docker network); from the panel shell
-# the same store answers on loopback. --ask-vault-pass is still needed while
-# any encrypted group_vars file exists, even though this playbook no longer
-# reads one — Ansible decrypts what it loads for the host, not what is used.
+# the same store answers on loopback.
 #
 # ORDER ON A PANEL REBUILD: openbao.yml, unseal, mint a secret_id, then this.
 # Semaphore's own credentials now live in the store it will later read from, so

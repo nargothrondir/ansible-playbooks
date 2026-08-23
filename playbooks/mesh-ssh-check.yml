@@ -9,7 +9,7 @@
 # mesh_targets: comma-separated NetBird peer names (see the dashboard / the
 # panel node addresses), e.g. "node-a" or "node-a,node-b,panel".
 #
-# Run (Semaphore template "Mesh SSH Check" — attach the vault password! — or):
+# Run (Semaphore template "Mesh SSH Check", or):
 #   ansible-playbook playbooks/mesh-ssh-check.yml -e mesh_targets=node-a,node-b
 
 - name: Build in-memory hosts for the mesh SSH check

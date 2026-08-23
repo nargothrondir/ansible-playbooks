@@ -325,76 +325,6 @@
       tags:
         - config
 
-    # A template with no Vault attached cannot read an encrypted group_vars file,
-    # and both group_vars/fleet and group_vars/control hold one. The first
-    # templates this playbook created therefore came out broken — they ran until
-    # the first play and died on "Attempting to decrypt but no vault secrets
-    # found".
-    #
-    # Copied from a template that already works rather than resolved from the
-    # Key Store, because the key's name and id are facts about this Semaphore
-    # instance and mean nothing in git. Whatever the working templates use, new
-    # ones get. The id is dropped: it identifies that template's own vault
-    # record, and sending it back would point the new template at a row that
-    # belongs to another.
-    # Read one at a time, because THE LIST DOES NOT CARRY VAULTS. The schema says
-    # Template has a `vaults` field and the collection returns Template objects,
-    # but the implementation at v2.19.7 fills it only for a single fetch:
-    # GET .../templates calls GetTemplatesWithPermissions → getTemplates(...,
-    # loadVaults=false), while GET .../templates/{id} calls GetTemplate →
-    # FillTemplate, which loads them.
-    #
-    # Found the hard way: the assert below fired on a Semaphore where every
-    # template plainly showed "Vaults: default" in the UI.
-    - name: Read each existing template on its own to see its vault
-      ansible.builtin.uri:
-        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates/{{ item.id }}"
-        method: GET
-        headers: "{{ _api_headers }}"
-        status_code: [200]
-      register: _template_details
-      changed_when: false
-      loop: "{{ _templates.json | default([]) }}"
-      loop_control:
-        label: "{{ item.name }}"
-      tags:
-        - config
-
-    - name: Take the vault configuration from a template that already has one
-      ansible.builtin.set_fact:
-        _vault_src: >-
-          {{ (_template_details.results | default([]) | map(attribute='json')
-              | selectattr('vaults', 'defined') | selectattr('vaults', 'truthy')
-              | list | first | default({})).vaults | default([]) | first | default({}) }}
-      tags:
-        - config
-
-    - name: Build the vault block for new templates
-      ansible.builtin.set_fact:
-        _template_vaults: >-
-          {{ [ {'name': _vault_src.name | default('default'),
-                'type': _vault_src.type | default('password'),
-                'vault_key_id': _vault_src.vault_key_id} ]
-             if _vault_src.vault_key_id is defined else [] }}
-      tags:
-        - config
-
-    # Refusing here is the point: creating a template that cannot decrypt is
-    # worse than creating none, because it looks finished and fails at the first
-    # play of every run.
-    - name: Assert a vault configuration was found to copy
-      ansible.builtin.assert:
-        that:
-          - _template_vaults | length > 0
-        fail_msg: >-
-          No existing template carries a Vault, so a new one would be created
-          unable to read the encrypted group_vars — which is how the first pair
-          came out broken. Attach the Vault to one template by hand and run this
-          again; every template made from then on inherits it.
-      when: semaphore_templates | length > 0
-      tags:
-        - config
-
     # Fetch-then-guard (§6): created only when the name is absent. The POST is
     # not idempotent — a second one would make a duplicate template with the same
     # name and a different id, and Semaphore accepts that quite happily.
@@ -416,7 +346,6 @@
               'git_branch': item.value.git_branch | default(''),
               'arguments': '[]',
               'allow_override_args_in_task': item.value.allow_override_args | default(true),
-              'vaults': _template_vaults,
               'type': ''} }}
         status_code: [201]
       loop: "{{ semaphore_templates | dict2items }}"

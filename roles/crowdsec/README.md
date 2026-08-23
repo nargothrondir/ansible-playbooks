@@ -37,7 +37,7 @@ Design choices (see issue #31):
 | `crowdsec_central_lapi_enabled` | `false` | Report to the panel's central LAPI (fleet-wide) instead of the local one. |
 | `crowdsec_central_lapi_url` | `""` | Central LAPI URL over the mesh (when enabled). |
 | `crowdsec_central_lapi_login` | `{{ inventory_hostname }}` | Machine login registered on the panel (when enabled). |
-| `crowdsec_central_lapi_password` | `""` | Machine password — **use ansible-vault** (when enabled). |
+| `crowdsec_central_lapi_password` | `""` | Machine password — put it in OpenBao when this is activated. |
 
 ### Why the bouncer is registered explicitly
 

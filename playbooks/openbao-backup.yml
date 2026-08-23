@@ -29,7 +29,7 @@
 # From the panel CLI instead:
 #
 #   cd /opt/ansible-playbooks
-#   ansible-playbook -c local --ask-vault-pass playbooks/openbao-backup.yml \
+#   ansible-playbook -c local playbooks/openbao-backup.yml \
 #     -e openbao_addr=http://127.0.0.1:8200
 
 - name: Back up OpenBao

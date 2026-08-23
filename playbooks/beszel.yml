@@ -2,16 +2,13 @@
 # Register the nodes in the Beszel hub and install the monitoring agent
 # (WebSocket to the hub; no inbound port). The role auto-registers each node via
 # the hub API and issues its per-node token, so no manual UI step or per-node
-# vault entry is needed — only the shared hub key + superuser creds + owner
+# secret is needed — only the shared hub key + superuser creds + owner
 # email. See roles/beszel_agent.
 #
 # The hub superuser credentials come from OpenBao (#2):
 #   infra/beszel   admin_email  admin_password
 #
 # The template needs the Variable Group carrying OPENBAO_SECRET_ID attached.
-# The ansible-vault entries (vault_beszel_admin_*) stay as the cold fallback
-# until backups are real (#7).
-#
 #   ansible-playbook -i ../infra-inventory/hosts.yml playbooks/beszel.yml --limit test
 
 # Read on the controller: the credentials are the same for every node, and the
@@ -36,7 +33,7 @@
   become: true
 
   vars:
-    # Override the role defaults, which read the vault entries. Both resolve to
+    # The role's defaults are empty, so these are the only source. They resolve to
     # the same values; these come from OpenBao.
     beszel_agent_admin_email: >-
       {{ (hostvars['controller']._beszel_admin | default({})).admin_email
@@ -47,7 +44,7 @@
 
   # `--limit` filters the credential play above out along with everything else.
   # The role then asserts on empty credentials and sends the operator to look
-  # for them in the vault, where nothing is wrong — the cause is the limit, and
+  # for them in the store, where nothing is wrong — the cause is the limit, and
   # it belongs in the message. Same shape as hawser.yml and the #52 guard in
   # provision-node.yml.
   pre_tasks:
@@ -57,7 +54,7 @@
           - hostvars['controller']._beszel_admin is defined
         fail_msg: >-
           The hub credential play matched no hosts, so the credentials below
-          are empty and the role would blame the vault for it. Re-run with the
+          are empty and the role would blame the store for it. Re-run with the
           controller in the limit:
           '{{ ansible_limit | default('<hosts>') }},controller'.
       run_once: true

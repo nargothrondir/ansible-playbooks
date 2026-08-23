@@ -12,7 +12,6 @@
 #   Repository       the playbook repository
 #   Inventory        the fleet inventory
 #   Variable Groups  the group holding OPENBAO_SECRET_ID
-#   Vaults           the ansible-vault password (group_vars decrypt at load)
 #
 # Prepare the throwaway key once, as the operator:
 #   docker exec -it openbao bao kv put infra/selftest value=hello
@@ -25,7 +24,7 @@
 # loopback publish and with the secret in the shell:
 #   read -rs OPENBAO_SECRET_ID && export OPENBAO_SECRET_ID
 #   ansible-playbook playbooks/openbao-verify.yml -e ansible_connection=local \
-#     -e openbao_addr=http://127.0.0.1:8200 --ask-vault-pass
+#     -e openbao_addr=http://127.0.0.1:8200
 #
 # WHY `hosts: controller` IS RIGHT HERE, unlike in playbooks/openbao.yml:
 # `controller` is ansible_connection: local, meaning "wherever Ansible runs".

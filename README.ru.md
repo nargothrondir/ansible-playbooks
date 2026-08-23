@@ -21,7 +21,7 @@
 | Автоматизация | Semaphore (веб-интерфейс Ansible) |
 | Мониторинг | Beszel (агент + хаб), btop |
 | Защита хоста | CrowdSec (детект по SSH, bouncer на nftables), ufw, доступ только по ключам |
-| Секреты | OpenBao (runtime) · ansible-vault (наследие, выводится из обращения) |
+| Секреты | OpenBao (runtime), с ежедневными снапшотами и проверенным восстановлением |
 
 ## Роли
 
@@ -83,7 +83,6 @@
 
 | Скрипт | Назначение |
 |---|---|
-| [scripts/verify-secret-migration.py](scripts/verify-secret-migration.py) | Сверяет каждый секрет ansible-vault с его двойником в OpenBao. **Запускать перед удалением vault-файлов** (#2, #7). Печатает только имена и вердикты — значения сравниваются усечёнными хешами. |
 
 ## Инвентарь
 
@@ -126,8 +125,9 @@ ansible-playbook -i ../infra-inventory/hosts.yml playbooks/site.yml
   все последующие прогоны.
 
 Runtime-секреты живут в **OpenBao**: его разворачивает роль `openbao` на
-управляющем хосте, а плейбуки читают их через AppRole. Файлы `ansible-vault` в
-приватном инвентаре — остаток прежней схемы, они выводятся из обращения.
+управляющем хосте, а плейбуки читают их через AppRole. Это единственное
+хранилище: ansible-vault выведен из обращения, когда у OpenBao появились
+ежедневные снапшоты и проверенное восстановление.
 Управляющая машина должна быть на Linux или WSL — Ansible не работает на
 нативном Windows.
 
@@ -165,16 +165,15 @@ Runtime-секреты живут в **OpenBao**: его разворачива�
 ### Плановые обновления с отчётом в Telegram
 
 [playbooks/update.yml](playbooks/update.yml) обновляет хосты группы `managed` и
-шлёт один сводный отчёт в Telegram с контроллера. Данные бота — через
-ansible-vault:
+шлёт один сводный отчёт в Telegram с контроллера. Данные бота приходят из
+OpenBao:
 
 ```bash
-# в приватном репозитории с инвентарём
-ansible-vault create group_vars/all/vault.yml
-# vault_telegram_bot_token: "123456:ABC-..."
-# vault_telegram_chat_id: "123456789"
+docker exec -it openbao bao kv put infra/telegram bot_token=... chat_id=...
+```
 
-ansible-playbook -i ../infra-inventory/hosts.yml playbooks/update.yml --ask-vault-pass
+```bash
+ansible-playbook -i ../infra-inventory/hosts.yml playbooks/update.yml
 ```
 
 ## Спецификация агента

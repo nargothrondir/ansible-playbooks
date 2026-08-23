@@ -32,11 +32,10 @@
 #   cd /opt/ansible-playbooks                        # ansible.cfg finds the
 #                                                    # inventory relative to here
 #   BAO_TOKEN=$(docker exec openbao bao token create #     -policy=openbao-ssh-ca -ttl=30m -field=token) && export BAO_TOKEN
-#   ansible-playbook -c local --ask-vault-pass playbooks/openbao-ssh-ca.yml
+#   ansible-playbook -c local playbooks/openbao-ssh-ca.yml
 #
 # -c local because the target IS this machine and the panel shell holds no key
-# for the mesh address the inventory carries; --ask-vault-pass because the
-# inventory is partly vaulted and only Semaphore has that password stored. The
+# for the mesh address the inventory carries. The
 # token is captured into the variable rather than printed: `-field=token` on a
 # terminal puts a live credential on screen and into scrollback.
 #

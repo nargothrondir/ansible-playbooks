@@ -29,10 +29,10 @@
 #
 #   cd /opt/ansible-playbooks
 #   BAO_TOKEN=$(docker exec openbao bao token create #     -policy=openbao-bootstrap -ttl=30m -field=token) && export BAO_TOKEN
-#   ansible-playbook -c local --ask-vault-pass playbooks/openbao-setup.yml
+#   ansible-playbook -c local playbooks/openbao-setup.yml
 #
 # -c local because the target is this machine and the panel shell holds no key
-# for the mesh address; --ask-vault-pass because the inventory is partly vaulted.
+# for the mesh address the inventory carries.
 # Rewrite the policy above whenever a path is added to it — the comment grants
 # nothing, and a stale policy fails with 403 halfway through a run.
 #
@@ -43,7 +43,7 @@
 # Then, on the panel:
 #
 #   read -rs BAO_TOKEN && export BAO_TOKEN
-#   ansible-playbook playbooks/openbao-setup.yml --ask-vault-pass -e ansible_connection=local
+#   ansible-playbook playbooks/openbao-setup.yml -e ansible_connection=local
 #   unset BAO_TOKEN
 #
 # `-e ansible_connection=local` is REQUIRED from the panel CLI. The play targets
@@ -51,10 +51,6 @@
 # without it Ansible SSHes from the panel to itself as the `ansible` user — and
 # the operator's shell does not hold that key. Running from Semaphore does need
 # the SSH hop, so the override belongs on the command line, not in the play.
-#
-# `--ask-vault-pass` is also required, even though this playbook reads nothing
-# from the vault: group_vars carries an encrypted file, and Ansible decrypts it
-# while LOADING the inventory.
 #
 # `read -rs` does not echo and keeps the value out of shell history. The token
 # lives in one shell, dies with it, and expires regardless.

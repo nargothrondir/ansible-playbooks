@@ -24,7 +24,7 @@ is meant to sit behind the reverse proxy (Netbird-only / IP-allowlisted).
 | `dockhand_encryption_key` | _(required, OpenBao `infra/dockhand`)_ | Base64 AES-256 key (44 chars); decrypts stored credentials — a different key does not restore access, it makes the database unreadable |
 
 `dockhand_encryption_key` must be a base64-encoded 32-byte key
-(`openssl rand -base64 32`), supplied via ansible-vault.
+(`openssl rand -base64 32`), supplied by playbooks/dockhand.yml from OpenBao.
 
 ## Dependencies
 

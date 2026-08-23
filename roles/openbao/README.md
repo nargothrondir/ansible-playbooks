@@ -6,7 +6,8 @@
 
 Deploys [OpenBao](https://openbao.org/) on the panel host via Docker Compose,
 with integrated Raft storage. OpenBao is the runtime secret store this fleet is
-migrating to (issue #2); `ansible-vault` stays for repo-bound secrets.
+keeps (issue #2). It is the only one: nothing in this fleet is encrypted in
+a repository any more.
 
 **This role deploys and nothing more.** `bao operator init` prints the unseal
 shares and the root token exactly once — they must never pass through Ansible,
@@ -124,63 +125,41 @@ can reach the API can *start* an attempt without a token. They cannot finish one
 without a quorum of shares, so the exposure is nuisance rather than compromise —
 but a permanent door for a once-a-year operation is a bad trade.
 
-### Moving a secret out of ansible-vault
+### Writing a secret into the store
 
-Both ends live on the panel, so the value never has to appear on screen or pass
-through a clipboard — which also removes the chance of losing a character to
-line wrapping. A long JWT is unselectable by hand in practice.
+The value never has to appear on screen or pass through a clipboard, which also
+removes the chance of losing a character to line wrapping — a long JWT is
+unselectable by hand in practice.
 
-**One field:**
+**One field.** `read -rs` does not echo and keeps the value out of shell
+history; the pipe hands it to the CLI over stdin, so it never reaches an
+argument list either:
 
 ```bash
-cd /opt/infra-inventory && ansible-vault view group_vars/all/vault.yml | python3 -c "import sys,yaml; sys.stdout.write(str(yaml.safe_load(sys.stdin)['vault_netbird_setup_key']))" | docker exec -i openbao bao kv put infra/netbird setup_key=-
+read -rs -p 'setup key: ' V && echo && printf '%s' "$V" | docker exec -i openbao bao kv put infra/netbird setup_key=- && unset V
 ```
 
-`yaml.safe_load` parses the file properly whichever way the value is written —
-quoted, or as a folded block over several lines. `str()` matters because a
-numeric value (a chat id, a topic id) is not a string and would fail to write.
-
-**Several fields — required whenever a secret has more than one:**
+**Several fields — required whenever a secret has more than one.**
 
 `bao kv put` REPLACES a secret wholesale. Writing field by field silently
-discards everything written before it, so multi-field secrets go in one call,
+discards everything written before it, so a multi-field secret goes in one call,
 as JSON on stdin:
 
 ```bash
-cd /opt/infra-inventory && ansible-vault view group_vars/all/vault.yml | python3 -c "
-import sys, json, yaml
-v = yaml.safe_load(sys.stdin)
-json.dump({
-    'bot_token': str(v['vault_telegram_bot_token']),
-    'chat_id': str(v['vault_telegram_chat_id']),
-    'updates_topic_id': str(v.get('vault_telegram_updates_topic_id', '')),
-}, sys.stdout)
-" | docker exec -i openbao bao kv put infra/telegram -
+python3 -c "import json,sys,getpass; json.dump({'bot_token': getpass.getpass('bot_token: '), 'chat_id': input('chat_id: ')}, sys.stdout)" | docker exec -i openbao bao kv put infra/telegram -
 ```
 
-A lone `-` in place of the key/value pairs makes the CLI read the whole secret
-as JSON from stdin. Verified on 2.6.1 (2026-08-05, migrating hawser's five-host
-table in one call). `bao kv patch` is the alternative when only some fields
-should change.
-
-**Verify without printing anything:**
-
-```bash
-docker exec -i openbao bao kv get -field=setup_key infra/netbird | tr -d '
-' | wc -c
-cd /opt/infra-inventory && ansible-vault view group_vars/all/vault.yml | python3 -c "import sys,yaml; print(len(str(yaml.safe_load(sys.stdin)['vault_netbird_setup_key'])))"
-```
-
-The two numbers must match. Use `docker exec -i`, never `-it`: with a TTY
-allocated, the pty inserts carriage returns at wrap boundaries and the byte
-count comes out too high.
+`getpass` for the parts that are secret, `input` for the parts that are not — a
+chat id is neither sensitive nor worth typing blind. A lone `-` in place of the
+key/value pairs makes the CLI read the whole secret as JSON from stdin. Verified
+on 2.6.1 (2026-08-05, writing hawser's five-host table in one call).
 
 **Adding a field to a secret that already has others:** use `kv patch`, not
 `kv put`. Patch merges, so fields can go in one at a time — which with `put`
 would silently discard whatever was written before:
 
 ```bash
-cd /opt/infra-inventory && ansible-vault view group_vars/control/vault.yml | python3 -c "import sys,yaml; sys.stdout.write(str(yaml.safe_load(sys.stdin)['semaphore_access_key_encryption']))" | docker exec -i openbao bao kv patch infra/semaphore access_key_encryption=-
+read -rs -p 'value: ' V && echo && printf '%s' "$V" | docker exec -i openbao bao kv patch infra/semaphore access_key_encryption=- && unset V
 ```
 
 `kv patch` needs more than read/write on the data path. It performs a preflight
@@ -192,22 +171,25 @@ path "sys/capabilities-self"    { capabilities = ["update"] }
 ```
 
 Without them the CLI fails with a 403 on `sys/internal/ui/mounts/...` that says
-nothing about patching. Measured 2026-08-20, moving Semaphore's and Dockhand's
-own credentials into the store.
+nothing about patching. Measured 2026-08-20.
 
-Afterwards, confirm the pre-existing fields survived — if `api_token` is gone,
-patch behaved like put and it must be restored before anything else proceeds:
+**Verify without printing anything.** Compare the stored length against what you
+expect — 44 for a base64 32-byte key, and so on:
+
+```bash
+docker exec -i openbao bao kv get -field=access_key_encryption infra/semaphore | wc -c
+```
+
+Use `docker exec -i`, never `-it`: with a TTY allocated, the pty inserts
+carriage returns at wrap boundaries and the byte count comes out too high.
+
+And confirm the pre-existing fields survived — if a field that was there before
+is gone, `patch` behaved like `put` and it must be restored before anything else
+proceeds:
 
 ```bash
 docker exec openbao bao kv get -format=json infra/semaphore | python3 -c 'import sys,json;print(", ".join(json.load(sys.stdin)["data"]["data"].keys()))'
 ```
-
-**What does not fit this recipe:** a value that is a mapping rather than a
-scalar, such as hawser's per-host token table. That needs a layout decision
-first — one field per host, or one KV path per host — not a transcription.
-
-**The vault entry stays.** Deleting it is the last step of the whole migration,
-after backups are real (#7), not part of moving an individual secret.
 
 ### Removing a field from a multi-field secret
 
