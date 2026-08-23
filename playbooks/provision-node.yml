@@ -348,8 +348,8 @@
     # nodes, and a fresh node is rebooted by the xanmod handler / the final
     # post_tasks check anyway (#52).
     upgrade_reboot: false
-    # From OpenBao (#2), fetched by the first play. Overrides the group_vars
-    # definition that reads the vault entry; both resolve to the same value.
+    # From OpenBao (#2), fetched by the first play. group_vars no longer defines
+    # this at all, so the fetch is the only source.
     netbird_setup_key: "{{ hostvars['controller']._netbird_setup_key | default('') }}"
     # Same source, same shape. Hands ssh_hardening the trust anchor so a node
     # accepts fleet certificates from the moment it is built, alongside the key
@@ -478,7 +478,8 @@
     # Monitoring agent — after the firewall: it dials the hub outbound (no
     # inbound port) and depends on the hub API to auto-register, so if the hub
     # is unreachable only this step fails and the node is otherwise fully
-    # provisioned (re-runnable). Needs the vault superuser creds.
+    # provisioned (re-runnable). Needs the hub superuser credentials, which the
+    # first play reads from OpenBao.
     - beszel_agent
 
   # Final reboot, idempotent — and normally a no-op now. The kernel reboot

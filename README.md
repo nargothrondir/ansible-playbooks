@@ -21,7 +21,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | Automation | Semaphore (Ansible web UI) |
 | Monitoring | Beszel (agent + hub), btop |
 | Host security | CrowdSec (SSH detection, nftables bouncer), ufw, key-only SSH |
-| Secrets | OpenBao (runtime) · ansible-vault (legacy, being retired) |
+| Secrets | OpenBao (runtime), with daily snapshots and a proven restore |
 
 ## Roles
 
@@ -83,7 +83,6 @@ Personal Ansible playbooks for VPS provisioning and management.
 
 | Script | Purpose |
 |---|---|
-| [scripts/verify-secret-migration.py](scripts/verify-secret-migration.py) | Compare every ansible-vault secret against its OpenBao counterpart. **Run before deleting the vault files** (#2, #7). Prints names and verdicts only — values are compared as truncated hashes. |
 
 ## Inventory
 
@@ -124,9 +123,9 @@ share one key across users) and no passwords stored anywhere:
   bootstrap) and has its password locked. This key is used for all ongoing runs.
 
 Runtime secrets live in **OpenBao**, deployed on the control host by the
-`openbao` role and read at run time through an AppRole. `ansible-vault` files in
-the private inventory are what remains of the previous arrangement and are being
-retired. The Ansible controller must be Linux or WSL — Ansible does not run on
+`openbao` role and read at run time through an AppRole. It is the only secret
+store: ansible-vault was retired once OpenBao had daily snapshots and a restore
+proven against them. The Ansible controller must be Linux or WSL — Ansible does not run on
 native Windows.
 
 ## Usage
@@ -162,16 +161,15 @@ kernel is no longer the newest installed one (`needrestart -b -k`, plus the
 ### Scheduled updates with Telegram report
 
 [playbooks/update.yml](playbooks/update.yml) upgrades the `managed` hosts and
-sends a single summary to Telegram from the controller. Provide the bot
-credentials via ansible-vault:
+sends a single summary to Telegram from the controller. The bot credentials
+come from OpenBao:
 
 ```bash
-# in the private inventory repository
-ansible-vault create group_vars/all/vault.yml
-# vault_telegram_bot_token: "123456:ABC-..."
-# vault_telegram_chat_id: "123456789"
+docker exec -it openbao bao kv put infra/telegram bot_token=... chat_id=...
+```
 
-ansible-playbook -i ../infra-inventory/hosts.yml playbooks/update.yml --ask-vault-pass
+```bash
+ansible-playbook -i ../infra-inventory/hosts.yml playbooks/update.yml
 ```
 
 ## Agent specification

@@ -2,14 +2,13 @@
 # Deploy the Hawser edge agent on remote managed hosts.
 #
 # Per-host tokens live in OpenBao (#2) as ONE secret whose fields are inventory
-# hostnames — the same shape the ansible-vault mapping had, so the two forms
-# stay interchangeable while both exist:
+# hostnames, which is the shape the per-host table has always had:
 #
 #   infra/hawser   fi=<token>  de=<token>  kz=<token>  ru=<token>
 #
 # `bao kv put` REPLACES a secret wholesale, so adding a node means writing the
 # whole table again, not appending a field. The recipe for that — building the
-# JSON from the vault file without the values touching the screen — is in
+# JSON without the values touching the screen — is in
 # roles/openbao/README.md.
 #
 # Hosts with no field in the table (the control node, managed locally over the
@@ -19,8 +18,6 @@
 # hawser_dockhand_url in group_vars/all.
 #
 # The template needs the Variable Group carrying OPENBAO_SECRET_ID attached.
-# The ansible-vault mapping (hawser_host_tokens) stays as the cold fallback
-# until backups are real (#7).
 
 # Read on the controller, in its own play, because the table serves every host
 # and the target hosts cannot reach OpenBao at all — its API is on a Docker
@@ -68,7 +65,7 @@
     # legitimately be absent — a limit that excluded the controller.
     ansible_ssh_common_args: >-
       -o CertificateFile={{ hostvars['controller']._fleet_ssh_cert_path | default('') }}
-    # Overrides the group_vars definition that reads the vault mapping. Both
+    # From OpenBao, read by the play above. group_vars defines nothing here; the
     # resolve to the same value; this one comes from OpenBao.
     hawser_token: >-
       {{ (hostvars['controller']._hawser_tokens | default({}))[inventory_hostname]

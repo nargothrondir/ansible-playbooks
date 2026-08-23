@@ -37,6 +37,7 @@ hawser_request_timeout: 120
 hawser_dockhand_url: ""
 
 # Per-host agent token from Dockhand (Add environment -> Hawser agent (edge) ->
-# Generate). Provide via ansible-vault in host_vars/<host>/vault.yml.
+# Generate). Supplied by playbooks/hawser.yml from OpenBao (infra/hawser,
+# keyed by inventory hostname).
 # Not defined here.
 hawser_token: ""

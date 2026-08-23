@@ -1,7 +1,8 @@
 ---
 # Telegram Bot API token and target chat id.
 # By default these read the global telegram_* vars (see group_vars/all/),
-# which should be backed by ansible-vault. A caller may also set them directly.
+# which no longer exist. Callers set these directly, from OpenBao
+# (infra/telegram) — see update.yml, provision-node.yml, openbao-backup.yml.
 notify_telegram_bot_token: "{{ telegram_bot_token | default('') }}"
 notify_telegram_chat_id: "{{ telegram_chat_id | default('') }}"
 

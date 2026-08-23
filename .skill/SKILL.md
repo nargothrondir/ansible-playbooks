@@ -26,7 +26,7 @@ It is built around a single source of truth:
 
 > **Always read `references/CLAUDE.md` before producing any action plan or code.**
 
-`references/CLAUDE.md` contains the full specification (v4.0, 346 lines).
+`references/CLAUDE.md` contains the full specification (v4.0, 348 lines).
 Worked examples live in `references/workflow.md` and
 `references/ansible-standards.md` — read those on demand.
 This file is a navigation aid and quick reference only.
@@ -96,7 +96,7 @@ Target environment for this repository:
 | Containers | Docker (via official repo) |
 | Container delivery | Dockhand From-Git stacks + Hawser edge agents (core §12) |
 | Monitoring | Beszel (hub + per-node agents), btop |
-| Secrets | OpenBao for runtime secrets (deployed); ansible-vault for repo-bound secrets, being retired |
+| Secrets | OpenBao, the only store — daily snapshots, restore proven |
 | Auth | SSH key only after bootstrap; password only for initial root login |
 
 ---

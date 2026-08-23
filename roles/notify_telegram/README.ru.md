@@ -12,7 +12,7 @@
 
 | Переменная | По умолчанию | Описание |
 |------------|--------------|----------|
-| `notify_telegram_bot_token` | `{{ telegram_bot_token }}` | Токен бота (через ansible-vault) |
+| `notify_telegram_bot_token` | `{{ telegram_bot_token }}` | Токен бота — вызывающий передаёт его из OpenBao `infra/telegram` |
 | `notify_telegram_chat_id` | `{{ telegram_chat_id }}` | ID чата-получателя |
 | `notify_telegram_message_thread_id` | `""` | ID топика (`message_thread_id`); пусто = General |
 | `notify_telegram_silent` | `false` | Отправить без звука (`disable_notification`); сообщение всё равно приходит |

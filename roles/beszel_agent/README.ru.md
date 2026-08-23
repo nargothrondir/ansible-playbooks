@@ -36,7 +36,7 @@ Beszel (юзер `beszel`, бинарь в `/opt/beszel-agent`, sandbox-unit).
 | `beszel_agent_token` | `""` | Per-node токен. Пустой — заполняется авторегистрацией (или задаёшь сам, если выключена). |
 | `beszel_agent_register` | `true` | Регистрировать ноду через API; тянет ключ/владельца и выдаёт токен. |
 | `beszel_agent_admin_email` | `vault_beszel_admin_email` | Email **суперюзера** PocketBase хаба (регистрация). |
-| `beszel_agent_admin_password` | `vault_beszel_admin_password` | Пароль суперюзера — **ansible-vault**. |
+| `beszel_agent_admin_password` | `""` | Пароль суперюзера — из OpenBao `infra/beszel`, передаёт плейбук. |
 | `beszel_agent_owner_email` | `""` | Dashboard-владелец систем; пусто = единственный/первый юзер. |
 | `beszel_agent_system_name` | `{{ inventory_hostname }}` | Имя системы в хабе. |
 | `beszel_agent_system_host` | `{{ inventory_hostname }}` | Отображаемый host (для WebSocket номинально). |

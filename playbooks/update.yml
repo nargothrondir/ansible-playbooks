@@ -1,11 +1,9 @@
 ---
 # Update managed servers and report the result to Telegram.
 #
-# Telegram credentials come from ansible-vault (see group_vars/all/):
-#   ansible-vault create group_vars/all/vault.yml
-#     bot_token         (required)
-#     chat_id           (required)
-#     updates_topic_id  (optional; without it the report goes to General)
+# Telegram credentials come from OpenBao — infra/telegram, with bot_token and
+# chat_id required and updates_topic_id optional (without it the report goes to
+# General).
 #
 # Topics are per SOURCE, not one shared thread — infra/telegram carries
 # updates_topic_id (this playbook), provisioning_topic_id (provision-node.yml)
@@ -14,10 +12,7 @@
 #
 #   docker exec -it openbao bao kv put infra/telegram bot_token=... chat_id=...
 #
-# The ansible-vault entries (vault_telegram_*) are deliberately left in place as
-# the cold fallback until backups are real (#7).
-#
-# Run:  ansible-playbook playbooks/update.yml --ask-vault-pass
+# Run:  ansible-playbook playbooks/update.yml
 
 - name: Update managed servers
   hosts: managed
@@ -78,9 +73,7 @@
     _report_hosts: "{{ groups['managed'] | default([]) }}"
 
   tasks:
-    # Read from OpenBao rather than ansible-vault (#2). The vault entries stay
-    # in place as the cold fallback until backups are real (#7) — reverting is
-    # reverting this commit, not editing anything on a server.
+    # Read from OpenBao (#2).
     #
     # No `apply:` with delegate_to/run_once here: this play already runs on a
     # single host, and that host is the controller.

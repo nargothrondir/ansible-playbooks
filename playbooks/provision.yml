@@ -3,7 +3,7 @@
 # Prerequisite: the host is bootstrapped (site.yml) — connects as the
 # automation user with sudo.
 #
-# Run:  ansible-playbook playbooks/provision.yml --ask-vault-pass
+# Run:  ansible-playbook playbooks/provision.yml
 
 - name: Provision baseline packages and Docker
   hosts: lab

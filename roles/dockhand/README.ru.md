@@ -24,7 +24,7 @@
 | `dockhand_encryption_key` | _(обязательна, OpenBao `infra/dockhand`)_ | Base64 AES-256 ключ (44 символа); расшифровывает сохранённые креды — другой ключ не вернёт доступ, а сделает базу нечитаемой |
 
 `dockhand_encryption_key` — base64 от 32 байт (`openssl rand -base64 32`),
-задаётся через ansible-vault.
+передаётся из OpenBao плейбуком playbooks/dockhand.yml.
 
 ## Зависимости
 

@@ -12,7 +12,7 @@ managed hosts don't need outbound access to Telegram.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `notify_telegram_bot_token` | `{{ telegram_bot_token }}` | Bot API token (provide via ansible-vault) |
+| `notify_telegram_bot_token` | `{{ telegram_bot_token }}` | Bot API token — callers pass it from OpenBao `infra/telegram` |
 | `notify_telegram_chat_id` | `{{ telegram_chat_id }}` | Target chat id |
 | `notify_telegram_message_thread_id` | `""` | Forum topic id (`message_thread_id`); empty = General topic |
 | `notify_telegram_silent` | `false` | Send without sound (`disable_notification`); message still appears |

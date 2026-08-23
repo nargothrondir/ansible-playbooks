@@ -44,10 +44,6 @@
 #   openbao_addr      group_vars/all — http://openbao:8200
 #   openbao_role_id   group_vars/all — not a secret
 #   OPENBAO_SECRET_ID a Semaphore Variable Group secret of type `env`
-#
-# The ansible-vault files remain the cold fallback until backups are real
-# (#7), so a playbook switched to this should keep working if the old variable
-# is still defined — switch one consumer at a time and verify.
 
 - name: Assert both halves of the AppRole credential are present
   ansible.builtin.assert:

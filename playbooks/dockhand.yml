@@ -2,8 +2,8 @@
 # Deploy Dockhand (Docker management UI) on the control node.
 #
 # The encryption key comes from OpenBao — infra/dockhand, field encryption_key.
-# The ansible-vault entry stays as the cold copy until backups are real (#7);
-# nothing here reads it any more.
+# Nothing in this fleet reads ansible-vault any more — the encrypted files were
+# retired once OpenBao had proven backups (#7).
 #
 # THAT KEY IS NOT A PASSWORD. It decrypts what Dockhand has stored, so a
 # different one does not restore access — it produces a Dockhand that cannot
@@ -15,7 +15,7 @@
 #
 #   cd /opt/ansible-playbooks
 #   read -rs OPENBAO_SECRET_ID && export OPENBAO_SECRET_ID
-#   ansible-playbook -c local --ask-vault-pass playbooks/dockhand.yml \
+#   ansible-playbook -c local playbooks/dockhand.yml \
 #     -e openbao_addr=http://127.0.0.1:8200
 #
 # From a Semaphore template the openbao_addr override is wrong and must be

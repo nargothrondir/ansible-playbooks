@@ -196,9 +196,11 @@ The opinionated choices an agent cannot infer:
 
 ## 7. Security
 
-- No hardcoded secrets or plain-text credentials in any artifact.
-  `ansible-vault` for secrets stored in the repo; HashiCorp Vault for runtime
-  secrets.
+- No hardcoded secrets or plain-text credentials in any artifact. **Every
+  secret lives in OpenBao**, read at run time through the AppRole — there is no
+  second store and no encrypted file in any repository. A value that is not a
+  secret (an address, a domain, a public key) belongs in plain group_vars:
+  putting it in the store costs a round trip and buys nothing.
 - `no_log: true` on any task handling credentials (passwords, tokens, API
   keys, private keys).
 

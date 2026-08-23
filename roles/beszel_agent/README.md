@@ -35,7 +35,7 @@ systemd service** (not Docker), adopting the layout of Beszel's own installer
 | `beszel_agent_token` | `""` | Per-node token. Left empty — filled by auto-registration (or set it yourself if disabled). |
 | `beszel_agent_register` | `true` | Register the node in the hub via the API; fetches key/owner and issues the token. |
 | `beszel_agent_admin_email` | `vault_beszel_admin_email` | Hub PocketBase **superuser** email (registration). |
-| `beszel_agent_admin_password` | `vault_beszel_admin_password` | Hub superuser password — **ansible-vault**. |
+| `beszel_agent_admin_password` | `""` | Hub superuser password — from OpenBao `infra/beszel`, supplied by the playbook. |
 | `beszel_agent_owner_email` | `""` | Dashboard owner of the systems; empty = the sole/first user. |
 | `beszel_agent_system_name` | `{{ inventory_hostname }}` | System name in the hub. |
 | `beszel_agent_system_host` | `{{ inventory_hostname }}` | Display host (nominal for WebSocket). |
