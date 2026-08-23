@@ -18,10 +18,13 @@
 #   path "sys/policies/acl/hawser-write"       { capabilities = ["create", "update", "read"] }
 #   path "sys/policies/acl/ssh-sign"           { capabilities = ["create", "update", "read"] }
 #   path "sys/policies/acl/snapshot-read"      { capabilities = ["create", "update", "read"] }
+#   path "sys/policies/acl/ssh-sign-operator"  { capabilities = ["create", "update", "read"] }
 #   path "sys/auth"                            { capabilities = ["read", "list"] }
 #   path "sys/auth/approle"                    { capabilities = ["create", "update", "read", "sudo"] }
 #   path "auth/approle/role/semaphore"         { capabilities = ["create", "update", "read"] }
 #   path "auth/approle/role/semaphore/role-id" { capabilities = ["read"] }
+#   path "sys/auth/userpass"                   { capabilities = ["create", "update", "read", "sudo"] }
+#   path "auth/userpass/users/operator"        { capabilities = ["create", "update", "read"] }
 #   EOF
 #
 # Capture the token into the variable rather than printing it — `-field=token`
