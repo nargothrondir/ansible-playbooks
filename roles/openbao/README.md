@@ -70,6 +70,58 @@ image's directory, ownership included, so a path the image already declares
 directory, and the server — which runs as the unprivileged `openbao` user —
 dies with `failed to open bolt file: permission denied`.
 
+### The operator account: signing a certificate from a laptop
+
+Playbooks sign SSH certificates through Semaphore's AppRole. A person at a
+laptop needs that one call and none of the rest of that AppRole's reach, so
+`playbooks/openbao-setup.yml` maintains a separate identity for it:
+
+- policy `ssh-sign-operator` — a single path, `ssh/sign/fleet`. No secret is
+  readable with it, and it cannot mint host certificates.
+- auth method `userpass`, plus an account named by `openbao_operator_username`.
+
+Userpass rather than a second AppRole, for one reason. The certificate's Key ID
+is built from `token_display_name`, and every AppRole login reports that as the
+literal string `approle` — so a node's auth log records that *something* signed
+in, not who. With userpass the same line names the account.
+
+**The playbook does not create the account.** Creating one requires a password,
+and yours must not travel through a playbook, a log, or this repository. So
+ownership splits: you own the password, the playbook owns the privileges.
+
+Create it once, on the panel. The prompt waits silently — nothing echoes while
+you type:
+
+```bash
+read -rs -p 'new password: ' P && echo && printf '%s' "$P" | docker exec -i openbao bao write auth/userpass/users/operator password=- && unset P
+```
+
+Success prints `Success! Data written to: auth/userpass/users/operator`.
+
+Keep the passphrase under 72 bytes. bcrypt refuses longer input, and
+`updateUserPassword` hands that back as an internal error rather than a
+validation one, so the API answers 500 with nothing that names the cause (read
+at v2.6.2).
+
+The account is created with **no** policies, so it can do nothing whatever
+until the playbook grants its single one — there is no window in which it is
+over-privileged:
+
+```bash
+ansible-playbook playbooks/openbao-setup.yml -e ansible_connection=local
+```
+
+It ends with `Operator account operator exists, policy ssh-sign-operator`.
+
+Re-running stays safe for ever after: the handler applies a password only
+`if password != "" || passwordHash != ""`, so an update that omits one leaves
+the stored hash untouched.
+
+**None of this grants network access.** The API is published on the panel's
+loopback, so the account is usable from the panel and nowhere else. Reaching it
+from a laptop is a separate decision about publishing the port on the mesh,
+which is also a decision about every other peer on that mesh.
+
 ### Break-glass: getting a root token back
 
 OpenBao **deprecated the unauthenticated root-generation endpoints in 2.5.3 and
