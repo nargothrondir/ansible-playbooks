@@ -76,7 +76,11 @@
     openbao_write_policy_name: hawser-write
     openbao_ssh_policy_name: ssh-sign
     openbao_snapshot_policy_name: snapshot-read
+    openbao_operator_policy_name: ssh-sign-operator
     openbao_approle_name: semaphore
+    # The human who signs certificates from a laptop. Overridable so the
+    # account is named after a person rather than a role.
+    openbao_operator_username: operator
 
     # Read-only, and scoped to the KV mount only. KV v2 serves reads from
     # <mount>/data/<path>; metadata is separate and needed for listing.
@@ -154,6 +158,23 @@
     openbao_snapshot_policy_hcl: |
       path "sys/storage/raft/snapshot" {
         capabilities = ["read"]
+      }
+
+    # The laptop's policy, and deliberately NOT ssh-sign: that one also mints
+    # host certificates, which a person never needs. This grants the single
+    # call behind `ssh <node>` and nothing else — no secret is readable with
+    # it, so it is safe to hold on a machine that leaves the house.
+    #
+    # It exists to be attached to a userpass account rather than an AppRole.
+    # The reason is the certificate's Key ID: it is built from
+    # token_display_name, which is the literal string "approle" for every
+    # AppRole login, so a node's auth log records that SOMETHING signed in and
+    # not who. With userpass the same line names the account. That is not an
+    # audit device (#165 stays open) — it is one identity recovered in the one
+    # place a node keeps a record of its own accord.
+    openbao_operator_policy_hcl: |
+      path "ssh/sign/fleet" {
+        capabilities = ["create", "update"]
       }
 
     # The lookup runs on the CONTROLLER, so this picks up the operator's shell.
@@ -444,6 +465,123 @@
       tags:
         - config
 
+    - name: Fetch the operator signing policy, if any
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/policies/acl/{{ openbao_operator_policy_name }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200, 404]
+      register: _operator_policy
+      check_mode: false
+      tags:
+        - config
+
+    - name: Determine whether the operator signing policy needs writing
+      ansible.builtin.set_fact:
+        _need_operator_policy: >-
+          {{ _operator_policy.status == 404
+             or (_operator_policy.json.data.policy | default(''))
+                != openbao_operator_policy_hcl }}
+      tags:
+        - config
+
+    - name: Write the operator signing policy
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/policies/acl/{{ openbao_operator_policy_name }}"
+        method: PUT
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body:
+          policy: "{{ openbao_operator_policy_hcl }}"
+        status_code: [200, 204]
+      no_log: true
+      changed_when: _need_operator_policy | bool
+      when: _need_operator_policy | bool
+      tags:
+        - config
+
+    # Reuses the _auth snapshot taken before AppRole was enabled: each method is
+    # checked against its own key, so a stale entry for one cannot affect the
+    # other.
+    - name: Determine whether userpass auth is missing
+      ansible.builtin.set_fact:
+        _need_userpass: >-
+          {{ 'userpass/'
+             not in (_auth.json.data | default(_auth.json, true)).keys() | list }}
+      tags:
+        - config
+
+    - name: Enable the userpass auth method
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/sys/auth/userpass"
+        method: POST
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body:
+          type: userpass
+        status_code: [200, 204]
+      no_log: true
+      changed_when: _need_userpass | bool
+      when: _need_userpass | bool
+      tags:
+        - config
+
+    # The account itself is NOT created here, and that is the point: creating it
+    # requires a password, and the operator's password must never pass through a
+    # playbook, a log or this repository. So the split is by who owns the value —
+    # the person owns the password, the playbook owns the privileges.
+    #
+    # The split is safe because of what the handler does (path_users.go, v2.6.2):
+    # the password is validated only `if req.Operation == logical.CreateOperation`,
+    # and applied only `if password != "" || passwordHash != ""`. An update that
+    # omits it leaves the stored hash untouched. So this can rewrite the rights of
+    # an existing account for ever without knowing how to log into it.
+    - name: Fetch the operator account, if any
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/auth/userpass/users/{{ openbao_operator_username }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200, 404]
+      register: _operator_user
+      check_mode: false
+      tags:
+        - config
+
+    # Seconds, not "8h", because that is what the read returns — comparing the
+    # written spelling against the rendered one is how the sshd_config assert
+    # went green on a value it had never checked.
+    #
+    # A working day per password entry. The token is worth one thing (ask for a
+    # certificate), and the certificate it asks for lives an hour, so a stolen
+    # token buys an hour of access at a time and nothing that outlives it.
+    - name: Determine whether the operator account's rights need updating
+      ansible.builtin.set_fact:
+        _need_operator_rights: >-
+          {{ _operator_user.status == 200
+             and ((_operator_user.json.data.token_policies | default([]) | sort)
+                  != [openbao_operator_policy_name]
+                  or (_operator_user.json.data.token_ttl | default(0) | int) != 28800
+                  or (_operator_user.json.data.token_max_ttl | default(0) | int) != 43200) }}
+      tags:
+        - config
+
+    - name: Set the operator account's rights, leaving its password untouched
+      ansible.builtin.uri:
+        url: "{{ openbao_api }}/v1/auth/userpass/users/{{ openbao_operator_username }}"
+        method: POST
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body:
+          token_policies: ["{{ openbao_operator_policy_name }}"]
+          token_ttl: 28800
+          token_max_ttl: 43200
+        status_code: [200, 204]
+      no_log: true
+      changed_when: _need_operator_rights | bool
+      when: _need_operator_rights | bool
+      tags:
+        - config
+
     # role_id is NOT a secret (#2): it identifies the role, and authentication
     # additionally requires the secret_id. Printing it is intended — it belongs
     # in the inventory.
@@ -471,5 +609,25 @@
           - "Recovering root needs openbao_allow_root_generation=true, an apply, an unseal, generate-root, then the same again to turn it off — see the role README."
           - "BEFORE revoking root: OpenBao DISABLES generate-root by default since 2.5.3, so recovery is NOT one command."
           - "Then copy the secret VALUES into KV yourself: infra/telegram, infra/netbird, infra/remnawave, infra/semaphore, infra/beszel, infra/crowdsec, infra/hawser"
+      tags:
+        - debug
+
+    # The account is the one thing here a playbook cannot finish, so its state
+    # is invisible unless it is said out loud. Reported every run, not only when
+    # missing: "the account exists with these rights" is the answer to the
+    # question this playbook is run to settle.
+    - name: Report the operator account
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            ('Operator account ' ~ openbao_operator_username ~ ' exists, policy '
+             ~ openbao_operator_policy_name ~ ' — it can ask for an SSH certificate and nothing else.')
+            if _operator_user.status == 200
+            else ('Operator account ' ~ openbao_operator_username ~ ' does NOT exist. Create it with a password '
+                  ~ 'only you know, then re-run this playbook to grant its rights: '
+                  ~ 'read -rs -p "new password: " P && echo && printf %s "$P" | '
+                  ~ 'docker exec -i openbao bao write auth/userpass/users/' ~ openbao_operator_username
+                  ~ ' password=- && unset P')
+          }}
       tags:
         - debug
