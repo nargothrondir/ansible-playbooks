@@ -1,6 +1,6 @@
 ---
 # Semaphore container image (pin a specific release).
-semaphore_image: "semaphoreui/semaphore:v2.19.8"
+semaphore_image: "semaphoreui/semaphore:v2.19.12"
 
 # Directory on the control node holding the compose file. Persistent data lives
 # in Docker named volumes (semaphore_data/config/tmp), not here.

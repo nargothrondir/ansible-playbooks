@@ -15,7 +15,7 @@
 
 | Переменная | По умолчанию | Описание |
 |------------|--------------|----------|
-| `semaphore_image` | `semaphoreui/semaphore:v2.19.8` | Закреплённый образ |
+| `semaphore_image` | `semaphoreui/semaphore:v2.19.12` | Закреплённый образ |
 | `semaphore_data_dir` | `/opt/semaphore` | Каталог compose-файла (данные — в именованных томах) |
 | `semaphore_bind` | `127.0.0.1:3000` | Хост-привязка публикуемого порта |
 | `semaphore_internal_port` | `3000` | Порт контейнера |

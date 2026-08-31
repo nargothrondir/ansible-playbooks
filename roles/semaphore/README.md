@@ -15,7 +15,7 @@ Requires Docker with the Compose v2 plugin on the target host.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `semaphore_image` | `semaphoreui/semaphore:v2.19.8` | Pinned container image |
+| `semaphore_image` | `semaphoreui/semaphore:v2.19.12` | Pinned container image |
 | `semaphore_data_dir` | `/opt/semaphore` | Dir holding the compose file (data lives in named volumes) |
 | `semaphore_bind` | `127.0.0.1:3000` | Host bind for the published port |
 | `semaphore_internal_port` | `3000` | Container port |
