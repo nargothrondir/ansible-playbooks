@@ -1,6 +1,6 @@
 ---
 # Pinned Dockhand image.
-dockhand_image: "fnsys/dockhand:v1.0.43"
+dockhand_image: "fnsys/dockhand:v1.0.46"
 dockhand_container_name: dockhand
 dockhand_restart_policy: unless-stopped
 
