@@ -1,4 +1,23 @@
 ---
+- name: Install sudo before configuring its policy
+  ansible.builtin.package:
+    name: sudo
+    state: present
+  when: bootstrap_passwordless_sudo
+  tags:
+    - config
+
+- name: Ensure the sudoers drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/sudoers.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  when: bootstrap_passwordless_sudo
+  tags:
+    - config
+
 - name: Grant passwordless sudo to automation user
   ansible.builtin.template:
     src: ansible-sudoers.j2

@@ -8,6 +8,9 @@ First-contact provisioning for a freshly created server. Connects as `root`
 (SSH key) and creates the Ansible automation user as **key-only** (its password
 is locked) with passwordless sudo.
 
+The role installs `sudo` itself, so it also works on minimal provider images
+that omit `/etc/sudoers.d`.
+
 The role does **not** harden SSH (e.g. disable root login). That step is
 intentionally deferred until you decide to lock it down.
 
