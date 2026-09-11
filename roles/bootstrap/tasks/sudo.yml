@@ -1,4 +1,14 @@
 ---
+- name: Refresh APT metadata before installing sudo
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 0
+  when:
+    - bootstrap_passwordless_sudo
+    - ansible_facts.os_family == 'Debian'
+  tags:
+    - config
+
 - name: Install sudo before configuring its policy
   ansible.builtin.package:
     name: sudo
