@@ -66,7 +66,7 @@ already exists.
 ## Retiring passwords
 
 The role's third optional job, off unless `ssh_hardening_disable_password_auth`
-is true. It writes `/etc/ssh/sshd_config.d/30-ansible-auth.conf` with three
+is true. It writes `/etc/ssh/sshd_config.d/00-ansible-auth.conf` with three
 directives and no more.
 
 `KbdInteractiveAuthentication no` is not redundant beside

@@ -68,7 +68,7 @@ Drop-in явно перечисляет и `Port 22`: первая директ�
 
 Третья необязательная задача роли, выключенная, пока
 `ssh_hardening_disable_password_auth` не поднят. Пишет
-`/etc/ssh/sshd_config.d/30-ansible-auth.conf` — три директивы и больше ничего.
+`/etc/ssh/sshd_config.d/00-ansible-auth.conf` — три директивы и больше ничего.
 
 `KbdInteractiveAuthentication no` рядом с `PasswordAuthentication no` не
 избыточен. С одним только вторым PAM продолжает принимать пароль через

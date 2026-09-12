@@ -111,10 +111,24 @@
 - name: Retire password authentication
   ansible.builtin.template:
     src: auth.conf.j2
-    dest: /etc/ssh/sshd_config.d/30-ansible-auth.conf
+    # OpenSSH uses the FIRST value it reads for these directives. Provider
+    # images commonly install a cloud-init drop-in that explicitly enables
+    # passwords, so this must sort before it rather than merely before our CA
+    # and host-certificate snippets.
+    dest: /etc/ssh/sshd_config.d/00-ansible-auth.conf
     owner: root
     group: root
     mode: "0644"
+  when: ssh_hardening_disable_password_auth | bool
+  notify: "reload sshd"
+  tags:
+    - config
+    - ssh
+
+- name: Remove the superseded password-authentication drop-in
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d/30-ansible-auth.conf
+    state: absent
   when: ssh_hardening_disable_password_auth | bool
   notify: "reload sshd"
   tags:
@@ -341,7 +355,7 @@
           | join('; ') }}],
       but this run asked for passwords off and PermitRootLogin
       {{ ssh_hardening_permit_root_login }}. The drop-in at
-      /etc/ssh/sshd_config.d/30-ansible-auth.conf is being ignored, or an
+      /etc/ssh/sshd_config.d/00-ansible-auth.conf is being ignored, or a
       earlier one overrides it — sshd takes the FIRST value it sees for these
       keywords, so check /etc/ssh/sshd_config for a setting above its Include
       line and for drop-ins sorting before 30-. Nothing is locked out; the host

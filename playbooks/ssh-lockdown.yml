@@ -31,7 +31,7 @@
 # opposite of ssh-ca-trust.yml, and the reason is that a lockdown needs no
 # secret — it removes credentials rather than installing one.
 #
-# Undoing it: delete /etc/ssh/sshd_config.d/30-ansible-auth.conf and reload
+# Undoing it: delete /etc/ssh/sshd_config.d/00-ansible-auth.conf and reload
 # sshd. Reaching the host to do that is the whole problem, so verify a key login
 # from a second terminal BEFORE closing the one you have open.
 
