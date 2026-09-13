@@ -50,7 +50,20 @@
     patterns:
       - "*.list"
       - "*.sources"
-    contains: '(deb|security)\.debian\.org'
+    # The leading .* is load-bearing. find's contains applies re.MATCH to each
+    # line, not re.search (lib/ansible/modules/find.py, contentfilter), so a
+    # pattern without it only matches an archive URL at the very start of a
+    # line -- which a `deb http://...` entry never is. Measured on ru-1: the
+    # unanchored form matched none of default.list, security.list or
+    # updates.list, and this filter had therefore never selected a file since
+    # the role was written. It looked like it worked because most images put
+    # their archives in /etc/apt/sources.list, which is handled by the stat
+    # above instead.
+    #
+    # Written to match under BOTH re.match and re.search rather than switching
+    # to read_whole_file: which of the two the module uses is an implementation
+    # detail this role should not depend on.
+    contains: '.*(deb|security)\.debian\.org'
     hidden: true
   register: apt_sources_found
   changed_when: false
@@ -134,10 +147,29 @@
   tags:
     - config
 
-- name: Read back what apt now considers a source # noqa: command-instead-of-module — the apt module installs and updates; it cannot report which archives apt will fetch, and that question is the whole point of this check
-  ansible.builtin.command: apt-get indextargets --format '$(URI)'
+# SOURCESENTRY is what turns this check from an alarm into a diagnosis: it
+# carries the file and line each target came from, so a stray archive names its
+# own source instead of leaving the operator to hunt for it. It is absent from
+# acquire-additional-files.md but present in IndexTarget::OptionKeys
+# (apt-pkg/indexfile.h) — read there, because the list in the documentation is
+# not the list apt implements.
+- name: Read back what apt now considers a source, and where each entry comes from # noqa: command-instead-of-module — the apt module installs and updates; it cannot report which archives apt will fetch, and that question is the whole point of this check
+  ansible.builtin.command: apt-get indextargets --format '$(URI) from $(SOURCESENTRY)'
   register: apt_sources_effective
   changed_when: false
+  tags:
+    - config
+
+# Computed once rather than repeated in both the condition and the message: the
+# two must describe the same set, and two copies of one expression are two
+# chances for them to stop doing so.
+- name: Collect the Debian archives this role did not declare
+  ansible.builtin.set_fact:
+    _apt_sources_foreign: >-
+      {{ apt_sources_effective.stdout_lines | select('search', 'debian\.org')
+         | reject('search', apt_sources_uri | regex_escape)
+         | reject('search', apt_sources_security_uri | regex_escape)
+         | list }}
   tags:
     - config
 
@@ -147,18 +179,16 @@
 - name: Assert apt fetches only the archives this role declares
   ansible.builtin.assert:
     that:
-      - apt_sources_effective.stdout_lines | select('search', 'debian\.org')
-        | reject('search', apt_sources_uri | regex_escape)
-        | reject('search', apt_sources_security_uri | regex_escape)
-        | list | length == 0
+      - _apt_sources_foreign | length == 0
     success_msg: "Debian archives come only from the declared URIs"
     fail_msg: >-
-      apt still reads a Debian archive this role did not declare:
-      {{ apt_sources_effective.stdout_lines | select('search', 'debian\.org')
-         | reject('search', apt_sources_uri | regex_escape)
-         | reject('search', apt_sources_security_uri | regex_escape)
-         | list | join(', ') }}.
-      Something outside /etc/apt/sources.list.d is adding it.
+      apt still reads a Debian archive this role did not declare, and each line
+      below ends with the file and line that declares it:
+      {{ _apt_sources_foreign | join('; ') }}.
+      If that path is under /etc/apt/sources.list.d, this role found no Debian
+      archive URI inside it — widen the match. If it is anywhere else, apt is
+      being pointed at a source tree this role does not manage; check
+      Dir::Etc::sourcelist and Dir::Etc::sourceparts in /etc/apt/apt.conf.d.
   tags:
     - config
 
