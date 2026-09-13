@@ -1,0 +1,250 @@
+---
+# One release step: _debian_release_step is the major version being moved to.
+# The order below follows Debian's release notes, with the checks that can stop
+# a run placed BEFORE anything is changed wherever the information allows.
+
+# Release notes: "This procedure assumes your system has been updated to the
+# latest point release". Under async because on a live node this alone can be a
+# long transaction, and because sshd may restart inside it.
+- name: Bring the current release fully up to date before moving to Debian {{ _debian_release_step }}
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: dist
+  environment:
+    NEEDRESTART_MODE: l
+  async: "{{ debian_release_async_timeout }}"
+  poll: "{{ debian_release_async_poll }}"
+  tags:
+    - install
+
+# Preconditions the release notes name for THIS step (vars/main.yml). Checked
+# after the update above, which is what normally satisfies them.
+- name: Read the installed version of each package this step has a precondition on
+  ansible.builtin.command:
+    argv:
+      - dpkg-query
+      - --show
+      - --showformat=${Version}
+      - "{{ item.key }}"
+  loop: "{{ _debian_release_known[_debian_release_step].min_versions | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: _debian_release_installed
+  changed_when: false
+  # 1 means not installed, which the precondition does not apply to.
+  failed_when: _debian_release_installed.rc not in [0, 1]
+  check_mode: false
+  tags:
+    - install
+
+- name: Compare each against the minimum this step requires
+  ansible.builtin.command:
+    argv:
+      - dpkg
+      - --compare-versions
+      - "{{ item.stdout }}"
+      - ge
+      - "{{ item.item.value }}"
+  loop: "{{ _debian_release_installed.results | default([]) | selectattr('rc', 'equalto', 0) | list }}"
+  loop_control:
+    label: "{{ item.item.key }} {{ item.stdout }}"
+  register: _debian_release_compared
+  changed_when: false
+  failed_when: _debian_release_compared.rc not in [0, 1]
+  check_mode: false
+  tags:
+    - install
+
+- name: Assert every precondition of this step holds
+  ansible.builtin.assert:
+    that:
+      - _debian_release_compared.results | default([]) | selectattr('rc', 'ne', 0) | list | length == 0
+    fail_msg: >-
+      Debian {{ _debian_release_step }} needs
+      {% for r in _debian_release_compared.results | default([]) | selectattr('rc', 'ne', 0) %}{{ r.item.item.key }} >= {{ r.item.item.value }} (installed {{ r.item.stdout }}){{ ', ' if not loop.last }}{% endfor %}
+      before the step starts. The update of the current release should have
+      provided it; if it did not, the host's sources are not reaching that
+      release's -updates or -security suite. Nothing has been moved yet.
+  tags:
+    - install
+
+# BEFORE the sources change, not after the upgrade. Pinned first, an interrupted
+# run is safe to reboot at any point: after the full upgrade /etc/debian_version
+# already names the new release, so a re-run would skip this step entirely and
+# never reach a pin placed later.
+#
+# Physical interfaces only: the facts give `module` only to an interface with a
+# device/driver/module link in sysfs, which veth, bridges, WireGuard and
+# loopback do not have. Pinned by MAC, and named 10- so it is the first .link
+# that matches -- systemd applies exactly one, and Name= in a file with no
+# NamePolicy= takes effect.
+- name: Pin every physical interface to its current name
+  ansible.builtin.template:
+    src: pin-interface.link.j2
+    dest: "{{ debian_release_link_dir }}/10-debian-release-{{ item.device }}.link"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: >-
+    {{ ansible_facts['interfaces']
+       | map('replace', '-', '_')
+       | select('in', ansible_facts)
+       | map('extract', ansible_facts)
+       | selectattr('module', 'defined')
+       | selectattr('macaddress', 'defined')
+       | list }}
+  loop_control:
+    label: "{{ item.device }} {{ item.macaddress }}"
+  register: _debian_release_pins
+  when: debian_release_pin_interface_names | bool
+  tags:
+    - config
+
+# Unconditional on purpose: a stat costs nothing, and gating it on the pins as
+# well would be a second task running "when changed" for no benefit.
+- name: Check whether this host builds an initramfs
+  ansible.builtin.stat:
+    path: /usr/sbin/update-initramfs
+  register: _debian_release_initramfs_tool
+  tags:
+    - config
+
+# Debian's udev initramfs hook copies every *.link from /etc/systemd/network
+# into the image, so names are decided in early boot too. The new release's
+# kernel gets a fresh image during the upgrade, after the pins exist; this makes
+# the images of the kernels already installed agree with them as well.
+# Inline rather than a handler: handlers run at the end of the play, and the
+# reboot this must precede is a few tasks below.
+- name: Rebuild the initramfs so early boot names interfaces the same way # noqa: no-handler — must happen before the reboot at the end of this step, and handlers only run at the end of the play
+  ansible.builtin.command: update-initramfs -u -k all
+  changed_when: true # spec-ok: update-initramfs rewrites every image each time it runs, and it only runs when a pin file changed
+  when:
+    - _debian_release_pins is changed
+    - _debian_release_initramfs_tool.stat.exists
+  tags:
+    - config
+
+- name: Point the Debian sources at the next release, {{ _debian_release_known[_debian_release_step].codename }}
+  ansible.builtin.include_role:
+    name: apt_sources
+    apply:
+      tags:
+        - config
+  vars:
+    apt_sources_suite: "{{ _debian_release_known[_debian_release_step].codename }}"
+  tags:
+    - config
+
+- name: Refresh the package lists from the sources for Debian {{ _debian_release_step }}
+  ansible.builtin.apt:
+    update_cache: true
+  tags:
+    - install
+
+# The release notes' first stage: upgrade what can move without installing
+# anything new or removing anything, so the full upgrade that follows has fewer
+# conflicts to resolve. apt-get's `upgrade` does exactly that by default; the
+# apt module cannot express it -- every one of its upgrade modes passes
+# --with-new-pkgs or runs dist-upgrade -- hence the command, with the same
+# non-interactive environment and dpkg options the module would use.
+- name: Upgrade what can move to the next release without new packages or removals # noqa: command-instead-of-module — the apt module's upgrade modes all add --with-new-pkgs or run dist-upgrade, so the minimal stage the release notes prescribe cannot be expressed with it
+  ansible.builtin.command:
+    argv:
+      - apt-get
+      - upgrade
+      - --assume-yes
+      - -o
+      - "Dpkg::Options::=--force-confdef"
+      - -o
+      - "Dpkg::Options::=--force-confold"
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+    DEBIAN_PRIORITY: critical
+    NEEDRESTART_MODE: l
+    LANG: C
+    LC_ALL: C
+  async: "{{ debian_release_async_timeout }}"
+  poll: "{{ debian_release_async_poll }}"
+  register: _debian_release_minimal
+  changed_when: >-
+    _debian_release_minimal.stdout is not
+    search('^0 upgraded, 0 newly installed, 0 to remove', multiline=True)
+  tags:
+    - install
+
+# The minimal stage reduces removals; this refuses the rest. `apt-get -y` aborts
+# on its own only for ESSENTIAL packages -- anything else it removes silently --
+# so the plan is read first and a non-empty removal list stops the run with the
+# list in hand. The simulation and the upgrade below both run dist-upgrade, so
+# they are the same resolver on the same state.
+- name: Simulate the full upgrade to the next release # noqa: command-instead-of-module — the apt module cannot report which packages a dist-upgrade would remove without performing it
+  ansible.builtin.command:
+    argv:
+      - apt-get
+      - --simulate
+      - dist-upgrade
+  environment:
+    LANG: C
+    LC_ALL: C
+  register: _debian_release_simulated
+  changed_when: false
+  check_mode: false
+  tags:
+    - install
+
+# The package name is the second word of a `Remv <package> [<version>]` line.
+# Taken with split rather than regex_replace: Jinja decodes escape sequences in
+# string literals, so a '\1' backreference arrives as the character U+0001.
+- name: Assert the full upgrade removes nothing
+  ansible.builtin.assert:
+    that:
+      - _debian_release_simulated.stdout_lines | select('match', '^Remv ') | list | length == 0
+    fail_msg: >-
+      The full upgrade to Debian {{ _debian_release_step }} would remove:
+      {{ _debian_release_simulated.stdout_lines | select('match', '^Remv ')
+         | map('split') | map(attribute='1') | join(', ') }}.
+      apt removes non-essential packages without asking, so the run stops here.
+      The host is on the new release's sources with the minimal stage applied,
+      which is a consistent state: decide on the host whether those removals
+      are acceptable, then run again.
+  tags:
+    - install
+
+- name: Complete the upgrade to Debian {{ _debian_release_step }}
+  ansible.builtin.apt:
+    upgrade: dist
+  environment:
+    NEEDRESTART_MODE: l
+  async: "{{ debian_release_async_timeout }}"
+  poll: "{{ debian_release_async_poll }}"
+  tags:
+    - install
+
+# Release notes: "You will have to do a kernel upgrade when upgrading ..., so a
+# reboot will be necessary."
+- name: Reboot into Debian {{ _debian_release_step }}
+  ansible.builtin.reboot:
+    reboot_timeout: "{{ debian_release_reboot_timeout }}"
+  tags:
+    - service
+
+# Every fact read so far describes the release the host just left, including
+# distribution_release, from which later roles derive their repository suites.
+- name: Re-read the host facts after the reboot
+  ansible.builtin.setup:
+  tags:
+    - service
+
+- name: Assert the host is now on Debian {{ _debian_release_step }}
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution_major_version'] == _debian_release_step
+    fail_msg: >-
+      After upgrading and rebooting, the host reports Debian
+      {{ ansible_facts['distribution_major_version'] }}
+      ({{ ansible_facts['distribution_release'] }}), not {{ _debian_release_step }}.
+      The upgrade transactions reported success, so check /etc/debian_version
+      and apt's history in /var/log/apt/history.log on the host.
+  when: not ansible_check_mode
+  tags:
+    - service

@@ -29,6 +29,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 |------|---------|------------|
 | [bootstrap](roles/bootstrap/README.md) | Create the key-only `ansible` automation user and grant passwordless sudo | — |
 | [apt_sources](roles/apt_sources/README.md) | One canonical deb822 source list for the Debian archive, replacing whatever the provider image shipped (Debian only) | — |
+| [debian_release](roles/debian_release/README.md) | Move a Debian host to a newer major release one release at a time, following the release notes, with checks before anything changes (Debian only) | — |
 | [dns](roles/dns/README.md) | Encrypted DNS for the host's own lookups: systemd-resolved + DoT, interface nameservers removed so it takes effect | — |
 | [common](roles/common/README.md) | Install baseline packages (sudo, curl, wget, ...) | — |
 | [docker](roles/docker/README.md) | Docker Engine + Compose plugin via the official repo | — |
@@ -60,7 +61,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | [playbooks/common.yml](playbooks/common.yml) | common (re-apply the baseline) | `common_target` (default: lab) |
 | [playbooks/crowdsec.yml](playbooks/crowdsec.yml) | crowdsec | fleet (except panel) |
 | [playbooks/beszel.yml](playbooks/beszel.yml) | beszel_agent | fleet (except panel) |
-| [playbooks/provision-node.yml](playbooks/provision-node.yml) | bootstrap, upgrade, ssh_hardening, common, dns, netbird, docker, xanmod, hawser, crowdsec, ufw, beszel_agent + panel API | (survey) |
+| [playbooks/provision-node.yml](playbooks/provision-node.yml) | bootstrap, apt_sources, upgrade, debian_release, ssh_hardening, common, dns, netbird, docker, xanmod, hawser, crowdsec, ufw, beszel_agent, notify_telegram + panel API | (survey) |
 | [playbooks/new-profile.yml](playbooks/new-profile.yml) | — (panel API call) | control |
 | [playbooks/new-node.yml](playbooks/new-node.yml) | — (panel API call) | control |
 | [playbooks/dns-record.yml](playbooks/dns-record.yml) | — (Cloudflare API; imported by provision-node.yml, or standalone) | `dns_target` (default: controller) |

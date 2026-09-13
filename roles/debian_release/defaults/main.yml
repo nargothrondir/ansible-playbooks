@@ -1,0 +1,38 @@
+---
+# Debian major version this host should end up on, as a string ("13"). Empty
+# means the role does nothing at all, which is the default on purpose: this
+# replaces the operating system under a running host, and no routine run should
+# do that because a variable happened to be inherited.
+#
+# A host already at or above the target is left alone. A host more than one
+# release behind is moved one release at a time -- Debian supports upgrades
+# only from the immediately preceding release -- with a reboot and a full set of
+# checks between steps, so a failure leaves it on a consistent intermediate
+# release rather than halfway through a transition.
+#
+# Every release on the way must be listed in _debian_release_known
+# (vars/main.yml). A target the table does not know is refused.
+debian_release_target: ""
+
+# Minimum free space, in MiB, on / and on /var and /usr when those are separate
+# mounts. Deliberately a floor rather than apt's own estimate: the estimate is
+# printed in a format that changed between apt 2.6 (bookworm) and apt 3 (trixie),
+# and a check that silently stops parsing on the next release is worse than a
+# coarse one. apt still performs its own space checks on top of this.
+debian_release_min_free_mb: 2048
+
+# Upper bound, in seconds, for each apt transaction run under async. Generous
+# on purpose: when it expires, async_wrapper sends SIGKILL to the whole process
+# group, and killing dpkg halfway through unpacking breaks the system far more
+# thoroughly than any slow mirror. Seconds between checks on the job.
+debian_release_async_timeout: 3600
+debian_release_async_poll: 15
+
+# Seconds to wait for the host to come back from the reboot that ends each step.
+debian_release_reboot_timeout: 900
+
+# Pin every physical interface to its current name with a systemd .link file
+# before anything is upgraded. See the README: a renamed interface after the
+# reboot is a host with no network, and on a VPS nothing reaches it again.
+debian_release_pin_interface_names: true
+debian_release_link_dir: /etc/systemd/network

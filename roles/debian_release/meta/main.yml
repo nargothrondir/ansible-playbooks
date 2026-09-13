@@ -1,0 +1,17 @@
+---
+galaxy_info:
+  role_name: debian_release
+  author: nargothrondir
+  description: >
+    Move a Debian host to a newer major release one release at a time, following
+    the procedure in Debian's release notes, with checks that stop before the
+    host is changed rather than after it is broken.
+  min_ansible_version: "2.15"
+  license: MIT
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+
+dependencies: []

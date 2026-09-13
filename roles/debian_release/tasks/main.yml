@@ -1,0 +1,138 @@
+---
+- name: Assert this is Debian
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Debian'
+      - ansible_facts['distribution_major_version'] | int > 0
+    fail_msg: >-
+      debian_release moves a host between Debian releases using Debian's own
+      archive and codenames. This host reports
+      {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }},
+      which is either not Debian or has no numeric major version (testing and
+      sid have none). Ubuntu and derivatives have their own release-upgrade
+      tooling and are not handled here.
+  when: debian_release_target | string | length > 0
+  tags:
+    - install
+    - config
+
+# Debian supports an upgrade only from the release immediately before it, so a
+# host two releases behind passes through the one in between. range() yields
+# nothing when the host is already at or past the target, which is the whole
+# idempotency story: a host on the target release gets an empty list and every
+# task below is skipped.
+- name: Work out which releases this host must pass through
+  ansible.builtin.set_fact:
+    _debian_release_steps: >-
+      {{ range((ansible_facts['distribution_major_version'] | int) + 1,
+               (debian_release_target | int) + 1)
+         | map('string') | list }}
+  when: debian_release_target | string | length > 0
+  tags:
+    - install
+    - config
+
+# A release missing from the table is a release whose notes nobody has read for
+# this fleet. Refused as a whole, before the first step, rather than discovered
+# after the host has already moved part of the way.
+- name: Assert every release on the way is one this role knows
+  ansible.builtin.assert:
+    that:
+      - _debian_release_steps | reject('in', _debian_release_known) | list | length == 0
+    fail_msg: >-
+      Moving this host from Debian {{ ansible_facts['distribution_major_version'] }}
+      to {{ debian_release_target }} passes through
+      {{ _debian_release_steps | join(', ') }}, and
+      {{ _debian_release_steps | reject('in', _debian_release_known) | join(', ') }}
+      is not in _debian_release_known (roles/debian_release/vars/main.yml).
+      Read that release's notes, add its codename and any preconditions they
+      call for, then run again.
+  when: _debian_release_steps | default([]) | length > 0
+  tags:
+    - install
+    - config
+
+- name: Report that the host is already on the target release
+  ansible.builtin.debug:
+    msg: >-
+      Debian {{ ansible_facts['distribution_major_version'] }}
+      ({{ ansible_facts['distribution_release'] }}) is at or past the target
+      {{ debian_release_target }}; nothing to do.
+  when:
+    - debian_release_target | string | length > 0
+    - _debian_release_steps | default([]) | length == 0
+  tags:
+    - debug
+
+# The release notes ask for both before starting: a half-configured package
+# makes the resolver's plan unreliable, and a held package that the new release
+# needs to replace makes apt abort partway through.
+- name: Look for packages dpkg left half-installed
+  ansible.builtin.command: dpkg --audit
+  register: _debian_release_audit
+  changed_when: false
+  failed_when: _debian_release_audit.rc not in [0, 1]
+  check_mode: false
+  when: _debian_release_steps | default([]) | length > 0
+  tags:
+    - install
+
+- name: Look for held packages
+  ansible.builtin.command: apt-mark showhold
+  register: _debian_release_holds
+  changed_when: false
+  check_mode: false
+  when: _debian_release_steps | default([]) | length > 0
+  tags:
+    - install
+
+- name: Assert the package database is in a state an upgrade can start from
+  ansible.builtin.assert:
+    that:
+      - _debian_release_audit.stdout | trim | length == 0
+      - _debian_release_holds.stdout_lines | length == 0
+    fail_msg: >-
+      {{ ('dpkg --audit reports unfinished packages: '
+          ~ (_debian_release_audit.stdout | trim) ~ '. ')
+         if (_debian_release_audit.stdout | trim | length > 0) else '' }}
+      {{ ('Held packages: ' ~ (_debian_release_holds.stdout_lines | join(', '))
+          ~ '. A hold is a promise to update by hand; a release upgrade is where
+          that promise comes due, and apt aborts rather than break it. ')
+         if (_debian_release_holds.stdout_lines | length > 0) else '' }}
+      Resolve these on the host and run again. Nothing has been changed.
+  when: _debian_release_steps | default([]) | length > 0
+  tags:
+    - install
+
+# A floor rather than apt's own estimate -- see debian_release_min_free_mb.
+- name: Assert there is room for the upgrade
+  ansible.builtin.assert:
+    that:
+      - item.size_available >= (debian_release_min_free_mb | int) * 1048576
+    fail_msg: >-
+      {{ item.mount }} has {{ (item.size_available / 1048576) | int }} MiB free;
+      moving to a new release needs at least {{ debian_release_min_free_mb }}.
+      The release notes warn that running out partway leaves "an incomplete
+      upgrade that is difficult to recover from". Nothing has been changed.
+  loop: "{{ ansible_facts['mounts'] | selectattr('mount', 'in', ['/', '/usr', '/var']) | list }}"
+  loop_control:
+    label: "{{ item.mount }}"
+  when: _debian_release_steps | default([]) | length > 0
+  tags:
+    - install
+
+- name: Move the host one release at a time
+  ansible.builtin.include_tasks:
+    file: step.yml
+    apply:
+      tags:
+        - install
+        - config
+        - service
+  loop: "{{ _debian_release_steps | default([]) }}"
+  loop_control:
+    loop_var: _debian_release_step
+  tags:
+    - install
+    - config
+    - service

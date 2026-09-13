@@ -29,6 +29,7 @@
 |------|------------|------------|
 | [bootstrap](roles/bootstrap/README.ru.md) | Создаёт пользователя `ansible` (только по ключу) и выдаёт беспарольный sudo | — |
 | [apt_sources](roles/apt_sources/README.ru.md) | Один канонический deb822-файл источников архива Debian вместо того, что положил образ провайдера (только Debian) | — |
+| [debian_release](roles/debian_release/README.ru.md) | Переводит хост Debian на новый мажорный релиз по одному релизу за раз, по release notes, с проверками до любых изменений (только Debian) | — |
 | [dns](roles/dns/README.ru.md) | Шифрованный DNS для собственных запросов хоста: systemd-resolved + DoT, серверы интерфейса убраны, чтобы настройка действовала | — |
 | [common](roles/common/README.ru.md) | Установка базовых пакетов (sudo, curl, wget, ...) | — |
 | [docker](roles/docker/README.ru.md) | Docker Engine + Compose-плагин из официального репозитория | — |
@@ -60,7 +61,7 @@
 | [playbooks/common.yml](playbooks/common.yml) | common (повторное применение базовой роли) | `common_target` (по умолчанию: lab) |
 | [playbooks/crowdsec.yml](playbooks/crowdsec.yml) | crowdsec | fleet (кроме panel) |
 | [playbooks/beszel.yml](playbooks/beszel.yml) | beszel_agent | fleet (кроме panel) |
-| [playbooks/provision-node.yml](playbooks/provision-node.yml) | bootstrap, upgrade, ssh_hardening, common, dns, netbird, docker, xanmod, hawser, crowdsec, ufw, beszel_agent + API панели | (survey) |
+| [playbooks/provision-node.yml](playbooks/provision-node.yml) | bootstrap, apt_sources, upgrade, debian_release, ssh_hardening, common, dns, netbird, docker, xanmod, hawser, crowdsec, ufw, beszel_agent, notify_telegram + API панели | (survey) |
 | [playbooks/new-profile.yml](playbooks/new-profile.yml) | — (вызов API панели) | control |
 | [playbooks/new-node.yml](playbooks/new-node.yml) | — (вызов API панели) | control |
 | [playbooks/dns-record.yml](playbooks/dns-record.yml) | — (API Cloudflare; импортируется provision-node.yml или отдельно) | `dns_target` (по умолчанию: controller) |
