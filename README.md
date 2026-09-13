@@ -29,6 +29,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 |------|---------|------------|
 | [bootstrap](roles/bootstrap/README.md) | Create the key-only `ansible` automation user and grant passwordless sudo | — |
 | [apt_sources](roles/apt_sources/README.md) | One canonical deb822 source list for the Debian archive, replacing whatever the provider image shipped (Debian only) | — |
+| [debian_release](roles/debian_release/README.md) | Move a Debian host to a newer major release one release at a time, following the release notes, with checks before anything changes (Debian only) | — |
 | [dns](roles/dns/README.md) | Encrypted DNS for the host's own lookups: systemd-resolved + DoT, interface nameservers removed so it takes effect | — |
 | [common](roles/common/README.md) | Install baseline packages (sudo, curl, wget, ...) | — |
 | [docker](roles/docker/README.md) | Docker Engine + Compose plugin via the official repo | — |

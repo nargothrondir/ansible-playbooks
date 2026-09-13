@@ -29,6 +29,7 @@
 |------|------------|------------|
 | [bootstrap](roles/bootstrap/README.ru.md) | Создаёт пользователя `ansible` (только по ключу) и выдаёт беспарольный sudo | — |
 | [apt_sources](roles/apt_sources/README.ru.md) | Один канонический deb822-файл источников архива Debian вместо того, что положил образ провайдера (только Debian) | — |
+| [debian_release](roles/debian_release/README.ru.md) | Переводит хост Debian на новый мажорный релиз по одному релизу за раз, по release notes, с проверками до любых изменений (только Debian) | — |
 | [dns](roles/dns/README.ru.md) | Шифрованный DNS для собственных запросов хоста: systemd-resolved + DoT, серверы интерфейса убраны, чтобы настройка действовала | — |
 | [common](roles/common/README.ru.md) | Установка базовых пакетов (sudo, curl, wget, ...) | — |
 | [docker](roles/docker/README.ru.md) | Docker Engine + Compose-плагин из официального репозитория | — |

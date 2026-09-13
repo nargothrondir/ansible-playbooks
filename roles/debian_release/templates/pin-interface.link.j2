@@ -1,0 +1,16 @@
+{{ ansible_managed | comment }}
+{#
+  Keeps this interface's name across a move to a newer Debian release. A new
+  release can name a network interface differently (release notes, trixie
+  5.1.17), and an interface renamed away from what /etc/network/interfaces
+  expects leaves the host with no network after the reboot.
+
+  Matched by MAC only. Named 10- so it is the first .link that matches: systemd
+  applies exactly one file per device, and Name= takes effect in a file that
+  sets no NamePolicy=.
+#}
+[Match]
+MACAddress={{ item.macaddress }}
+
+[Link]
+Name={{ item.device }}

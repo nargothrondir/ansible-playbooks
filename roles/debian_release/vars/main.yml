@@ -1,0 +1,21 @@
+---
+# Every release this role is allowed to move a host to, keyed by major version.
+#
+# Adding an entry is a deliberate act, not bookkeeping: it is the statement "the
+# release notes for this release were read". Each release has its own chapter of
+# known issues, and anything in it that could strand a remote host belongs here
+# as a precondition before the entry is committed.
+#
+#   codename      suite name written into the Debian sources for this release
+#   min_versions  packages that must be at least this version BEFORE the step
+#                 starts, compared with dpkg --compare-versions; a package that
+#                 is not installed is not checked
+_debian_release_known:
+  "13":
+    codename: trixie
+    min_versions:
+      # Release notes 5.1.1: OpenSSH in bookworm can leave a remote system
+      # unreachable if an upgrade supervised over SSH is interrupted. Fixed in
+      # this bookworm update, which the step's first upgrade pulls in through
+      # bookworm-updates.
+      openssh-server: "1:9.2p1-2+deb12u7"
