@@ -50,7 +50,20 @@
     patterns:
       - "*.list"
       - "*.sources"
-    contains: '(deb|security)\.debian\.org'
+    # The leading .* is load-bearing. find's contains applies re.MATCH to each
+    # line, not re.search (lib/ansible/modules/find.py, contentfilter), so a
+    # pattern without it only matches an archive URL at the very start of a
+    # line -- which a `deb http://...` entry never is. Measured on ru-1: the
+    # unanchored form matched none of default.list, security.list or
+    # updates.list, and this filter had therefore never selected a file since
+    # the role was written. It looked like it worked because most images put
+    # their archives in /etc/apt/sources.list, which is handled by the stat
+    # above instead.
+    #
+    # Written to match under BOTH re.match and re.search rather than switching
+    # to read_whole_file: which of the two the module uses is an implementation
+    # detail this role should not depend on.
+    contains: '.*(deb|security)\.debian\.org'
     hidden: true
   register: apt_sources_found
   changed_when: false
