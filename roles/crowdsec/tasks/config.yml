@@ -147,11 +147,16 @@
   tags:
     - config
 
-# Last, because everything above is what makes it able to start at all.
+# Last, because everything above is what makes it able to start at all. Through
+# bouncer-service.yml, which fails with the journal and the nftables tables when
+# the bouncer does not come up, rather than with systemd's "see journalctl".
 - name: Ensure the firewall bouncer is enabled and running
-  ansible.builtin.systemd_service:
-    name: crowdsec-firewall-bouncer
-    state: started
-    enabled: true
+  ansible.builtin.include_tasks:
+    file: bouncer-service.yml
+    apply:
+      tags:
+        - service
+  vars:
+    _crowdsec_bouncer_state: started
   tags:
     - service

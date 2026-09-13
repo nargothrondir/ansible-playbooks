@@ -1,0 +1,77 @@
+---
+# Bring the firewall bouncer to _crowdsec_bouncer_state (started or restarted),
+# and when it does not end up active, fail with what the host says about why.
+#
+# Shared by the task that brings the bouncer up and the handler that restarts it
+# after its API key changes: those are the two moments it can fail, and they
+# need the same evidence. On a fresh trixie node the handler's restart failed
+# with nothing but "the control process exited with error code" -- and by then
+# password SSH was already off, so the journal that names the cause was out of
+# reach for the operator. It is fetched here instead, while the play still has a
+# way in.
+#
+# Why these two readings: the unit's ExecStartPre runs the bouncer with -t,
+# which parses the config, builds the LAPI client without touching the network,
+# and initialises the nftables backend (cmd/root.go). A config that started the
+# bouncer seconds earlier does not stop parsing, so a failure there is nftables
+# state -- the journal says which call failed, and the table list shows what
+# was already there.
+
+- name: Bring the CrowdSec firewall bouncer to the requested state
+  ansible.builtin.systemd_service:
+    name: crowdsec-firewall-bouncer
+    state: "{{ _crowdsec_bouncer_state }}"
+    enabled: true
+  register: _crowdsec_bouncer_service
+  # The module's own failure says only "see journalctl", which is exactly what
+  # the tasks below go and fetch. The outcome is judged by is-active instead.
+  failed_when: false
+  tags:
+    - service
+
+- name: Ask systemd whether the bouncer is active # noqa: command-instead-of-module — systemd_service reports what it attempted, not whether the unit reached active, and that is the question
+  ansible.builtin.command: systemctl is-active crowdsec-firewall-bouncer
+  register: _crowdsec_bouncer_active
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags:
+    - service
+
+- name: Collect the bouncer's journal from this boot
+  ansible.builtin.command: journalctl -u crowdsec-firewall-bouncer -b --no-pager -n 30
+  register: _crowdsec_bouncer_journal
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: _crowdsec_bouncer_active.stdout | trim != 'active'
+  tags:
+    - service
+
+- name: Collect the nftables tables present
+  ansible.builtin.command: nft list tables
+  register: _crowdsec_nft_tables
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: _crowdsec_bouncer_active.stdout | trim != 'active'
+  tags:
+    - service
+
+- name: Assert the firewall bouncer is active
+  ansible.builtin.assert:
+    that:
+      - _crowdsec_bouncer_active.stdout | trim == 'active'
+    success_msg: "crowdsec-firewall-bouncer is active"
+    fail_msg: >-
+      crowdsec-firewall-bouncer is {{ _crowdsec_bouncer_active.stdout | trim }}
+      after being {{ _crowdsec_bouncer_state }}
+      ({{ _crowdsec_bouncer_service.msg | default('the module reported no message') }}).
+      CrowdSec still detects attacks, but nothing it decides is enforced until
+      this runs. Its ExecStartPre (-t) parses the config, builds the LAPI client
+      and initialises nftables, so look first at nftables.
+      nftables tables: [{{ _crowdsec_nft_tables.stdout_lines | default([]) | join('; ') }}].
+      Last journal lines: {{ _crowdsec_bouncer_journal.stdout_lines | default([]) | join(' | ') }}
+  when: not ansible_check_mode
+  tags:
+    - service
