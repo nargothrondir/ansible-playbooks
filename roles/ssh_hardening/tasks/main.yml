@@ -314,6 +314,30 @@
     - config
     - ssh
 
+# sshd -T says which value won; it never says who else was in the room, and
+# that is the question every failure of the assert below has had to answer by
+# hand. Sorted, the paths also read in roughly the order sshd reads them, so the
+# first entry is usually the one that won.
+#
+# Matched with find rather than a shell pipeline: the keywords are
+# case-insensitive in the file, hence the inline (?i).
+- name: Find every file that sets an authentication keyword
+  ansible.builtin.find:
+    paths:
+      - /etc/ssh
+      - /etc/ssh/sshd_config.d
+    patterns:
+      - sshd_config
+      - "*.conf"
+    contains: '(?i)^\s*(PasswordAuthentication|PermitRootLogin|KbdInteractiveAuthentication)\s'
+    hidden: true
+  register: _ssh_hardening_auth_setters
+  changed_when: false
+  when: ssh_hardening_disable_password_auth | bool
+  tags:
+    - config
+    - ssh
+
 - name: Assert sshd is serving certificate trust
   ansible.builtin.assert:
     that:
@@ -355,11 +379,15 @@
           | join('; ') }}],
       but this run asked for passwords off and PermitRootLogin
       {{ ssh_hardening_permit_root_login }}. The drop-in at
-      /etc/ssh/sshd_config.d/00-ansible-auth.conf is being ignored, or a
+      /etc/ssh/sshd_config.d/00-ansible-auth.conf is being ignored, or an
       earlier one overrides it — sshd takes the FIRST value it sees for these
-      keywords, so check /etc/ssh/sshd_config for a setting above its Include
-      line and for drop-ins sorting before 30-. Nothing is locked out; the host
-      is as reachable as it was before this ran.
+      keywords. These files set one of them:
+      [{{ _ssh_hardening_auth_setters.files | default([])
+          | map(attribute='path') | sort | join('; ') }}].
+      Anything sorting before 00-ansible-auth.conf wins over it, and
+      /etc/ssh/sshd_config itself wins if the directive sits above its Include
+      line. Nothing is locked out; the host is as reachable as it was before
+      this ran.
   when: ssh_hardening_disable_password_auth | bool
   tags:
     - config
