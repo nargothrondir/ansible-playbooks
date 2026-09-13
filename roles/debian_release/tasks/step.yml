@@ -100,11 +100,12 @@
   tags:
     - config
 
+# Unconditional on purpose: a stat costs nothing, and gating it on the pins as
+# well would be a second task running "when changed" for no benefit.
 - name: Check whether this host builds an initramfs
   ansible.builtin.stat:
     path: /usr/sbin/update-initramfs
   register: _debian_release_initramfs_tool
-  when: _debian_release_pins is changed
   tags:
     - config
 
@@ -119,7 +120,7 @@
   changed_when: true # spec-ok: update-initramfs rewrites every image each time it runs, and it only runs when a pin file changed
   when:
     - _debian_release_pins is changed
-    - _debian_release_initramfs_tool.stat.exists | default(false)
+    - _debian_release_initramfs_tool.stat.exists
   tags:
     - config
 
@@ -146,7 +147,7 @@
 # apt module cannot express it -- every one of its upgrade modes passes
 # --with-new-pkgs or runs dist-upgrade -- hence the command, with the same
 # non-interactive environment and dpkg options the module would use.
-- name: Upgrade what can move without new packages or removals, toward Debian {{ _debian_release_step }} # noqa: command-instead-of-module — the apt module's upgrade modes all add --with-new-pkgs or run dist-upgrade, so the minimal stage the release notes prescribe cannot be expressed with it
+- name: Upgrade what can move to the next release without new packages or removals # noqa: command-instead-of-module — the apt module's upgrade modes all add --with-new-pkgs or run dist-upgrade, so the minimal stage the release notes prescribe cannot be expressed with it
   ansible.builtin.command:
     argv:
       - apt-get
@@ -176,7 +177,7 @@
 # so the plan is read first and a non-empty removal list stops the run with the
 # list in hand. The simulation and the upgrade below both run dist-upgrade, so
 # they are the same resolver on the same state.
-- name: Simulate the full upgrade to Debian {{ _debian_release_step }} # noqa: command-instead-of-module — the apt module cannot report which packages a dist-upgrade would remove without performing it
+- name: Simulate the full upgrade to the next release # noqa: command-instead-of-module — the apt module cannot report which packages a dist-upgrade would remove without performing it
   ansible.builtin.command:
     argv:
       - apt-get
