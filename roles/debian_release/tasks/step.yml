@@ -1,11 +1,18 @@
 ---
-# One release step: _debian_release_step is the major version being moved to.
+# One release step: _debian_release_step is the major version being moved to,
+# and _debian_release_resuming is true when an earlier run already got past the
+# update of the current release in this very step (the marker, tasks/main.yml).
 # The order below follows Debian's release notes, with the checks that can stop
 # a run placed BEFORE anything is changed wherever the information allows.
 
 # Release notes: "This procedure assumes your system has been updated to the
 # latest point release". Under async because on a live node this alone can be a
 # long transaction, and because sshd may restart inside it.
+#
+# Skipped when resuming, and that is a safety property rather than a shortcut:
+# by then the sources name the new release, and this task is a dist-upgrade. Run
+# against those sources it would perform the full upgrade before the removal
+# check below had seen it.
 - name: Bring the current release fully up to date before moving to Debian {{ _debian_release_step }}
   ansible.builtin.apt:
     update_cache: true
@@ -14,6 +21,7 @@
     NEEDRESTART_MODE: l
   async: "{{ debian_release_async_timeout }}"
   poll: "{{ debian_release_async_poll }}"
+  when: not (_debian_release_resuming | bool)
   tags:
     - install
 
@@ -68,10 +76,40 @@
   tags:
     - install
 
-# BEFORE the sources change, not after the upgrade. Pinned first, an interrupted
-# run is safe to reboot at any point: after the full upgrade /etc/debian_version
-# already names the new release, so a re-run would skip this step entirely and
-# never reach a pin placed later.
+# From the next task on, the host starts becoming the new release, and
+# /etc/debian_version is not a reliable witness of how far it got: the minimal
+# stage already upgrades base-files, which owns it and /etc/os-release, the
+# files Ansible reads the release from (measured on ru-1: base-files
+# 13.8+deb13u7 installed while the full upgrade had not run). A run stopped
+# after that would find the host reporting the new release and skip the rest of
+# the step. This marker is what says otherwise; it is removed only after the
+# final check at the end.
+#
+# Written here and not at the very top, so that its presence also means the
+# update of the current release above has finished -- which is exactly what the
+# resume logic needs to know to skip it.
+- name: Ensure the state directory exists
+  ansible.builtin.file:
+    path: "{{ debian_release_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags:
+    - install
+
+- name: Mark as started the move to Debian {{ _debian_release_step }}
+  ansible.builtin.copy:
+    content: "{{ _debian_release_step }}\n"
+    dest: "{{ debian_release_state_dir }}/in-progress"
+    owner: root
+    group: root
+    mode: "0644"
+  tags:
+    - install
+
+# BEFORE the sources change. Pinned first, an interrupted run is safe to reboot
+# at any point from here on.
 #
 # Physical interfaces only: the facts give `module` only to an interface with a
 # device/driver/module link in sysfs, which veth, bridges, WireGuard and
@@ -174,9 +212,8 @@
 
 # The minimal stage reduces removals; this refuses the rest. `apt-get -y` aborts
 # on its own only for ESSENTIAL packages -- anything else it removes silently --
-# so the plan is read first and a non-empty removal list stops the run with the
-# list in hand. The simulation and the upgrade below both run dist-upgrade, so
-# they are the same resolver on the same state.
+# so the plan is read first. The simulation and the upgrade below both run
+# dist-upgrade, so they are the same resolver on the same state.
 - name: Simulate the full upgrade to the next release # noqa: command-instead-of-module — the apt module cannot report which packages a dist-upgrade would remove without performing it
   ansible.builtin.command:
     argv:
@@ -192,21 +229,68 @@
   tags:
     - install
 
-# The package name is the second word of a `Remv <package> [<version>]` line.
-# Taken with split rather than regex_replace: Jinja decodes escape sequences in
-# string literals, so a '\1' backreference arrives as the character U+0001.
-- name: Assert the full upgrade removes nothing
+# A removal is also how apt performs a rename. Debian 13 renamed libraries for
+# the 64-bit time_t transition: libssl3t64 declares Replaces: libssl3,
+# Breaks: libssl3 (<< ...) and Provides: libssl3, so installing it removes the
+# old name. On ru-1 all 24 removals between bookworm and trixie were renames.
+#
+# Matched against what the release PUBLISHES rather than what the simulation
+# installs, because a successor is not always pulled in: libdw1 was removed with
+# no libdw1t64 installed (elfutils 0.192-4 declares Replaces/Breaks libdw1),
+# since nothing on the node depended on it. Had anything, apt would have
+# installed the successor -- and a dependent it chose to remove instead would be
+# a removal of its own, not a rename, and would stop the run here.
+- name: List the packages the new release publishes under its rename marker
+  ansible.builtin.command:
+    argv:
+      - apt-cache
+      - search
+      - --names-only
+      - "{{ _debian_release_known[_debian_release_step].rename_marker }}"
+  environment:
+    LANG: C
+    LC_ALL: C
+  register: _debian_release_renamed
+  changed_when: false
+  check_mode: false
+  when: _debian_release_known[_debian_release_step].rename_marker | default('') | length > 0
+  tags:
+    - install
+
+# The package name is the second word of a `Remv <package> [<version>]` line,
+# and the first word of an `apt-cache search` line. Taken with split rather than
+# regex_replace: Jinja decodes escape sequences in string literals, so a '\1'
+# backreference arrives as the character U+0001.
+- name: Separate the removals that are renames from the rest
+  ansible.builtin.set_fact:
+    _debian_release_removals: >-
+      {{ _debian_release_simulated.stdout_lines | select('match', '^Remv ')
+         | map('split') | map(attribute='1') | list }}
+    _debian_release_renamed_from: >-
+      {{ _debian_release_renamed.stdout_lines | default([])
+         | map('split') | map(attribute='0')
+         | map('replace', _debian_release_known[_debian_release_step].rename_marker | default(''), '')
+         | list }}
+  tags:
+    - install
+
+- name: Assert the full upgrade removes nothing but renamed packages
   ansible.builtin.assert:
     that:
-      - _debian_release_simulated.stdout_lines | select('match', '^Remv ') | list | length == 0
+      - _debian_release_removals | reject('in', _debian_release_renamed_from) | list | length == 0
+    success_msg: >-
+      {{ _debian_release_removals | length }} removal(s), each a package Debian
+      {{ _debian_release_step }} publishes under a new name.
     fail_msg: >-
-      The full upgrade to Debian {{ _debian_release_step }} would remove:
-      {{ _debian_release_simulated.stdout_lines | select('match', '^Remv ')
-         | map('split') | map(attribute='1') | join(', ') }}.
-      apt removes non-essential packages without asking, so the run stops here.
-      The host is on the new release's sources with the minimal stage applied,
-      which is a consistent state: decide on the host whether those removals
-      are acceptable, then run again.
+      The full upgrade to Debian {{ _debian_release_step }} would remove
+      {{ _debian_release_removals | reject('in', _debian_release_renamed_from) | join(', ') }},
+      which the release does not publish under a new name
+      ({{ _debian_release_removals | select('in', _debian_release_renamed_from) | list | length }}
+      other removal(s) are renames and would have been allowed). apt removes
+      non-essential packages without asking, so the run stops here. The host is
+      on the new release's sources with the minimal stage applied, and the step
+      is marked unfinished: decide on the host whether those removals are
+      acceptable, then run again and it resumes.
   tags:
     - install
 
@@ -244,7 +328,16 @@
       {{ ansible_facts['distribution_major_version'] }}
       ({{ ansible_facts['distribution_release'] }}), not {{ _debian_release_step }}.
       The upgrade transactions reported success, so check /etc/debian_version
-      and apt's history in /var/log/apt/history.log on the host.
+      and apt's history in /var/log/apt/history.log on the host. The step stays
+      marked unfinished, so the next run repeats it.
+  when: not ansible_check_mode
+  tags:
+    - service
+
+- name: Clear the in-progress marker of the finished move to Debian {{ _debian_release_step }}
+  ansible.builtin.file:
+    path: "{{ debian_release_state_dir }}/in-progress"
+    state: absent
   when: not ansible_check_mode
   tags:
     - service

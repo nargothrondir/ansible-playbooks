@@ -16,18 +16,20 @@ release rather than halfway through a transition.
 ### Order of one step
 
 1. **Update the current release fully.** The release notes assume the latest
-   point release. This also pulls in the fixes some steps depend on.
+   point release, and this pulls in the fixes some steps depend on. Skipped
+   when resuming a step an earlier run left unfinished — see below.
 2. **Check this step's preconditions.** Package minimums from the release
    table, compared with `dpkg --compare-versions`.
-3. **Pin network interface names.** One `.link` file per physical interface,
-   written before anything changes, and the initramfs rebuilt so early boot
-   agrees.
-4. **Switch the sources** through the `apt_sources` role with the new codename.
-5. **Minimal upgrade:** `apt-get upgrade`, which installs nothing new and
+3. **Mark the step as started** in `debian_release_state_dir`.
+4. **Pin network interface names.** One `.link` file per physical interface,
+   and the initramfs rebuilt so early boot agrees.
+5. **Switch the sources** through the `apt_sources` role with the new codename.
+6. **Minimal upgrade:** `apt-get upgrade`, which installs nothing new and
    removes nothing.
-6. **Simulate the full upgrade** and stop if it would remove any package.
-7. **Full upgrade:** `apt-get dist-upgrade`.
-8. **Reboot**, re-read facts, and confirm the new version.
+7. **Simulate the full upgrade** and stop if it would remove any package the
+   new release does not publish under a new name.
+8. **Full upgrade:** `apt-get dist-upgrade`.
+9. **Reboot**, re-read facts, confirm the new version, and clear the marker.
 
 Before the first step the role also refuses to start when `dpkg --audit`
 reports unfinished packages, when any package is held, or when `/`, `/usr` or
@@ -44,6 +46,27 @@ already carrying the full stack, where it is not.
 package would be removed. Anything else it removes without asking. The minimal
 stage reduces removals; the simulation refuses the remainder and prints the
 list.
+
+**Renames are not losses.** A release can publish a library under a new name,
+and apt carries that out as a removal of the old package. Debian 13 did it for
+the 64-bit `time_t` transition: `libssl3t64` declares `Replaces: libssl3`,
+`Breaks: libssl3 (<< …)` and `Provides: libssl3`. On the first real run all 24
+removals between a bookworm node and trixie were such renames. So a removal is
+allowed when the new release publishes a package whose name, with the release's
+`rename_marker` taken out, is the removed name. That holds even when the
+successor is not installed: `libdw1` went with no `libdw1t64` pulled in, because
+nothing on the node depended on it. Had anything, apt would have installed the
+successor — and a dependent it removed instead would be a removal of its own,
+not a rename, and would stop the run.
+
+**Resuming an interrupted step.** The minimal stage already upgrades
+`base-files`, which owns `/etc/debian_version` and `/etc/os-release` — the files
+Ansible reads the release from. A run stopped after it would find the host
+reporting the new release and skip the rest of the step. The marker written
+before anything of the new release is touched says otherwise: while it exists
+the step runs again, its tasks being idempotent. Only the update of the current
+release is skipped on resume, because by then it would be a full upgrade against
+the new release's sources, performed before the simulation had seen it.
 
 **Async with a generous limit.** An upgrade supervised over SSH must survive the
 connection dropping — sshd itself restarts during it, and the trixie release
@@ -75,8 +98,9 @@ on the next release is worse than a coarse one. apt still runs its own checks.
 a host to. Adding an entry is the statement that the release's notes were read:
 each release has its own chapter of known issues, and anything in it that could
 strand a remote host belongs in the entry as a precondition, or as a new step in
-`tasks/step.yml`, before it is committed. A target the table does not know is
-refused before anything runs.
+`tasks/step.yml`, before it is committed. If the release renames packages the
+way 13 did, its `rename_marker` goes in the entry too. A target the table does
+not know is refused before anything runs.
 
 ### After the move, on a node that already runs things
 
@@ -97,6 +121,7 @@ re-apply them after the move.
 | `debian_release_reboot_timeout` | `900` | Seconds to wait for the host after the reboot |
 | `debian_release_pin_interface_names` | `true` | Pin physical interface names with `.link` files first |
 | `debian_release_link_dir` | `/etc/systemd/network` | Where the pin files go |
+| `debian_release_state_dir` | `/var/lib/debian_release` | Where an unfinished step keeps its marker |
 
 ## Dependencies
 

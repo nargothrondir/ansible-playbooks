@@ -16,18 +16,68 @@
     - install
     - config
 
+# The facts alone cannot say how far a host got. The minimal stage of a step
+# already upgrades base-files, so a host stopped partway reports the release it
+# was moving TO. tasks/step.yml leaves a marker for exactly that case, and while
+# it exists the host is treated as still on the release before it.
+- name: Look for a release step an earlier run left unfinished
+  ansible.builtin.stat:
+    path: "{{ debian_release_state_dir }}/in-progress"
+  register: _debian_release_marker
+  when: debian_release_target | string | length > 0
+  tags:
+    - install
+    - config
+
+- name: Read which release that step was moving to
+  ansible.builtin.slurp:
+    src: "{{ debian_release_state_dir }}/in-progress"
+  register: _debian_release_marker_content
+  when:
+    - debian_release_target | string | length > 0
+    - _debian_release_marker.stat.exists | default(false)
+  tags:
+    - install
+    - config
+
 # Debian supports an upgrade only from the release immediately before it, so a
 # host two releases behind passes through the one in between. range() yields
 # nothing when the host is already at or past the target, which is the whole
-# idempotency story: a host on the target release gets an empty list and every
-# task below is skipped.
+# idempotency story: a host on the target release, with no unfinished step, gets
+# an empty list and every task below is skipped.
+#
+# _debian_release_resume_step is compared and measured through `| string`
+# wherever it is used. A rendered "13" may come back as the integer 13, and the
+# step it is compared with is the string "13": an unguarded == would quietly be
+# false, the resume would not be recognised, and the step would run its
+# current-release dist-upgrade against the NEW release's sources.
 - name: Work out which releases this host must pass through
   ansible.builtin.set_fact:
+    _debian_release_resume_step: >-
+      {{ (_debian_release_marker_content.content | b64decode | trim)
+         if (_debian_release_marker.stat.exists | default(false)) else '' }}
     _debian_release_steps: >-
-      {{ range((ansible_facts['distribution_major_version'] | int) + 1,
+      {{ range(((((_debian_release_marker_content.content | b64decode | trim | int) - 1)
+                 if (_debian_release_marker.stat.exists | default(false))
+                 else (ansible_facts['distribution_major_version'] | int)) + 1),
                (debian_release_target | int) + 1)
          | map('string') | list }}
   when: debian_release_target | string | length > 0
+  tags:
+    - install
+    - config
+
+- name: Assert an unfinished step does not lie beyond the target
+  ansible.builtin.assert:
+    that:
+      - (_debian_release_resume_step | int) <= (debian_release_target | int)
+    fail_msg: >-
+      An earlier run left the move to Debian {{ _debian_release_resume_step }}
+      unfinished ({{ debian_release_state_dir }}/in-progress), but the target is
+      now {{ debian_release_target }}. The host is between releases; finish that
+      step with a target of at least {{ _debian_release_resume_step }}, or
+      complete it by hand and remove the marker.
+  when: _debian_release_resume_step | default('') | string | length > 0
   tags:
     - install
     - config
@@ -132,6 +182,10 @@
   loop: "{{ _debian_release_steps | default([]) }}"
   loop_control:
     loop_var: _debian_release_step
+  vars:
+    _debian_release_resuming: >-
+      {{ (_debian_release_step | string)
+         == (_debian_release_resume_step | default('') | string) }}
   tags:
     - install
     - config
