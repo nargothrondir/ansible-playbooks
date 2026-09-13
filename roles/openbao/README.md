@@ -89,11 +89,15 @@ in, not who. With userpass the same line names the account.
 and yours must not travel through a playbook, a log, or this repository. So
 ownership splits: you own the password, the playbook owns the privileges.
 
-Create it once, on the panel. The prompt waits silently — nothing echoes while
-you type:
+Create it once, on the panel, with the bootstrap token from the header of
+`playbooks/openbao-setup.yml` exported as `BAO_TOKEN` — the same token the
+playbook run below uses, and the one whose policy grants this path. It is passed
+into the container explicitly: whatever token the container may hold from an
+earlier session is not something this procedure can rely on. The prompt waits
+silently — nothing echoes while you type:
 
 ```bash
-read -rs -p 'new password: ' P && echo && printf '%s' "$P" | docker exec -i openbao bao write auth/userpass/users/operator password=- && unset P
+read -rs -p 'new password: ' P && echo && printf '%s' "$P" | docker exec -i -e BAO_TOKEN="$BAO_TOKEN" openbao bao write auth/userpass/users/operator password=- && unset P
 ```
 
 Success prints `Success! Data written to: auth/userpass/users/operator`.

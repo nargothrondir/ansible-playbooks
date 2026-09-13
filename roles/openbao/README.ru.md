@@ -91,10 +91,15 @@ Userpass, а не вторая AppRole, по одной причине. Key ID �
 должен проходить через плейбук, лог или этот репозиторий. Поэтому владение
 разделено: пароль твой, права — плейбука.
 
-Создаётся один раз, на панели. Ввод молчит — при наборе ничего не отображается:
+Создаётся один раз, на панели, с bootstrap-токеном из шапки
+`playbooks/openbao-setup.yml`, экспортированным в `BAO_TOKEN`, — тем же, с
+которым идёт прогон плейбука ниже, и именно его политика даёт право на этот
+путь. В контейнер он передаётся явно: на токен, который мог остаться в
+контейнере с прошлой сессии, эта процедура полагаться не может. Ввод молчит —
+при наборе ничего не отображается:
 
 ```bash
-read -rs -p 'new password: ' P && echo && printf '%s' "$P" | docker exec -i openbao bao write auth/userpass/users/operator password=- && unset P
+read -rs -p 'new password: ' P && echo && printf '%s' "$P" | docker exec -i -e BAO_TOKEN="$BAO_TOKEN" openbao bao write auth/userpass/users/operator password=- && unset P
 ```
 
 Успех печатает `Success! Data written to: auth/userpass/users/operator`.

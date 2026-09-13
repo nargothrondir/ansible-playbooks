@@ -27,6 +27,9 @@
 #   path "auth/userpass/users/operator"        { capabilities = ["create", "update", "read"] }
 #   EOF
 #
+# The last path names the operator account. If openbao_operator_username is
+# overridden, change it here too, or the account's rights cannot be written.
+#
 # Capture the token into the variable rather than printing it — `-field=token`
 # on a terminal puts a live credential on screen and into scrollback:
 #
@@ -627,9 +630,9 @@
              ~ openbao_operator_policy_name ~ ' — it can ask for an SSH certificate and nothing else.')
             if _operator_user.status == 200
             else ('Operator account ' ~ openbao_operator_username ~ ' does NOT exist. Create it with a password '
-                  ~ 'only you know, then re-run this playbook to grant its rights: '
+                  ~ 'only you know, with the bootstrap token still exported as BAO_TOKEN, then re-run this playbook to grant its rights: '
                   ~ 'read -rs -p "new password: " P && echo && printf %s "$P" | '
-                  ~ 'docker exec -i openbao bao write auth/userpass/users/' ~ openbao_operator_username
+                  ~ 'docker exec -i -e BAO_TOKEN="$BAO_TOKEN" openbao bao write auth/userpass/users/' ~ openbao_operator_username
                   ~ ' password=- && unset P')
           }}
       tags:
