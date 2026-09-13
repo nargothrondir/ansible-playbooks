@@ -5,8 +5,11 @@
     name: crowdsec
     state: reloaded
 
+# Through the same file as the start task, so a restart that fails brings its
+# evidence with it. Addressed through role_path so the file it names does not
+# depend on how a relative include is resolved from handlers/.
 - name: Restart the CrowdSec firewall bouncer
   listen: "restart crowdsec bouncer"
-  ansible.builtin.systemd_service:
-    name: crowdsec-firewall-bouncer
-    state: restarted
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/bouncer-service.yml"
+  vars:
+    _crowdsec_bouncer_state: restarted
