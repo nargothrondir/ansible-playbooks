@@ -10,9 +10,17 @@
 #   min_versions  packages that must be at least this version BEFORE the step
 #                 starts, compared with dpkg --compare-versions; a package that
 #                 is not installed is not checked
+#   rename_marker substring the release adds to the names of packages it
+#                 renames; a removal in the full upgrade is allowed when the
+#                 release publishes a package whose name, with the marker taken
+#                 out, is the removed name (see tasks/step.yml)
 _debian_release_known:
   "13":
     codename: trixie
+    # The 64-bit time_t transition renamed libraries libfoo -> libfoot64, each
+    # declaring Replaces/Breaks/Provides on the old name. Measured on ru-1: all
+    # 24 removals from bookworm to trixie were such renames.
+    rename_marker: t64
     min_versions:
       # Release notes 5.1.1: OpenSSH in bookworm can leave a remote system
       # unreachable if an upgrade supervised over SSH is interrupted. Fixed in

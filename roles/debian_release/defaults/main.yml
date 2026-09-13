@@ -36,3 +36,8 @@ debian_release_reboot_timeout: 900
 # reboot is a host with no network, and on a VPS nothing reaches it again.
 debian_release_pin_interface_names: true
 debian_release_link_dir: /etc/systemd/network
+
+# Where a step records that it has started, so a run stopped partway resumes
+# the step instead of trusting /etc/debian_version, which the minimal stage has
+# already changed. See tasks/step.yml.
+debian_release_state_dir: /var/lib/debian_release
