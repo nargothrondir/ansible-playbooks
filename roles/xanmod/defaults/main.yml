@@ -1,8 +1,27 @@
 ---
-# XanMod kernel CPU/PSABI variant. x64v3 suits modern CPUs (AVX2); lower to
-# x64v2/x64v1 for older hardware. Detect a host's max level with XanMod's
-# check_x86-64_psabi.sh if unsure.
+# XanMod kernel CPU/PSABI variant: x64v1/x64v2/x64v3/x64v4, or "auto" to read
+# the level off this host's own CPU flags. Whatever it resolves to, the role
+# refuses to install a variant the CPU cannot execute -- that kernel would not
+# boot, and on a VPS with no console the symptom is a node that never comes
+# back from its reboot.
+#
+# Explicit by default. "auto" belongs on a host being built, not on one being
+# maintained: changing the variant under a running node swaps its kernel, and
+# nothing about a routine run should do that uninvited. provision-node.yml
+# turns it on for fresh nodes, the way it already does for xanmod_reboot.
 xanmod_variant: x64v3
+
+# Ceiling for "auto". Deliberately NOT the highest level the CPU reports.
+#
+# A VPS is not its hardware: providers migrate guests between hosts, and a
+# kernel built for x86-64-v4 stops booting the moment the guest lands on a
+# machine without AVX-512. The failure arrives detached from any change you
+# made, which makes it expensive to diagnose and impossible to predict.
+#
+# v3 is AVX2 -- satisfied by anything a provider has sold in a decade, and
+# XanMod's own recommended build. The measurable gain from v4 is small; the
+# cost of guessing wrong is the node.
+xanmod_variant_max: x64v3
 
 # Package to install (mainline build for the chosen variant).
 xanmod_package: "linux-xanmod-{{ xanmod_variant }}"

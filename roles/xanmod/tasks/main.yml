@@ -10,6 +10,89 @@
   tags:
     - install
 
+# XanMod publishes one kernel per x86-64 microarchitecture level, and a kernel
+# built for a level the CPU does not implement does not boot. On a VPS that
+# surfaces as a node which never returns from its reboot, with nothing in any
+# log to connect it to this run -- so the level is established BEFORE anything
+# is installed.
+#
+# Read from /proc/cpuinfo rather than by fetching and running XanMod's
+# check_x86-64_psabi.sh. The logic is eight lines of awk and reproducing it
+# costs less than the alternative buys: no downloaded script executed as root,
+# and no dependence on dl.xanmod.org being reachable from a node that may sit
+# behind censorship.
+- name: Read the CPU feature flags
+  ansible.builtin.slurp:
+    src: /proc/cpuinfo
+  register: _xanmod_cpuinfo
+  tags:
+    - install
+
+# The first flags line: every core reports the same set, and a machine whose
+# cores differed could not run one kernel anyway.
+- name: Extract the flag list
+  ansible.builtin.set_fact:
+    _xanmod_cpu_flags: >-
+      {{ (_xanmod_cpuinfo.content | b64decode).splitlines()
+         | select('match', '^flags\s*:')
+         | first | default('')
+         | regex_replace('^flags\s*:\s*', '')
+         | split }}
+  tags:
+    - install
+
+# Walks upward and overwrites, which is only correct because the level tables
+# are cumulative (vars/main.yml): passing level 3 means level 2 passed too, so
+# the last level to pass is the highest one supported.
+- name: Determine the highest x86-64 level this CPU supports
+  ansible.builtin.set_fact:
+    _xanmod_cpu_level: "{{ item.key }}"
+  loop: "{{ _xanmod_psabi_levels | dict2items | sort(attribute='key') }}"
+  when: item.value | difference(_xanmod_cpu_flags) | length == 0
+  loop_control:
+    label: "x86-64-v{{ item.key }}"
+  tags:
+    - install
+
+# min(), not the detected level: see xanmod_variant_max in defaults for why the
+# highest supported level is the wrong thing to install on a guest that can be
+# migrated to different hardware.
+- name: Resolve the kernel variant from the detected level
+  ansible.builtin.set_fact:
+    xanmod_variant: >-
+      x64v{{ [_xanmod_cpu_level | int,
+              xanmod_variant_max | regex_replace('^x64v', '') | int] | min }}
+  when: xanmod_variant == 'auto'
+  tags:
+    - install
+
+- name: Assert the CPU can execute the chosen kernel variant
+  ansible.builtin.assert:
+    that:
+      # Catches "auto" surviving the task above -- which happens when it is
+      # passed as a ROLE PARAM, a precedence set_fact cannot override. Without
+      # this the arithmetic below reads it as level 0, passes, and apt then
+      # fails on a package named linux-xanmod-auto.
+      - xanmod_variant is match('^x64v[1-4]$')
+      - _xanmod_cpu_level | int > 0
+      - (xanmod_variant | regex_replace('^x64v', '') | int)
+        <= (_xanmod_cpu_level | int)
+    success_msg: >-
+      CPU implements x86-64-v{{ _xanmod_cpu_level }}; installing
+      {{ xanmod_package }}.
+    fail_msg: >-
+      {{ 'No x86-64 level could be read from /proc/cpuinfo on this host'
+         if (_xanmod_cpu_level | int) == 0
+         else ('This CPU implements x86-64-v' ~ _xanmod_cpu_level
+               ~ ', but xanmod_variant asks for ' ~ xanmod_variant) }}.
+      Installing {{ xanmod_package }} would put a kernel on this machine that it
+      cannot execute, and the failure would appear only as a host that does not
+      come back from its reboot -- with no console to find out why. Set
+      xanmod_variant to a level this CPU implements, or to "auto" to let the
+      role choose one. Detected flags: {{ _xanmod_cpu_flags | default([]) | length }}.
+  tags:
+    - install
+
 # Self-sufficiency for standalone/DR runs: deb822_repository needs these on
 # the target. The common role pre-satisfies this in the pipeline (no-op here).
 - name: Install prerequisites for the XanMod repository

@@ -344,6 +344,11 @@
     # has nothing to disrupt, and it now happens at the end of THIS play rather
     # than halfway through the agents.
     xanmod_reboot: true
+    # Read the kernel variant off this machine's own CPU rather than trusting
+    # the role default, which is a guess about hardware nobody has looked at.
+    # Capped by xanmod_variant_max, and only here: on an existing node this
+    # would swap a working kernel for a different one.
+    xanmod_variant: auto
     # Disarm the upgrade role's own mid-run reboot: re-runs happen on serving
     # nodes, and a fresh node is rebooted by the xanmod handler / the final
     # post_tasks check anyway (#52).
