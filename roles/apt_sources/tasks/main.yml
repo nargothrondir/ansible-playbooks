@@ -134,10 +134,29 @@
   tags:
     - config
 
-- name: Read back what apt now considers a source # noqa: command-instead-of-module — the apt module installs and updates; it cannot report which archives apt will fetch, and that question is the whole point of this check
-  ansible.builtin.command: apt-get indextargets --format '$(URI)'
+# SOURCESENTRY is what turns this check from an alarm into a diagnosis: it
+# carries the file and line each target came from, so a stray archive names its
+# own source instead of leaving the operator to hunt for it. It is absent from
+# acquire-additional-files.md but present in IndexTarget::OptionKeys
+# (apt-pkg/indexfile.h) — read there, because the list in the documentation is
+# not the list apt implements.
+- name: Read back what apt now considers a source, and where each entry comes from # noqa: command-instead-of-module — the apt module installs and updates; it cannot report which archives apt will fetch, and that question is the whole point of this check
+  ansible.builtin.command: apt-get indextargets --format '$(URI) from $(SOURCESENTRY)'
   register: apt_sources_effective
   changed_when: false
+  tags:
+    - config
+
+# Computed once rather than repeated in both the condition and the message: the
+# two must describe the same set, and two copies of one expression are two
+# chances for them to stop doing so.
+- name: Collect the Debian archives this role did not declare
+  ansible.builtin.set_fact:
+    _apt_sources_foreign: >-
+      {{ apt_sources_effective.stdout_lines | select('search', 'debian\.org')
+         | reject('search', apt_sources_uri | regex_escape)
+         | reject('search', apt_sources_security_uri | regex_escape)
+         | list }}
   tags:
     - config
 
@@ -147,18 +166,16 @@
 - name: Assert apt fetches only the archives this role declares
   ansible.builtin.assert:
     that:
-      - apt_sources_effective.stdout_lines | select('search', 'debian\.org')
-        | reject('search', apt_sources_uri | regex_escape)
-        | reject('search', apt_sources_security_uri | regex_escape)
-        | list | length == 0
+      - _apt_sources_foreign | length == 0
     success_msg: "Debian archives come only from the declared URIs"
     fail_msg: >-
-      apt still reads a Debian archive this role did not declare:
-      {{ apt_sources_effective.stdout_lines | select('search', 'debian\.org')
-         | reject('search', apt_sources_uri | regex_escape)
-         | reject('search', apt_sources_security_uri | regex_escape)
-         | list | join(', ') }}.
-      Something outside /etc/apt/sources.list.d is adding it.
+      apt still reads a Debian archive this role did not declare, and each line
+      below ends with the file and line that declares it:
+      {{ _apt_sources_foreign | join('; ') }}.
+      If that path is under /etc/apt/sources.list.d, this role found no Debian
+      archive URI inside it — widen the match. If it is anywhere else, apt is
+      being pointed at a source tree this role does not manage; check
+      Dir::Etc::sourcelist and Dir::Etc::sourceparts in /etc/apt/apt.conf.d.
   tags:
     - config
 
