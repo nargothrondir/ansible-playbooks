@@ -200,7 +200,7 @@
     # DNS record is written and the Dockhand environment created. Skipped
     # entirely when no password was given, so the normal key path does not
     # depend on sshpass being present at all.
-    - name: Check the controller can authenticate with a password
+    - name: Check sshpass is installed on the controller
       ansible.builtin.command: sshpass -V
       register: _sshpass
       changed_when: false
@@ -217,6 +217,67 @@
           Semaphore container and Ansible cannot do password authentication
           without it. Either install it there, or put the admin key on root by
           hand (ssh-copy-id) and re-run with the password field empty.
+      when: node_root_password | default('') | length > 0
+
+    # The task above used to be called "check the controller can authenticate
+    # with a password" and never tried one: `sshpass -V` proves the tool exists.
+    # Task #412 went on to write the DNS record and issue the Dockhand token, and
+    # only then met a rejected password at the first real login.
+    #
+    # So the password is tried here, against the node, before anything is
+    # created. Key authentication is switched off for the attempt, or a key the
+    # controller happens to hold would make a wrong password look right. The
+    # password travels in SSHPASS (sshpass -e), so it is in neither the process
+    # list nor the logged arguments.
+    - name: Try the root password against the node
+      ansible.builtin.command:
+        argv:
+          - sshpass
+          - -e
+          - ssh
+          - -p
+          - "22"
+          - -o
+          - PreferredAuthentications=password
+          - -o
+          - PubkeyAuthentication=no
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - -o
+          - ConnectTimeout=15
+          - "root@{{ node_ip }}"
+          - "true"
+      environment:
+        SSHPASS: "{{ node_root_password }}"
+      register: _root_password_try
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      no_log: true
+      when: node_root_password | default('') | length > 0
+
+    # sshpass exits 5 when the password itself was refused (sshpass(1), RETURN
+    # VALUES). Any other failure is ssh's own exit status passed through, which
+    # means no password was ever asked for: the node is unreachable, or it does
+    # not offer password login for root at all.
+    - name: Assert the root password opens the node
+      ansible.builtin.assert:
+        that:
+          - _root_password_try.rc == 0
+        fail_msg: >-
+          {{ ('The node refused the root password. Check the value in the survey:
+              a trailing space from pasting is the usual culprit, and a reinstalled
+              image often comes with a new password.')
+             if _root_password_try.rc == 5
+             else ('ssh exited ' ~ _root_password_try.rc ~ ' before any password
+                   was tried: ' ~ node_ip ~ ' is unreachable on port 22, or it does
+                   not offer password login for root. If the admin key is already
+                   on root, for instance because an earlier run of this playbook
+                   installed it and then turned passwords off, leave the password
+                   field empty and run again.') }}
+          Nothing has been created yet.
       when: node_root_password | default('') | length > 0
 
 # Before the target is built, because the in-memory host below carries the
