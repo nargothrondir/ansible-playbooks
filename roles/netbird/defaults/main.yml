@@ -20,17 +20,43 @@ netbird_management_url: ""
 # not modify host OS firewalls" — so 22022 has to be open on the mesh interface
 # or this door is closed while looking open. See ufw_mesh_tcp in roles/ufw.
 #
-# Applied only when the peer actually JOINS — already-connected peers skip the
-# join task, so flipping this later needs a manual `netbird up` re-apply.
-#
-# root login (--enable-ssh-root) is deliberately NOT offered: log in as the
-# automation user and escalate (`netbird ssh ansible@<peer>` + sudo).
+# Applied when the peer joins, and reconciled on every later run: see
+# netbird_ssh_root below for how, and for what the reconcile costs.
 #
 # --disable-ssh-auth is NEVER passed. It turns off per-user JWT authentication,
 # which would make mesh reachability alone sufficient for a shell — the one
 # property that makes this acceptable as a standing back door is that every
 # session is authorised against an identity.
 netbird_ssh_server: true
+
+# Allow logging in as root through the NetBird SSH server (--enable-ssh-root).
+# Requires netbird_ssh_server.
+#
+# OFF IN THE ROLE, ON IN provision-node.yml, where the decision is visible. The
+# break-glass is for the moment the host is broken, and escalating from the
+# automation user depends on exactly the things that break: sudo, its sudoers
+# file, PAM, a disk with room for the log. Root reached directly depends on
+# none of them. This role used to say the opposite — log in as the automation
+# user and escalate — and changed on that argument.
+#
+# What stands between a mesh peer and a root shell, in the order the server
+# checks it (client/ssh at v0.77.1):
+#   1. the policy — a NetBird SSH policy must list the user's group as a source
+#      and map it to the local user root. "Limited Access" with root named maps
+#      exactly that; "Full Access" maps the group to EVERY local user, root
+#      included. No mapping for root: denied, fail-closed;
+#   2. this flag — refused for root when false, whatever the policy says.
+# So with this on, the policy alone decides who gets root. Keep the SSH policy
+# on Limited Access, with root listed for the operators' group only.
+#
+# Reconciling costs the node its mesh for a few seconds. The CLI applies SSH
+# flags only in `netbird up`, and `up` on a connected peer prints "Already
+# connected" and changes nothing, so the role runs `netbird down && netbird up`
+# — the procedure NetBird documents — and only when the daemon's settings
+# differ from these. It runs detached (async), so it completes even if the
+# Ansible session itself travels over the mesh. The panel loses the node for
+# the same seconds.
+netbird_ssh_root: false
 
 # APT repository architecture.
 netbird_apt_arch: amd64

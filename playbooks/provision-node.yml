@@ -427,6 +427,10 @@
     # From OpenBao (#2), fetched by the first play. group_vars no longer defines
     # this at all, so the fetch is the only source.
     netbird_setup_key: "{{ hostvars['controller']._netbird_setup_key | default('') }}"
+    # Root through the NetBird SSH break-glass, which does not depend on the
+    # sudo and PAM a broken host may have lost. Who actually gets it is the SSH
+    # policy's decision — see roles/netbird/README.md, "SSH access".
+    netbird_ssh_root: true
     # Same source, same shape. Hands ssh_hardening the trust anchor so a node
     # accepts fleet certificates from the moment it is built, alongside the key
     # bootstrap puts in authorized_keys — never instead of it.
