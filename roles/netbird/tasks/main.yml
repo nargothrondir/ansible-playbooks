@@ -118,11 +118,62 @@
     - config
     - netbird
 
+- name: Assert root login is requested only together with the SSH server
+  ansible.builtin.assert:
+    that:
+      - netbird_ssh_server | bool or not netbird_ssh_root | bool
+    fail_msg: >-
+      netbird_ssh_root is true while netbird_ssh_server is false. Root login is
+      a setting of the NetBird SSH server: with the server off it opens nothing,
+      and the variables would describe a break-glass that does not exist.
+  tags:
+    - config
+    - netbird
+
+# A connected peer keeps whatever SSH settings it joined with, so they are read
+# back from the daemon's own configuration. Not with slurp: the same file holds
+# the peer's WireGuard private key, and a slurp would carry it into the run's
+# output. The one-liner prints two booleans and nothing else; a key that is
+# absent or null is false, which is what the daemon does with it.
+- name: Read the SSH settings the connected agent runs with
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import json, sys;
+        c = json.load(open(sys.argv[1]));
+        print(json.dumps({k: bool(c.get(k)) for k in ("ServerSSHAllowed", "EnableSSHRoot")}))
+      - "{{ _netbird_profile_config }}"
+  register: _netbird_ssh_settings
+  changed_when: false
+  check_mode: false
+  when:
+    - netbird_setup_key | length > 0
+    - netbird_connected | default(false) | bool
+  tags:
+    - config
+    - netbird
+
+# Jinja's `and` short-circuits, so a peer that is not connected never touches
+# the skipped register above.
+- name: Determine whether those settings differ from the requested ones
+  ansible.builtin.set_fact:
+    _netbird_ssh_drift: >-
+      {{ (netbird_connected | default(false) | bool)
+         and ((_netbird_ssh_settings.stdout | from_json).ServerSSHAllowed != (netbird_ssh_server | bool)
+              or (_netbird_ssh_settings.stdout | from_json).EnableSSHRoot != (netbird_ssh_root | bool)) }}
+  when: netbird_setup_key | length > 0
+  tags:
+    - config
+    - netbird
+
 - name: Join the NetBird network (only if not already connected)
   ansible.builtin.command: >-
     netbird up --setup-key {{ netbird_setup_key }}
     {{ ('--management-url ' ~ netbird_management_url) if (netbird_management_url | length > 0) else '' }}
-    {{ '--allow-server-ssh' if netbird_ssh_server | bool else '' }}
+    --allow-server-ssh={{ netbird_ssh_server | bool | lower }}
+    --enable-ssh-root={{ netbird_ssh_root | bool | lower }}
   when:
     - netbird_setup_key | length > 0
     - not netbird_connected | default(false) | bool
@@ -159,6 +210,97 @@
   when:
     - netbird_setup_key | length > 0
     - not netbird_connected | default(false) | bool
+  tags:
+    - config
+    - netbird
+
+# `up` on a connected peer prints "Already connected" and applies nothing
+# (client/cmd/up.go), so new SSH settings need the peer down first — the
+# procedure NetBird's own documentation gives. Async because the down can take
+# the Ansible session with it when that session travels over the mesh: the
+# wrapper forks and calls setsid, so `up` still runs, and the poll reconnects
+# once the mesh is back.
+#
+# No setup key here, unlike the join: an async job writes its command line into
+# its result file on the node. The peer is already registered, and `up` logs it
+# back in with its own WireGuard key.
+- name: Re-apply the SSH settings to the connected agent
+  ansible.builtin.shell: >-
+    netbird down &&
+    netbird up
+    --allow-server-ssh={{ netbird_ssh_server | bool | lower }}
+    --enable-ssh-root={{ netbird_ssh_root | bool | lower }}
+  register: _netbird_ssh_reapply
+  async: 180
+  poll: 5
+  # Judged by the wait and the read-back below, for the reason the join is: the
+  # CLI's exit code can disagree with what the daemon went on to do.
+  changed_when: _netbird_ssh_drift | bool
+  failed_when: false
+  when:
+    - netbird_setup_key | length > 0
+    - _netbird_ssh_drift | default(false) | bool
+  tags:
+    - config
+    - netbird
+
+- name: Wait for the daemon to report the mesh up again
+  ansible.builtin.command: netbird status --json
+  register: _netbird_reapply_status
+  changed_when: false
+  until: >-
+    _netbird_reapply_status.rc == 0
+    and (_netbird_reapply_status.stdout | trim)[:1] == '{'
+    and ((_netbird_reapply_status.stdout | trim | from_json).management.connected | default(false))
+  retries: 12
+  delay: 5
+  when:
+    - netbird_setup_key | length > 0
+    - _netbird_ssh_drift | default(false) | bool
+  tags:
+    - config
+    - netbird
+
+# The check for both paths that set SSH flags. The daemon refuses to enable the
+# server or root login for a caller that is not root, and says so only in the
+# CLI's output; a mismatch here is the place that output gets shown.
+- name: Read back the SSH settings the agent ended up with
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import json, sys;
+        c = json.load(open(sys.argv[1]));
+        print(json.dumps({k: bool(c.get(k)) for k in ("ServerSSHAllowed", "EnableSSHRoot")}))
+      - "{{ _netbird_profile_config }}"
+  register: _netbird_ssh_applied
+  changed_when: false
+  when:
+    - netbird_setup_key | length > 0
+    - not netbird_connected | default(false) | bool or _netbird_ssh_drift | default(false) | bool
+    - not ansible_check_mode
+  tags:
+    - config
+    - netbird
+
+- name: Assert the agent runs with the requested SSH settings
+  ansible.builtin.assert:
+    that:
+      - (_netbird_ssh_applied.stdout | from_json).ServerSSHAllowed == (netbird_ssh_server | bool)
+      - (_netbird_ssh_applied.stdout | from_json).EnableSSHRoot == (netbird_ssh_root | bool)
+    success_msg: >-
+      NetBird SSH server {{ netbird_ssh_server | bool | ternary('on', 'off') }},
+      root login {{ netbird_ssh_root | bool | ternary('on', 'off') }}
+    fail_msg: >-
+      Requested SSH server={{ netbird_ssh_server | bool }} and root login={{ netbird_ssh_root | bool }},
+      but the agent runs with {{ _netbird_ssh_applied.stdout }}.
+      Re-apply output: {{ _netbird_ssh_reapply.stdout | default('(not run — the settings were set at join)') }}
+      {{ _netbird_ssh_reapply.stderr | default('') }}
+  when:
+    - netbird_setup_key | length > 0
+    - not netbird_connected | default(false) | bool or _netbird_ssh_drift | default(false) | bool
+    - not ansible_check_mode
   tags:
     - config
     - netbird

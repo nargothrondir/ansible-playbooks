@@ -1,0 +1,5 @@
+---
+# The daemon's configuration for the default profile — the only profile a node
+# uses. Besides the SSH settings the role reads from it, it holds the peer's
+# WireGuard private key, which is why the role never reads it whole.
+_netbird_profile_config: /var/lib/netbird/default.json
