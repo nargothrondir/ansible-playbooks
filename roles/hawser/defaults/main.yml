@@ -11,7 +11,7 @@
 # here — docker-stacks' own Renovate bumps it natively, without the regex
 # manager this repository needs for role defaults.
 hawser_compose_repo: "https://raw.githubusercontent.com/nargothrondir/docker-stacks"
-hawser_compose_ref: "ca35070a8c0205be500b2853157c31331394dc3a"
+hawser_compose_ref: "9352652af00efeba08060ab722b6cf7e68f1d1e6"
 hawser_compose_path: "hawser/docker-compose.yml"
 hawser_compose_url: "{{ hawser_compose_repo }}/{{ hawser_compose_ref }}/{{ hawser_compose_path }}"
 
