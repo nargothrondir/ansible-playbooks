@@ -96,6 +96,23 @@
           leave Limit EMPTY. The node is unmanaged until Sync Hawser is run for
           it with Limit <host>,controller — do one host at a time.
 
+      # How a change to the NetBird SSH decision reaches nodes that are already
+      # running. provision-node.yml applies it to a node it builds; everything
+      # built earlier keeps what it joined with, and the root login decided in
+      # #102 would otherwise need a rebuild per node.
+      #
+      # Limit must carry the controller, as for Sync Hawser: its play reads the
+      # setup key, and without it the node play stops at its assert. A node whose
+      # settings differ drops off the mesh for seconds while they are re-applied
+      # — the playbook header explains why the run survives that.
+      "Sync NetBird":
+        playbook: playbooks/netbird.yml
+        description: >-
+          Bring each node's NetBird agent in line with the role — chiefly the
+          SSH break-glass and root login through it. A node whose settings
+          differ is off the mesh for a few seconds while they are re-applied.
+          Leave Limit EMPTY for every node, or set <host>,controller for one.
+
       # Targeting here is the playbook's own variable rather than --limit,
       # because apt-sources.yml chooses its hosts from apt_sources_target and
       # defaults to the lab group. A run with no arguments therefore cannot

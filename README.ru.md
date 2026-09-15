@@ -60,6 +60,7 @@
 | [playbooks/apt-sources.yml](playbooks/apt-sources.yml) | apt_sources (канонические источники архива Debian) | `apt_sources_target` (по умолчанию: lab) |
 | [playbooks/common.yml](playbooks/common.yml) | common (повторное применение базовой роли) | `common_target` (по умолчанию: lab) |
 | [playbooks/crowdsec.yml](playbooks/crowdsec.yml) | crowdsec | fleet (кроме panel) |
+| [playbooks/netbird.yml](playbooks/netbird.yml) | netbird (сверка NetBird SSH: запасной вход и вход под root) | fleet (кроме panel) |
 | [playbooks/beszel.yml](playbooks/beszel.yml) | beszel_agent | fleet (кроме panel) |
 | [playbooks/provision-node.yml](playbooks/provision-node.yml) | bootstrap, apt_sources, upgrade, debian_release, ssh_hardening, common, dns, netbird, docker, xanmod, hawser, crowdsec, ufw, beszel_agent, notify_telegram + API панели | (survey) |
 | [playbooks/new-profile.yml](playbooks/new-profile.yml) | — (вызов API панели) | control |
