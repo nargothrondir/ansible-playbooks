@@ -1,14 +1,15 @@
 ---
 # Example inventory — the group layout the playbooks and roles expect.
 #
-# The real inventory (addresses, host names, group_vars, host_vars and the
-# group_vars) lives in a SEPARATE PRIVATE repository; Semaphore
-# already clones it independently of this one. This file exists so the public
-# repository still documents the structure the code depends on.
+# The real inventory (host names, group_vars, host_vars) lives in a SEPARATE
+# PRIVATE repository; Semaphore already clones it independently of this one.
+# This file exists so the public repository still documents the structure the
+# code depends on.
 #
-# Addresses use RFC 5737 documentation ranges (203.0.113.0/24) and never
-# resolve to anything real. Copy this to hosts.yml in the private inventory and
-# fill in actual values.
+# NO ADDRESSES — here or in the real inventory (CLAUDE.md §7). Hosts are reached
+# by mesh name: the inventory name is the NetBird peer name, so the address is
+# derived, not stored. Public addresses live only in OpenBao (infra/hosts),
+# where provision-node.yml records a finished node and checks new requests.
 all:
   children:
     # Freshly rented servers PENDING bootstrap: a host lives here only until
@@ -24,14 +25,14 @@ all:
     managed:
       hosts:
         node-a:
-          ansible_host: 203.0.113.11
         node-b:
-          ansible_host: 203.0.113.12
-        # The control server itself. Reached over the mesh: from inside the
-        # Semaphore container "localhost" would be the container, so the host
-        # is addressed like any other remote server.
+        # The control server itself, also over the mesh: from inside the
+        # Semaphore container "localhost" would be the container. Its peer name
+        # need not match the inventory name, and it is reached on 22, so both
+        # are stated rather than inherited from fleet.
         panel:
-          ansible_host: 203.0.113.10
+          ansible_host: "panel-peer.{{ netbird_dns_domain }}"
+          ansible_port: 22
       vars:
         ansible_user: ansible
 
@@ -40,16 +41,24 @@ all:
     lab:
       hosts:
         test:
-          ansible_host: 203.0.113.90
       vars:
         ansible_user: ansible
 
     # Parent group: every host Dockhand can reach (managed fleet + lab
-    # experiments). Holds the Hawser vars/vault (group_vars/fleet/).
+    # experiments). Holds the Hawser vars (group_vars/fleet/) and the mesh
+    # addressing every member inherits.
     fleet:
       children:
         managed:
         lab:
+      vars:
+        ansible_host: "{{ inventory_hostname }}.{{ netbird_dns_domain }}"
+        # Mesh :22 belongs to NetBird SSH on peers that enable it, so automation
+        # uses the port roles/ssh_hardening opens on the mesh interface.
+        ansible_port: "{{ automation_ssh_port }}"
+        # NetBird DNS answers AAAA as well, and the Semaphore container has no
+        # IPv6 route — without this, ssh dies with "Network unreachable".
+        ansible_ssh_common_args: "-o AddressFamily=inet"
 
     control:
       hosts:

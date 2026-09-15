@@ -123,8 +123,18 @@
     # hostname and shared by the entire fleet; a careless write drops every
     # other node's token. That read-merge-write is also why `read` belongs here
     # on its own merits, not only because of the precedence rule.
+    #
+    # infra/hosts is the second exact path, on the same terms: the fleet's public
+    # addresses (node name -> IP), which provision-node.yml checks a request
+    # against and records a finished node into. They are secrets (CLAUDE.md §7)
+    # and live nowhere else. The policy keeps its historical name, hawser-write,
+    # because renaming it means rewriting the bootstrap policy and the AppRole's
+    # token_policies in step; it now covers both tables.
     openbao_write_policy_hcl: |
       path "{{ openbao_kv_mount }}/data/hawser" {
+        capabilities = ["create", "update", "read"]
+      }
+      path "{{ openbao_kv_mount }}/data/hosts" {
         capabilities = ["create", "update", "read"]
       }
 
@@ -614,7 +624,7 @@
           - "Put the secret_id in a Semaphore Variable Group as a secret env var (Key Store entries are connection credentials; playbooks cannot read them)."
           - "Recovering root needs openbao_allow_root_generation=true, an apply, an unseal, generate-root, then the same again to turn it off — see the role README."
           - "BEFORE revoking root: OpenBao DISABLES generate-root by default since 2.5.3, so recovery is NOT one command."
-          - "Then copy the secret VALUES into KV yourself: infra/telegram, infra/netbird, infra/remnawave, infra/semaphore, infra/beszel, infra/crowdsec, infra/hawser"
+          - "Then copy the secret VALUES into KV yourself: infra/telegram, infra/netbird, infra/remnawave, infra/semaphore, infra/beszel, infra/crowdsec, infra/hawser, infra/hosts (public addresses, node name -> IP; see the header of provision-node.yml)"
       tags:
         - debug
 

@@ -5,7 +5,19 @@
 #
 # Semaphore template "Provision Node" — survey variables:
 #   node_ip        (required)        admin IP of the freshly rented VPS (root + admin key);
-#                                    used only for SSH — the panel never sees it
+#                                    used only for SSH — the panel never sees it.
+#                                    Recorded in OpenBao (infra/hosts) once the run
+#                                    succeeds, and nowhere else: not the inventory, not
+#                                    the Telegram report (CLAUDE.md §7)
+#
+# infra/hosts must exist before the first run — the guard below refuses to work
+# from an empty table, because an empty table is what lets a production address
+# through. Seed it as the operator, one node per command; each waits silently
+# for the address on stdin (paste it, then Ctrl-D), so it reaches neither the
+# shell history nor the process list:
+#
+#   docker exec -i -e BAO_TOKEN="$BAO_TOKEN" openbao bao kv put infra/hosts <first-node>=-
+#   docker exec -i -e BAO_TOKEN="$BAO_TOKEN" openbao bao kv patch infra/hosts <next-node>=-
 #   node_name      (required, >=3)   DNS-safe short name (lowercase letters, digits,
 #                                    hyphens); becomes the system hostname, the NetBird
 #                                    peer name, the panel node name and the
@@ -113,6 +125,17 @@
       tags:
         - config
 
+    # The fleet's public addresses, node name -> IP. The inventory holds none —
+    # hosts are reached by mesh name — so this table is what the guard in the
+    # next play checks a request against.
+    - name: Fetch the fleet address table from OpenBao
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: hosts
+        openbao_read_into: _fleet_addresses
+      tags:
+        - config
+
 # BEFORE the Dockhand play, and that ordering is the entire reason this play
 # exists separately. These checks used to sit with the add_host below, which
 # runs after the environment has been created and a Hawser token issued — so a
@@ -145,21 +168,34 @@
 
     # Guardrail: a mistyped node_ip must never re-provision a production
     # machine (a real near-miss — a serving node's address was entered by
-    # accident and only a rejected root key stopped the run). Checks the whole
-    # fleet (managed + lab). Residual gap: addresses the inventory does not
-    # contain (e.g. the panel's PUBLIC IP — its inventory address is the mesh
-    # IP) cannot be caught here.
+    # accident and only a rejected root key stopped the run).
     #
+    # Checked against OpenBao's address table, not the inventory: the inventory
+    # addresses hosts by mesh name and holds no IPs, so comparing with
+    # ansible_host would match nothing and wave every address through. The table
+    # also closes the old residual gap — the panel's public address can be in
+    # it, where the inventory only ever had the mesh one.
+    #
+    # An empty table is refused rather than trusted, for the same reason: it is
+    # indistinguishable from "no production node has this address".
+    - name: Assert the fleet address table is populated
+      ansible.builtin.assert:
+        that:
+          - hostvars['controller']._fleet_addresses | default({}) | length > 0
+        fail_msg: >-
+          infra/hosts in OpenBao is empty, so this run cannot tell a new server
+          from a production one. Record the fleet's public addresses first —
+          the commands are in the header of this playbook.
+
     # Resolved to a NAME rather than a yes/no, because the name is what makes
     # the override below safe to have at all.
-    - name: Find any inventory host already at this address
+    - name: Find any fleet host already at this address
       ansible.builtin.set_fact:
         _existing_host: >-
-          {{ groups['fleet'] | default([])
-             | map('extract', hostvars)
-             | selectattr('ansible_host', 'defined')
-             | selectattr('ansible_host', 'equalto', node_ip)
-             | map(attribute='inventory_hostname')
+          {{ hostvars['controller']._fleet_addresses | default({})
+             | dict2items
+             | selectattr('value', 'equalto', node_ip)
+             | map(attribute='key')
              | list | first | default('') }}
 
     # Rebuilding a machine that is already in the inventory is a REAL workflow —
@@ -781,6 +817,60 @@
       tags:
         - debug
 
+# After every build step, so only a node that was actually built gets recorded
+# — for the reason the report below gives: a play at the end of a playbook does
+# not run when an earlier play failed.
+#
+# This table is the only place a node's public address is kept, and the one the
+# validation guard reads.
+- name: Record the node's address in OpenBao
+  hosts: controller
+  gather_facts: false
+
+  tasks:
+    # Read again rather than reusing the first play's copy: twenty minutes have
+    # passed, and a write built from a stale map would drop anything recorded
+    # in between.
+    - name: Fetch the fleet address table again
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: hosts
+        openbao_read_into: _fleet_addresses_now
+      tags:
+        - config
+
+    # Any other name holding this address is dropped: the machine was rebuilt
+    # under a new name, and keeping the old entry would make the guard name a
+    # host that no longer exists.
+    - name: Work out the table with this node in it
+      ansible.builtin.set_fact:
+        _fleet_addresses_new: >-
+          {{ _fleet_addresses_now | dict2items
+             | rejectattr('value', 'equalto', node_ip)
+             | items2dict
+             | combine({node_name: node_ip}) }}
+      no_log: true
+      tags:
+        - config
+
+    # KV v2 has no per-field write, so the whole map goes back — merged above,
+    # the same read-merge-write as infra/hawser, under the same policy.
+    - name: Store the address table
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/infra/data/hosts"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ _openbao_token }}"
+        body_format: json
+        body:
+          data: "{{ _fleet_addresses_new }}"
+        status_code: [200, 204]
+      no_log: true
+      changed_when: _fleet_addresses_new != _fleet_addresses_now
+      when: _fleet_addresses_new != _fleet_addresses_now
+      tags:
+        - config
+
 # ONLY SUCCESS. A play at the end of a playbook does not run when an earlier
 # play failed, so this can never report a failure — that is Semaphore's job,
 # because it is the thing that knows a task died and where. Do not add a
@@ -837,7 +927,7 @@
           ✅ <b>Node provisioned</b> — <b>{{ node_name }}</b>
           🌍 {{ node_country | default('XX') | upper }} · profile <code>{{ node_profile }}</code>
           🔗 mesh <code>{{ node_name }}.{{ netbird_dns_domain }}</code>
-          🌐 <code>{{ node_name }}.{{ infra_domain }}</code> → <code>{{ node_ip }}</code>
+          🌐 <code>{{ node_name }}.{{ infra_domain }}</code>
           📦 Dockhand <code>{{ node_name | upper }}</code> · stack <code>{{ dockhand_stack_name | default('remnanode') }}</code> deployed
           🕒 {{ provision_started_at }} → {{ _finished_at }} UTC ({{ _duration }})
           Panel, DNS, mesh, monitoring and the workload are all in place.
