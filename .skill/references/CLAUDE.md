@@ -198,9 +198,20 @@ The opinionated choices an agent cannot infer:
 
 - No hardcoded secrets or plain-text credentials in any artifact. **Every
   secret lives in OpenBao**, read at run time through the AppRole — there is no
-  second store and no encrypted file in any repository. A value that is not a
-  secret (an address, a domain, a public key) belongs in plain group_vars:
-  putting it in the store costs a round trip and buys nothing.
+  second store and no encrypted file in any repository.
+- **Infrastructure IP addresses are secrets** — public and mesh alike. They
+  live in OpenBao and nowhere on GitHub: not in this repository, not in the
+  private inventory, not in the archive, and not in an issue, a pull request,
+  a commit message or a Telegram report. The fleet serves users against state
+  censorship: an address found in a repository tied to this account, matched
+  to the same address on a live server, is exactly the association a censor
+  looks for — and a published address also invites scanning, brute force and
+  DDoS. "Clients connect to it anyway" does not make it public; it makes it
+  findable only by someone already looking. Hosts are addressed by mesh name,
+  and inventories or issues are inspected by counting addresses, never by
+  printing them.
+- A value that is genuinely not a secret (a port, a role id) belongs in plain
+  group_vars: putting it in the store costs a round trip and buys nothing.
 - `no_log: true` on any task handling credentials (passwords, tokens, API
   keys, private keys).
 
