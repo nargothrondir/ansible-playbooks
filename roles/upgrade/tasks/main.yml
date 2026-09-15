@@ -39,11 +39,23 @@
 # interactive. A prompt inside an Ansible-driven apt run is not a question, it
 # is a hang — so pin it to list-only. This role decides what to do with the
 # verdict, and the reboot it may trigger restarts every service anyway.
+#
+# restart = 'l' does not cover the kernel and microcode hints. Their defaults
+# (kernelhints => 1, ucodehints => 1 in needrestart itself) open a dialog that
+# must be acknowledged, and in a HUMAN session that dialog is the same hang: a
+# manual `apt upgrade -y` on pl-1 sat for twelve hours in debconf's frontend
+# after its terminal went away, holding the dpkg lock that update run #440 then
+# failed on. -1 prints the hint as text instead. It does not blind this role:
+# needrestart runs the kernel check whenever -b is given, whatever kernelhints
+# says, so `needrestart -b -k` below still reports NEEDRESTART-KSTA. 0 would be
+# wrong — it disables the checks outright for interactive runs.
 - name: Keep needrestart from prompting during apt runs
   ansible.builtin.copy:
     content: |
       # Managed by Ansible — roles/upgrade. Do not edit by hand.
       $nrconf{restart} = 'l';
+      $nrconf{kernelhints} = -1;
+      $nrconf{ucodehints} = -1;
     dest: /etc/needrestart/conf.d/50-ansible-no-prompt.conf
     owner: root
     group: root
