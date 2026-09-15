@@ -58,7 +58,15 @@ all:
         ansible_port: "{{ automation_ssh_port }}"
         # NetBird DNS answers AAAA as well, and the Semaphore container has no
         # IPv6 route — without this, ssh dies with "Network unreachable".
-        ansible_ssh_common_args: "-o AddressFamily=inet"
+        #
+        # ServerAlive*: a peer that reboots faster than its old TCP connection
+        # is reset leaves Ansible's multiplexed ssh master on a dead link, and
+        # ansible-core's default ssh_args carry no keepalive. The master then
+        # waits out the kernel's retransmissions — tens of minutes — and
+        # ansible.builtin.reboot blocks inside one boot-id check, past its own
+        # timeout (de-1, update run #436). With keepalives the master gives up
+        # in ~30 s, ssh exits 255, and a retry opens a fresh connection.
+        ansible_ssh_common_args: "-o AddressFamily=inet -o ServerAliveInterval=10 -o ServerAliveCountMax=3"
 
     control:
       hosts:
