@@ -218,8 +218,10 @@
 # (client/cmd/up.go), so new SSH settings need the peer down first — the
 # procedure NetBird's own documentation gives. Async because the down can take
 # the Ansible session with it when that session travels over the mesh: the
-# wrapper forks and calls setsid, so `up` still runs, and the poll reconnects
-# once the mesh is back.
+# wrapper forks and calls setsid, so `up` still runs. The run's own status
+# polls do NOT ride out that gap by themselves — a poll that lands in it fails
+# with ssh exit 255 and marks the host unreachable. A play reaching nodes over
+# the mesh therefore sets ansible_ssh_retries (see playbooks/netbird.yml).
 #
 # No setup key here, unlike the join: an async job writes its command line into
 # its result file on the node. The peer is already registered, and `up` logs it

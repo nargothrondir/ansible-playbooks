@@ -60,6 +60,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | [playbooks/apt-sources.yml](playbooks/apt-sources.yml) | apt_sources (canonical Debian archive sources) | `apt_sources_target` (default: lab) |
 | [playbooks/common.yml](playbooks/common.yml) | common (re-apply the baseline) | `common_target` (default: lab) |
 | [playbooks/crowdsec.yml](playbooks/crowdsec.yml) | crowdsec | fleet (except panel) |
+| [playbooks/netbird.yml](playbooks/netbird.yml) | netbird (reconciles NetBird SSH: the break-glass and root login) | fleet (except panel) |
 | [playbooks/beszel.yml](playbooks/beszel.yml) | beszel_agent | fleet (except panel) |
 | [playbooks/provision-node.yml](playbooks/provision-node.yml) | bootstrap, apt_sources, upgrade, debian_release, ssh_hardening, common, dns, netbird, docker, xanmod, hawser, crowdsec, ufw, beszel_agent, notify_telegram + panel API | (survey) |
 | [playbooks/new-profile.yml](playbooks/new-profile.yml) | — (panel API call) | control |

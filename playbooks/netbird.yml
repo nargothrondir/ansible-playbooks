@@ -1,0 +1,67 @@
+---
+# Apply the netbird role to running nodes, without a reprovision. On an existing
+# node its real job is reconciling the NetBird SSH settings — the server that is
+# the fleet's break-glass, and root login through it — which before #102 were
+# applied only when a peer first joined. The role reads what each agent runs
+# with and re-applies only where that differs; see roles/netbird/README.md,
+# "SSH access".
+#
+# Semaphore template "Sync NetBird". Limit: EMPTY for every node, or
+# <host>,controller for one. The controller must be in the limit, exactly as for
+# Sync Hawser: its play reads the setup key, and every task that joins or
+# reconciles is gated on that key — without it the node play stops at its
+# assert rather than finishing green having changed nothing.
+#
+# The panel is excluded: Semaphore runs there, and its agent was not set up by
+# this role.
+#
+# RE-APPLYING TAKES A NODE OFF THE MESH FOR SECONDS, and this playbook reaches
+# nodes over the mesh. The role runs `netbird down && netbird up` as an async
+# job, which finishes on the node regardless of the session. What the RUN needs
+# is ansible_ssh_retries: without it, the first status poll that lands in the
+# gap marks the host unreachable although the job on it is fine.
+
+- name: Fetch the NetBird setup key
+  hosts: controller
+  gather_facts: false
+
+  tasks:
+    - name: Fetch the NetBird setup key from OpenBao
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: netbird
+        openbao_read_field: setup_key
+        openbao_read_into: _netbird_setup_key
+      tags:
+        - config
+
+- name: Reconcile NetBird on the nodes
+  hosts: fleet:!panel
+  gather_facts: true
+  become: true
+
+  vars:
+    netbird_setup_key: "{{ hostvars['controller']._netbird_setup_key | default('') }}"
+    # The same decision provision-node.yml makes for a new node: root through
+    # the break-glass. Who actually gets it is the SSH policy's call.
+    netbird_ssh_root: true
+    # Retries a connection that fails outright (ssh exit 255) with growing
+    # pauses, about a minute in total — several times the gap a re-apply
+    # leaves, and nothing else about the run changes.
+    ansible_ssh_retries: 6
+
+  pre_tasks:
+    - name: Assert the NetBird setup key was fetched
+      ansible.builtin.assert:
+        that:
+          - netbird_setup_key | length > 0
+        fail_msg: >-
+          The NetBird setup key is empty, and every task that joins or
+          reconciles is gated on it — the run would end green having changed
+          nothing. Put the controller in Limit (<host>,controller), and attach
+          the Variable Group carrying OPENBAO_SECRET_ID to the template.
+      tags:
+        - config
+
+  roles:
+    - netbird
