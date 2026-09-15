@@ -93,9 +93,20 @@
   tags:
     - debug
 
+# Async, because an upgrade can take down the connection it runs over. The fleet
+# is reached over the NetBird mesh, and upgrading the netbird package restarts
+# the agent: its postinst stops the service, uninstalls and reinstalls the unit,
+# then starts it. Run synchronously, a session lost in that window can take dpkg
+# with it — between the uninstall and the install, which leaves the node with no
+# NetBird service, off the mesh, and out of reach of the automation that would
+# repair it. The async wrapper forks and calls setsid, so the transaction
+# finishes regardless; the play's ansible_ssh_retries let the status polls ride
+# out the gap. The same holds for an sshd restart during the upgrade.
 - name: Perform package upgrade
   ansible.builtin.apt:
     upgrade: "{{ upgrade_apt_type }}"
+  async: "{{ upgrade_async_timeout }}"
+  poll: "{{ upgrade_async_poll }}"
   tags:
     - install
 

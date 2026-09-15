@@ -28,6 +28,15 @@ upgrade_cache_valid_time: 3600
 # the promise cannot be quietly forgotten.
 upgrade_hold_packages: []
 
+# Upper bound, in seconds, for the package upgrade, which runs as an async job
+# so that it survives the connection dropping (see tasks/main.yml). Generous on
+# purpose: when it expires the wrapper SIGKILLs the whole process group, and a
+# killed dpkg breaks a host far more thoroughly than a slow mirror.
+upgrade_async_timeout: 3600
+
+# Seconds between checks on the running upgrade.
+upgrade_async_poll: 15
+
 # Reboot the host automatically when the system signals one is required.
 upgrade_reboot: true
 
