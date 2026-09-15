@@ -12,6 +12,11 @@ upgrade_autoremove_purge: true
 # Reuse the apt cache if it was refreshed within this many seconds.
 upgrade_cache_valid_time: 3600
 
+# Seconds each apt task waits for the dpkg lock before failing. The module's own
+# default is 60, shorter than a routine apt-daily run that happens to start
+# mid-play (see tasks/main.yml).
+upgrade_lock_timeout: 900
+
 # Packages this host must NEVER upgrade unattended, held with dpkg selections.
 #
 # The control plane cannot safely update the things it is running on. Semaphore
