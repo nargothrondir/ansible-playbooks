@@ -16,6 +16,22 @@
 
 - name: Update managed servers
   hosts: managed
+  # One host at a time. managed holds the VPN nodes, and upgrade_reboot is on
+  # for them: run in parallel, a kernel update landing on the whole fleet would
+  # reboot every node in the same minute — every user disconnected at once,
+  # with no node left to fall back to. In series the reboot module waits for
+  # each host to come back before the next one starts. The report play below
+  # reads host facts, which persist across batches.
+  serial: 1
+  # serial has a trap this is here for. When every host of a batch fails or is
+  # unreachable, ansible-core breaks out of the WHOLE playbook, not just the
+  # play (executor/playbook_executor.py) — and with a batch of one, a single
+  # unreachable node would skip every node after it AND the Telegram report.
+  # Ignoring unreachability keeps the batch alive; the ping below then ends
+  # that host's run at once, instead of letting every remaining task spend a
+  # minute of ssh retries on it. Its report line reads "no result
+  # (unreachable?)". Task failures are rescued inside the block as before.
+  ignore_unreachable: true
   gather_facts: true
   become: true
   vars:
@@ -29,6 +45,17 @@
     ansible_ssh_retries: 6
 
   tasks:
+    # With ignore_unreachable on the play, an unreachable host would otherwise
+    # stay in it and fail every task slowly. Ending it here removes it without
+    # marking the batch failed, so the next host and the report still run.
+    - name: Check the host answers
+      ansible.builtin.ping:
+      register: update_ping
+
+    - name: Leave an unreachable host out of this run
+      ansible.builtin.meta: end_host
+      when: update_ping is unreachable
+
     - name: Upgrade the host, capturing failures for the report
       block:
         - name: Run the upgrade role
