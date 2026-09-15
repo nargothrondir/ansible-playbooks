@@ -48,6 +48,8 @@ so its apt hook can never prompt in the middle of an Ansible run.
 | `upgrade_autoremove_purge` | `true` | Purge config files when autoremoving |
 | `upgrade_cache_valid_time` | `3600` | Seconds the apt cache is considered fresh |
 | `upgrade_hold_packages` | `[]` | Packages this host must never upgrade unattended |
+| `upgrade_async_timeout` | `3600` | Upper bound in seconds for the package upgrade, which runs async so it survives the connection dropping (e.g. the netbird package restarting the mesh) |
+| `upgrade_async_poll` | `15` | Seconds between checks on the running upgrade |
 | `upgrade_reboot` | `true` | Reboot automatically when required |
 | `upgrade_reboot_timeout` | `600` | Seconds to wait for the host after reboot |
 
