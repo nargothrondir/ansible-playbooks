@@ -63,8 +63,23 @@
     # path would make ssh refuse the option outright, which is the loud failure
     # wanted here. The pre_tasks guard below already covers the one way it can
     # legitimately be absent — a limit that excluded the controller.
-    ansible_ssh_common_args: >-
+    #
+    # EXTRA args, not common args. ansible_ssh_common_args set here would be a
+    # PLAY variable and would replace the inventory's, which carries the mesh
+    # transport settings the fleet is reached with — -o AddressFamily=inet above
+    # all, without which ssh follows the AAAA record a mesh name answers with
+    # and the Semaphore container, having no IPv6 route, dies with "Network
+    # unreachable". ansible-core adds ssh_common_args AND the subsystem's
+    # *_extra_args to every command (connection/ssh.py), so this adds the
+    # certificate instead of standing in for the transport. All three
+    # subsystems get it: ssh carries the modules, sftp/scp the file transfers,
+    # and once the plain key leaves authorized_keys each needs a certificate of
+    # its own.
+    _hawser_cert_arg: >-
       -o CertificateFile={{ hostvars['controller']._fleet_ssh_cert_path | default('') }}
+    ansible_ssh_extra_args: "{{ _hawser_cert_arg }}"
+    ansible_sftp_extra_args: "{{ _hawser_cert_arg }}"
+    ansible_scp_extra_args: "{{ _hawser_cert_arg }}"
     # From OpenBao, read by the play above. group_vars defines nothing here; the
     # resolve to the same value; this one comes from OpenBao.
     hawser_token: >-

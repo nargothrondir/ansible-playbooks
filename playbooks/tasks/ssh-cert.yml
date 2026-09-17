@@ -11,8 +11,17 @@
 # and then, in each play that connects:
 #
 #   vars:
-#     ansible_ssh_common_args: >-
+#     _cert_arg: >-
 #       -o CertificateFile={{ hostvars['controller']._fleet_ssh_cert_path }}
+#     ansible_ssh_extra_args: "{{ _cert_arg }}"
+#     ansible_sftp_extra_args: "{{ _cert_arg }}"
+#     ansible_scp_extra_args: "{{ _cert_arg }}"
+#
+# EXTRA args, not common args: ansible_ssh_common_args in a play REPLACES the
+# inventory's, which is where the fleet's mesh transport settings live
+# (-o AddressFamily=inet, the keepalives). ansible-core appends ssh_common_args
+# AND the subsystem's *_extra_args to every command, so extra_args adds the
+# certificate without standing in for the transport.
 #
 # WHY A FILE AND NOT THE AGENT. ssh takes the two apart: the private key stays
 # in Semaphore's per-task agent, unexportable, and the certificate is an
