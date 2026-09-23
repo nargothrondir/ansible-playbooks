@@ -7,9 +7,10 @@
 #   _survey.key    the template name
 #   _survey.value  the desired survey variable set
 #
-# Idempotent (fetch-then-guard, CLAUDE.md §6): only variables MISSING by name
-# are appended; existing entries — including manual edits to titles, types or
-# defaults — are never touched. The PUT runs only when something is missing.
+# Idempotent (fetch-then-guard, CLAUDE.md §6): variables missing by name are
+# added and ones not declared are removed; of an existing entry only `required`
+# is brought in line — titles, descriptions, types and defaults stay as edited.
+# The PUT runs only when one of those differs.
 
 - name: Resolve the target template stub
   ansible.builtin.set_fact:
@@ -67,19 +68,44 @@
     _missing_vars: "{{ _survey.value | rejectattr('name', 'in', _existing_names) | list }}"
     _stale_vars: "{{ _existing_vars | rejectattr('name', 'in', _wanted_names) | list }}"
 
+# `required` is behaviour, not wording: it decides whether a run may start
+# without the value. So a kept entry takes its flag from the declared list,
+# while everything else about it stays as found. Rebuilt per template — the
+# fact is reset first, because this file runs once per template in a loop.
+- name: Start the list of kept variables with their declared required flag
+  ansible.builtin.set_fact:
+    _keep_vars_declared: []
+
+- name: Carry the declared required flag onto each kept variable
+  ansible.builtin.set_fact:
+    _keep_vars_declared: >-
+      {{ _keep_vars_declared + [_kept | combine({'required':
+           (_survey.value | selectattr('name', 'equalto', _kept.name) | first).required
+           | default(false) | bool})] }}
+  loop: "{{ _keep_vars }}"
+  loop_control:
+    loop_var: _kept
+    label: "{{ _kept.name }}"
+
+- name: Note whether any required flag moves
+  ansible.builtin.set_fact:
+    _required_changed: >-
+      {{ (_keep_vars | map(attribute='required', default=false) | map('bool') | list)
+         != (_keep_vars_declared | map(attribute='required') | list) }}
+
 - name: Bring the survey to the declared set (only when it differs)
   ansible.builtin.uri:
     url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates/{{ _template.id }}"
     method: PUT
     headers: "{{ _api_headers }}"
     body_format: json
-    body: "{{ _template | combine({'survey_vars': _keep_vars + _missing_vars}) }}"
+    body: "{{ _template | combine({'survey_vars': _keep_vars_declared + _missing_vars}) }}"
     status_code: [200, 204]
   no_log: true
-  # The when-guard is the change detector: the PUT runs only when the set
+  # The when-guard is the change detector: the PUT runs only when the survey
   # actually differs, so completing it IS the state change.
-  changed_when: (_missing_vars | length + _stale_vars | length) > 0
-  when: (_missing_vars | length + _stale_vars | length) > 0
+  changed_when: (_missing_vars | length + _stale_vars | length) > 0 or _required_changed | bool
+  when: (_missing_vars | length + _stale_vars | length) > 0 or _required_changed | bool
 
 - name: Show the survey sync summary
   ansible.builtin.debug:
@@ -87,6 +113,6 @@
       Template "{{ _survey.key }}":
       added {{ (_missing_vars | map(attribute='name') | join(', ')) | default('nothing', true) }};
       removed {{ (_stale_vars | map(attribute='name') | join(', ')) | default('nothing', true) }};
-      kept {{ _keep_vars | length }}.
+      kept {{ _keep_vars | length }}{{ ', required flags updated' if _required_changed | bool else '' }}.
   tags:
     - debug
