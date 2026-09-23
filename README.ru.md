@@ -66,6 +66,7 @@
 | [playbooks/new-profile.yml](playbooks/new-profile.yml) | — (вызов API панели) | control |
 | [playbooks/new-node.yml](playbooks/new-node.yml) | — (вызов API панели) | control |
 | [playbooks/enable-xhttp.yml](playbooks/enable-xhttp.yml) | — (API панели и Dockhand; new-profile + new-node + dockhand-stack с `node_xhttp=true`: добавляет VLESS поверх xHTTP на существующую ноду рядом с Reality TCP) | control |
+| [playbooks/migrate-inbound-tags.yml](playbooks/migrate-inbound-tags.yml) | — (API панели; переименовывает inbound одного профиля в `<CC>_VLESS_TCP_REALITY` / `<CC>_VLESS_XHTTP_TLS` и заново привязывает сквады, ноды и хосты) | control |
 | [playbooks/dns-record.yml](playbooks/dns-record.yml) | — (API Cloudflare; импортируется provision-node.yml или отдельно) | `dns_target` (по умолчанию: controller) |
 | [playbooks/dockhand-environment.yml](playbooks/dockhand-environment.yml) | — (API Dockhand через панель; импортируется provision-node.yml или отдельно) | `dockhand_env_target` (по умолчанию: controller) |
 | [playbooks/dockhand-stack.yml](playbooks/dockhand-stack.yml) | — (API Dockhand и панели через панель; разворачивает From-Git стек ноды) | `dockhand_stack_target` (по умолчанию: controller) |

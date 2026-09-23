@@ -1,0 +1,443 @@
+---
+# Rename ONE config profile's inbounds to the <CC>_<protocol> tag scheme
+# (vars/inbound-tags.yml): Reality TCP -> <CC>_VLESS_TCP_REALITY, xHTTP ->
+# <CC>_VLESS_XHTTP_TLS. Inbounds of any other kind are left as they are.
+#
+# A RENAME IS A RE-CREATION. The panel matches inbounds by tag + protocol
+# (syncInbounds, backend 2.8.0), so a new tag is a delete plus a create with a
+# new uuid, and the delete cascades (schema.prisma): squad membership and node
+# activation are removed, and the subscription host is left with no inbound.
+# Nothing else references an inbound — per-user traffic history is keyed by
+# node and user — so those three are all this playbook has to put back.
+#
+# What a run does, per profile:
+#   1. records which squads, hosts and nodes each inbound is bound to, keyed by
+#      its NEW tag, and prints that snapshot to the task log;
+#   2. PATCHes the config with only the tags changed;
+#   3. re-binds squads (users), then nodes (serving), then hosts (subscription)
+#      to the new uuids, and asserts every binding is back.
+# Users of the profile's nodes are cut off from step 2 until the node re-bind,
+# a few seconds, and Xray restarts on those nodes more than once. Run it one
+# profile at a time, at a quiet hour.
+#
+# IF A RUN FAILS BETWEEN 2 AND 3 the bindings are gone and a plain re-run
+# cannot see them: the tags are already new. It says so — it checks the
+# bindings whenever there is nothing to rename. Recover with the snapshot the
+# failed run printed ("Record the bindings…"), copied verbatim into CLI args:
+#   -e 'migrate_restore={"TAG": {"squads": [...], "hosts": [...], "nodes": [...]}}'
+# which skips the rename and re-binds from it. Re-running that is safe.
+#
+# Idempotent: a profile already on the scheme with its bindings intact changes
+# nothing.
+#
+# Run from Semaphore ("Migrate inbound tags"), survey: profile_name. Limit
+# stays EMPTY — every play targets the controller.
+
+- name: Rename a profile's inbounds to the country-code tag scheme
+  hosts: controller
+  gather_facts: false
+
+  vars_files:
+    - vars/inbound-tags.yml
+
+  vars:
+    _restore: "{{ migrate_restore | default('', true) }}"
+    _api_headers: >-
+      {{ {'Authorization': 'Bearer ' ~ _remnawave_api_token,
+          'X-Forwarded-For': '127.0.0.1',
+          'X-Forwarded-Proto': 'https'}
+         | combine({'Host': remnawave_panel_host}
+                   if (remnawave_panel_host | default('') | length > 0)
+                   else {}) }}
+
+  tasks:
+    - name: Assert required parameters are provided
+      ansible.builtin.assert:
+        that:
+          - profile_name | default('') | length >= 2
+          - remnawave_panel_url | default('') | length > 0
+        fail_msg: >-
+          Required: profile_name (the config profile to migrate), plus
+          remnawave_panel_url in group_vars/control.
+
+    - name: Fetch the Remnawave API token
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: remnawave
+        openbao_read_field: api_token
+        openbao_read_into: _remnawave_api_token
+      tags:
+        - config
+
+    - name: Fetch config profiles from the panel
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/config-profiles"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _profiles
+      no_log: true
+      changed_when: false
+      check_mode: false
+
+    - name: Resolve the profile
+      ansible.builtin.set_fact:
+        existing_profile: >-
+          {{ _profiles.json.response.configProfiles
+             | selectattr('name', 'equalto', profile_name) | list | first | default({}) }}
+
+    - name: Assert the profile exists and its country code is settled
+      ansible.builtin.assert:
+        that:
+          - existing_profile.uuid is defined
+          - _profile_code is match('^[A-Z]{2}$')
+          - _profile_code != 'XX'
+        fail_msg: >-
+          {{ ("Config profile '" ~ profile_name ~ "' not found. Available: "
+              ~ (_profiles.json.response.configProfiles | map(attribute='name') | join(', ')))
+             if existing_profile.uuid is not defined
+             else ("Cannot tell which country profile '" ~ profile_name
+                   ~ "' is for: its nodes report [" ~ (_profile_node_codes | join(', '))
+                   ~ "]. Pass -e profile_code=<CC>.") }}
+
+    # --- What needs a new tag ---
+    # Classified by what an inbound IS, not by what it is called: the old names
+    # were the profile name and <profile>-xhttp, but a hand-edited profile may
+    # carry anything.
+    - name: Work out which inbounds need a new tag
+      ansible.builtin.set_fact:
+        _renames: "{{ _renames | default([]) + [{'uuid': item.uuid, 'from': item.tag, 'to': _target, 'key': _key}] }}"
+      loop: "{{ existing_profile.inbounds }}"
+      loop_control:
+        label: "{{ item.tag }}"
+      vars:
+        _key: >-
+          {{ 'reality-tcp'
+             if (item.type == 'vless' and item.network in ['tcp', 'raw'] and item.security == 'reality')
+             else ('xhttp' if (item.type == 'vless' and item.network == 'xhttp') else '') }}
+        _target: "{{ (_profile_code ~ _inbound_tag_suffixes[_key]) if _key | length > 0 else '' }}"
+      when:
+        - _restore | length == 0
+        - _key | length > 0
+        - item.tag != _target
+
+    - name: Settle the rename list
+      ansible.builtin.set_fact:
+        _renames: "{{ _renames | default([]) }}"
+        _rename_map: "{{ _renames | default([]) | items2dict(key_name='from', value_name='to') }}"
+
+    # Two Reality TCP inbounds in one profile would both be asked to become the
+    # same tag; a target another profile holds would be refused by the panel
+    # (tags are unique panel-wide); a routing rule naming an old tag would
+    # silently stop matching after the rename. All three stop the run here,
+    # before anything is changed.
+    - name: Assert the renames are safe to make
+      ansible.builtin.assert:
+        that:
+          - (_renames | map(attribute='to') | unique | list | length) == (_renames | length)
+          - _renames | map(attribute='to') | select('in', _all_tags) | list | length == 0
+          - _rules_on_old_tags | length == 0
+        fail_msg: >-
+          Refusing to rename in '{{ profile_name }}'. Targets:
+          {{ _renames | map(attribute='to') | join(', ') }}. Already in use in the
+          panel: {{ _renames | map(attribute='to') | select('in', _all_tags) | join(', ') or 'none' }}.
+          Routing rules naming an old tag: {{ _rules_on_old_tags | join(', ') or 'none' }}.
+          Duplicate targets mean the profile has two inbounds of one kind — sort
+          that out by hand first.
+      vars:
+        _all_tags: >-
+          {{ _profiles.json.response.configProfiles | map(attribute='inbounds')
+             | flatten | map(attribute='tag') | list }}
+        _rules_on_old_tags: >-
+          {{ (existing_profile.config.routing | default({})).rules | default([])
+             | map(attribute='inboundTag', default=[]) | flatten
+             | select('in', _rename_map.keys() | list) | list }}
+      when: _renames | length > 0
+
+    # --- Snapshot the bindings, keyed by the NEW tag ---
+    - name: Fetch squads, hosts and nodes
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/{{ item }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _bound
+      loop:
+        - internal-squads
+        - hosts
+        - nodes
+      no_log: true
+      changed_when: false
+      check_mode: false
+
+    - name: Unpack squads, hosts and nodes
+      ansible.builtin.set_fact:
+        _squads: "{{ _bound.results[0].json.response.internalSquads }}"
+        _hosts: "{{ _bound.results[1].json.response }}"
+        _nodes: "{{ _bound.results[2].json.response }}"
+      no_log: true
+
+    # JSON, so that the log line below is exactly what migrate_restore takes.
+    - name: Build the snapshot of every binding the rename will drop
+      ansible.builtin.set_fact:
+        _snapshot_json: >-
+          {%- set out = {} -%}
+          {%- for r in _renames -%}
+            {%- set sq = [] -%}{%- set nd = [] -%}
+            {%- for q in _squads -%}
+              {%- if r.uuid in (q.inbounds | map(attribute='uuid') | list) -%}{%- set _ = sq.append(q.uuid) -%}{%- endif -%}
+            {%- endfor -%}
+            {%- for n in _nodes -%}
+              {%- if r.uuid in (n.configProfile.activeInbounds | map(attribute='uuid') | list) -%}{%- set _ = nd.append(n.uuid) -%}{%- endif -%}
+            {%- endfor -%}
+            {%- set _ = out.update({r.to: {'squads': sq, 'nodes': nd,
+                  'hosts': _hosts | selectattr('inbound.configProfileInboundUuid', 'defined')
+                                  | selectattr('inbound.configProfileInboundUuid', 'equalto', r.uuid)
+                                  | map(attribute='uuid') | list}}) -%}
+          {%- endfor -%}
+          {{- out | to_json -}}
+      when: _renames | length > 0
+
+    # The recovery record. A Semaphore task log outlives the run, so this line
+    # is what a failed run is repaired from. Nothing in it is secret: uuids of
+    # squads, hosts and nodes.
+    - name: Record the bindings before renaming (copy into migrate_restore to recover)
+      ansible.builtin.debug:
+        msg: "{{ _snapshot_json }}"
+      when: _renames | length > 0
+      tags:
+        - debug
+        - always
+
+    - name: Rename, then put every binding back
+      when: (_renames | length > 0) or (_restore | length > 0)
+      block:
+        - name: Build the config with only the tags changed
+          ansible.builtin.set_fact:
+            _config_renamed: >-
+              {%- set ins = [] -%}
+              {%- for i in existing_profile.config.inbounds -%}
+                {%- set _ = ins.append(i | combine({'tag': _rename_map[i.tag]}) if i.tag in _rename_map else i) -%}
+              {%- endfor -%}
+              {{- existing_profile.config | combine({'inbounds': ins}) | to_json -}}
+          no_log: true
+          when: _renames | length > 0
+
+        # Every node on the profile restarts Xray and loses the renamed inbounds
+        # until the re-bind below.
+        - name: Rename the inbounds
+          delegate_to: panel
+          ansible.builtin.uri:
+            url: "{{ remnawave_panel_url }}/api/config-profiles"
+            method: PATCH
+            headers: "{{ _api_headers }}"
+            body_format: json
+            body: "{{ {'uuid': existing_profile.uuid, 'config': _config_renamed | from_json} }}"
+            status_code: [200]
+          register: _renamed
+          no_log: true
+          changed_when: _renamed.status == 200
+          when: _renames | length > 0
+
+        - name: Take the snapshot to re-bind from
+          ansible.builtin.set_fact:
+            # -e 'migrate_restore={...}' arrives as a string, a JSON -e as a dict.
+            _snapshot: >-
+              {{ ((_restore if _restore is mapping else _restore | from_json)
+                  if _restore | length > 0
+                  else _snapshot_json | from_json) }}
+
+        - name: Re-read the profile, squads, hosts and nodes
+          delegate_to: panel
+          ansible.builtin.uri:
+            url: "{{ remnawave_panel_url }}/api/{{ item }}"
+            method: GET
+            headers: "{{ _api_headers }}"
+            status_code: [200]
+          register: _now
+          loop:
+            - config-profiles
+            - internal-squads
+            - hosts
+            - nodes
+          no_log: true
+          changed_when: false
+          check_mode: false
+
+        - name: Resolve the new inbound uuids
+          ansible.builtin.set_fact:
+            _uuid_by_tag: >-
+              {{ _now.results[0].json.response.configProfiles
+                 | selectattr('uuid', 'equalto', existing_profile.uuid) | map(attribute='inbounds')
+                 | flatten | items2dict(key_name='tag', value_name='uuid') }}
+            _squads_now: "{{ _now.results[1].json.response.internalSquads }}"
+            _hosts_now: "{{ _now.results[2].json.response }}"
+            _nodes_now: "{{ _now.results[3].json.response }}"
+          no_log: true
+
+        - name: Assert every renamed inbound exists under its new tag
+          ansible.builtin.assert:
+            that:
+              - _snapshot.keys() | reject('in', _uuid_by_tag.keys() | list) | list | length == 0
+            fail_msg: >-
+              The profile has no inbound tagged
+              {{ _snapshot.keys() | reject('in', _uuid_by_tag.keys() | list) | join(', ') }}.
+
+        # Squads first: an inbound in no squad reaches the node with no users,
+        # so a node re-bound before its squad would still serve nobody.
+        - name: Put the renamed inbounds back into their squads
+          delegate_to: panel
+          ansible.builtin.uri:
+            url: "{{ remnawave_panel_url }}/api/internal-squads"
+            method: PATCH
+            headers: "{{ _api_headers }}"
+            body_format: json
+            body: "{{ {'uuid': item, 'inbounds': (_current + _wanted) | unique} }}"
+            status_code: [200]
+          register: _squads_fixed
+          loop: "{{ _snapshot.values() | map(attribute='squads') | flatten | unique }}"
+          vars:
+            _current: >-
+              {{ _squads_now | selectattr('uuid', 'equalto', item) | map(attribute='inbounds')
+                 | flatten | map(attribute='uuid') | list }}
+            _wanted: >-
+              {{ _snapshot | dict2items | selectattr('value.squads', 'contains', item)
+                 | map(attribute='key') | map('extract', _uuid_by_tag) | list }}
+          no_log: true
+          changed_when: _squads_fixed.status | default(0) == 200
+          when: _wanted | reject('in', _current) | list | length > 0
+
+        - name: Put the renamed inbounds back on their nodes
+          delegate_to: panel
+          ansible.builtin.uri:
+            url: "{{ remnawave_panel_url }}/api/nodes"
+            method: PATCH
+            headers: "{{ _api_headers }}"
+            body_format: json
+            body: >-
+              {{ {'uuid': item,
+                  'configProfile': {
+                    'activeConfigProfileUuid': existing_profile.uuid,
+                    'activeInbounds': (_current + _wanted) | unique}} }}
+            status_code: [200]
+          register: _nodes_fixed
+          loop: "{{ _snapshot.values() | map(attribute='nodes') | flatten | unique }}"
+          vars:
+            _current: >-
+              {{ _nodes_now | selectattr('uuid', 'equalto', item)
+                 | map(attribute='configProfile.activeInbounds') | flatten
+                 | map(attribute='uuid') | list }}
+            _wanted: >-
+              {{ _snapshot | dict2items | selectattr('value.nodes', 'contains', item)
+                 | map(attribute='key') | map('extract', _uuid_by_tag) | list }}
+          no_log: true
+          changed_when: _nodes_fixed.status | default(0) == 200
+          when: _wanted | reject('in', _current) | list | length > 0
+
+        # The host keeps its remark, address and every other setting — only the
+        # inbound it points at changes.
+        - name: Point the subscription hosts at the renamed inbounds
+          delegate_to: panel
+          ansible.builtin.uri:
+            url: "{{ remnawave_panel_url }}/api/hosts"
+            method: PATCH
+            headers: "{{ _api_headers }}"
+            body_format: json
+            body: >-
+              {{ {'uuid': item.host,
+                  'inbound': {'configProfileUuid': existing_profile.uuid,
+                              'configProfileInboundUuid': _uuid_by_tag[item.tag]}} }}
+            status_code: [200]
+          register: _hosts_fixed
+          loop: "{{ _host_pairs }}"
+          vars:
+            _host_pairs: >-
+              {%- set out = [] -%}
+              {%- for tag, b in _snapshot.items() -%}{%- for h in b.hosts -%}
+                {%- set _ = out.append({'tag': tag, 'host': h}) -%}
+              {%- endfor -%}{%- endfor -%}
+              {{- out -}}
+          loop_control:
+            label: "{{ item.tag }}"
+          no_log: true
+          changed_when: _hosts_fixed.status | default(0) == 200
+          when: >-
+            (_hosts_now | selectattr('uuid', 'equalto', item.host)
+             | map(attribute='inbound.configProfileInboundUuid', default='') | first | default(''))
+            != _uuid_by_tag[item.tag]
+
+      rescue:
+        - name: Report the failure and how to recover
+          ansible.builtin.fail:
+            msg: >-
+              Migration of '{{ profile_name }}' stopped: {{ ansible_failed_result.msg | default('unknown error') }}.
+              If the rename went through, squads, nodes and hosts may be unbound
+              and the profile's users cut off. Re-run with CLI args
+              -e 'migrate_restore=<the JSON from "Record the bindings…" above>'
+              to re-bind without renaming again.
+
+    # --- Whatever happened above, the bindings must hold now ---
+    # This is also what a plain re-run after a failed one lands on: nothing to
+    # rename, so it proves the bindings instead of reporting success.
+    - name: Re-read squads, hosts, nodes and the profile for the final check
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/{{ item }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _final
+      loop:
+        - config-profiles
+        - internal-squads
+        - hosts
+        - nodes
+      no_log: true
+      changed_when: false
+      check_mode: false
+
+    - name: Assert every scheme inbound is in a squad, served and published
+      ansible.builtin.assert:
+        that:
+          - _unbound | length == 0
+        fail_msg: >-
+          In '{{ profile_name }}' these inbounds lack a binding: {{ _unbound | join('; ') }}.
+          If a migration run failed, re-bind from its snapshot with
+          -e 'migrate_restore=…' (see the header of this playbook).
+      vars:
+        _profile_now: >-
+          {{ _final.results[0].json.response.configProfiles
+             | selectattr('uuid', 'equalto', existing_profile.uuid) | first }}
+        _squad_uuids: >-
+          {{ _final.results[1].json.response.internalSquads | map(attribute='inbounds')
+             | flatten | map(attribute='uuid') | list }}
+        _host_uuids: >-
+          {{ _final.results[2].json.response
+             | map(attribute='inbound.configProfileInboundUuid', default='') | list }}
+        _node_uuids: >-
+          {{ _final.results[3].json.response | map(attribute='configProfile.activeInbounds')
+             | flatten | map(attribute='uuid') | list }}
+        _unbound: >-
+          {%- set out = [] -%}
+          {%- for i in _profile_now.inbounds if i.tag.startswith(_profile_code ~ '_') -%}
+            {%- set miss = [] -%}
+            {%- if i.uuid not in _squad_uuids -%}{%- set _ = miss.append('no squad') -%}{%- endif -%}
+            {%- if i.uuid not in _node_uuids -%}{%- set _ = miss.append('no node') -%}{%- endif -%}
+            {%- if i.uuid not in _host_uuids -%}{%- set _ = miss.append('no host') -%}{%- endif -%}
+            {%- if miss -%}{%- set _ = out.append(i.tag ~ ': ' ~ miss | join(', ')) -%}{%- endif -%}
+          {%- endfor -%}
+          {{- out -}}
+
+    - name: Report the migration
+      ansible.builtin.debug:
+        msg: >-
+          Profile "{{ profile_name }}":
+          {{ ('renamed ' ~ (_renames | map(attribute='from') | zip(_renames | map(attribute='to'))
+               | map('join', ' -> ') | join(', ')) ~ '; bindings restored')
+             if _renames | length > 0
+             else ('re-bound from the given snapshot' if _restore | length > 0
+                   else 'already on the <CC>_<protocol> scheme, bindings intact') }}.
+      tags:
+        - debug
