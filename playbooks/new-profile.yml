@@ -53,6 +53,28 @@
          if (node_name | default('')) | length > 0 else '' }}
     profile_inbound_tag: "{{ profile_name }}"
     host_port: 443
+    # The name clients see for the subscription host: "<flag> <NODE> <protocol>",
+    # e.g. "🇫🇮 FI-1 Reality TCP" — the format the existing hosts were renamed to.
+    # Remnawave stores the remark exactly as given and adds nothing:
+    # resolveCountryEmoji in backend 2.8.0 serves node statistics and metrics
+    # only. So the flag is built here from node_country (regional indicator
+    # symbols; Ansible has no chr filter, '%c' | format does the same); XX, empty
+    # or malformed codes give no flag. A standalone run with no node_name keeps
+    # the profile name. Used on creation only — an existing host is never
+    # renamed.
+    #
+    # profile_host_label is per protocol. With a second protocol (xHTTP,
+    # Hysteria2 — archive #42) each inbound gets its own host and its own label.
+    profile_host_label: "Reality TCP"
+    _host_country: "{{ node_country | default('') | upper }}"
+    _host_flag: >-
+      {{ ('%c%c' | format(127462 + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.index(_host_country[0]),
+                          127462 + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.index(_host_country[1])))
+         if (_host_country | length == 2 and _host_country.isalpha() and _host_country != 'XX')
+         else '' }}
+    profile_host_remark: >-
+      {{ ([_host_flag, node_name | upper, profile_host_label] | select | join(' '))
+         if (node_name | default('')) | length > 0 else profile_name }}
     # WARP routes IP-check domains through a "warp" interface. OFF by default: a
     # bare node has none, and enabling it there times clients out (lab, 2026-07-08).
     profile_use_warp: false
@@ -237,9 +259,10 @@
       register: hosts_result
       no_log: true
 
-    # Match on the inbound the host serves (a stable UUID), NOT the remark — the
-    # panel decorates remarks with a flag emoji ("🇵🇱 Poland"), so a remark
-    # comparison never matches and creates duplicate hosts.
+    # Match on the inbound the host serves (a stable UUID), NOT the remark. The
+    # remark is a display label: it carries a flag and gets renamed by hand in
+    # the panel, so a remark comparison stops matching and creates duplicate
+    # hosts — the mistake the Beszel role made with system names.
     - name: Determine whether the subscription host is missing
       ansible.builtin.set_fact:
         # default('') keeps a host with a null/absent inbound from injecting an
@@ -271,7 +294,7 @@
           {{ {'inbound': {
                 'configProfileUuid': profile_uuid,
                 'configProfileInboundUuid': profile_inbound_uuid},
-              'remark': profile_name,
+              'remark': profile_host_remark,
               'address': profile_domain,
               'port': host_port | int,
               'sni': profile_domain} }}
