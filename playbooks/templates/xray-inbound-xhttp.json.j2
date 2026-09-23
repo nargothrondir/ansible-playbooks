@@ -1,0 +1,21 @@
+{
+  "tag": "{{ _xhttp_tag }}",
+  "listen": "{{ profile_xhttp_socket }},0666",
+  "protocol": "vless",
+  "settings": { "clients": [], "decryption": "none" },
+  "sniffing": {
+    "enabled": true,
+    "destOverride": ["http", "tls", "quic"]
+  },
+  "streamSettings": {
+    "network": "xhttp",
+    "xhttpSettings": {
+      "mode": "auto",
+      "path": "{{ _xhttp_path }}",
+      "noSSEHeader": true
+    },
+    "sockopt": {
+      "trustedXForwardedFor": ["X-Real-IP"]
+    }
+  }
+}
