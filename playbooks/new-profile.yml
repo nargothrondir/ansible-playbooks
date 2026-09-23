@@ -89,6 +89,12 @@
     # noSSEHeader: Angie needs no SSE hint to stop buffering (Xray already
     # sends X-Accel-Buffering: no), so the download stream need not look like
     # one. Everything else in xhttpSettings is left at Xray's defaults.
+    #
+    # The inbound still carries "port": host_port. Xray drops it for a socket
+    # listener (infra/conf/xray.go, v26.6.27: PortList = nil when listen is a
+    # path), but the panel's host form pre-fills the port from the inbound, and
+    # an inbound without one leaves that required field empty for anyone
+    # editing the host by hand.
     profile_xhttp_socket: /dev/shm/xhttp.sock
     # One row per protocol. `tag` is the inbound's identity (see above);
     # `label` ends the subscription host's remark; `host_params` is merged into the
