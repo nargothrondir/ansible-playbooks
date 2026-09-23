@@ -33,7 +33,9 @@
 #
 # The WORDING of a variable that belongs is left as found: titles and
 # descriptions get tuned in the UI while somebody is reading them, and
-# overwriting that on every sync would be its own kind of vandalism.
+# overwriting that on every sync would be its own kind of vandalism. Whether a
+# variable is REQUIRED is not wording — it decides whether a run can start
+# without it — so that one flag is carried over from the list below.
 
 - name: Ensure Semaphore template survey variables
   hosts: controller
@@ -77,11 +79,14 @@
         # value WINS over the one from OpenBao, so a required box someone fills
         # to get past it hands the node a Hawser token that does not work — and
         # that only shows up at the end, when the stack fails to deploy.
+        # Required since the Beszel name needs its location number, and the
+        # subscription host its flag: without it provisioning stops at its
+        # first check anyway, so the form should say so.
         - name: node_country
           title: Country code
           description: ISO-2 country code for the panel flag (e.g. PL)
           type: ""
-          required: false
+          required: true
         # Shown in brackets in the Beszel system name ("3.1 FI Node [...]").
         # Optional: without it the name simply has no brackets.
         - name: node_provider

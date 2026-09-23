@@ -753,9 +753,14 @@
     # six seconds after the node was registered — about two minutes before the
     # panel had pushed the config and started xray. Eighteen retries went
     # unused. A wait that does not test what the assert requires is decoration.
+    #
+    # Found by address, as new-node.yml registered it: the node's name in the
+    # panel is a display label that gets renamed, and a node renamed there
+    # would read as missing here.
     _panel_node: >-
       {{ _smoke_nodes.json.response | default([])
-         | selectattr('name', 'equalto', node_name) | list | first | default({}) }}
+         | selectattr('address', 'equalto', provisioned_node_address | default(''))
+         | list | first | default({}) }}
 
   tasks:
     - name: Fetch the Remnawave API token

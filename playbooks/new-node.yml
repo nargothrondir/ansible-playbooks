@@ -35,6 +35,12 @@
          else node_name | lower ~ '.' ~ netbird_dns_domain }}
     _node_country: >-
       {{ node_country if (node_country | default('') | length > 0) else 'XX' }}
+    # The name the node is CREATED with — a display label the operator renames
+    # in the panel freely. Nothing looks the node up by it: see the existence
+    # check below. Defaults to node_name; provisioning may pass a nicer one.
+    _node_display_name: >-
+      {{ node_display_name if (node_display_name | default('') | length > 0)
+         else node_name }}
     _api_headers:
       Authorization: "Bearer {{ _remnawave_api_token }}"
       X-Forwarded-For: "127.0.0.1"
@@ -102,9 +108,14 @@
       register: nodes_result
       no_log: true
 
+    # Matched on the ADDRESS, not the name. Names are display labels and were
+    # renamed in the panel ("FI-1 [...]"); a name check then misses the node
+    # and a re-run creates a second one pointing at the same host — the mistake
+    # the Beszel role made with system names. The address is derived from
+    # node_name (the mesh name) and stays put.
     - name: Create the node via the panel API (only if it does not exist yet)
       delegate_to: panel
-      when: node_name not in (nodes_result.json.response | map(attribute='name') | list)
+      when: _node_address not in (nodes_result.json.response | map(attribute='address') | list)
       ansible.builtin.uri:
         url: "{{ remnawave_panel_url }}/api/nodes"
         method: POST
@@ -121,7 +132,7 @@
         # Built as a Jinja dict so port stays a NUMBER — a templated YAML
         # scalar would arrive as a string and fail the panel's Zod validation.
         body: >-
-          {{ {'name': node_name,
+          {{ {'name': _node_display_name,
               'address': _node_address,
               'port': node_port | int,
               'countryCode': _node_country | upper,
@@ -132,6 +143,14 @@
         status_code: [200, 201]
       register: new_node_result
       no_log: true
+
+    # Published so the smoke test in provision-node.yml finds the node by the
+    # exact address registered here, without deriving it a second time.
+    - name: Publish the registered address for the rest of the run
+      ansible.builtin.set_fact:
+        provisioned_node_address: "{{ _node_address }}"
+      tags:
+        - config
 
     - name: Show the registered node summary
       ansible.builtin.debug:
