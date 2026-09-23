@@ -166,7 +166,7 @@
         - name: profile_name
           title: Config profile
           description: >-
-            The config profile whose inbounds get the <CC>_<protocol> tags (e.g.
+            The config profile whose inbounds get the <CC>-<protocol> tags (e.g.
             Finland). One per run
           type: ""
           required: true

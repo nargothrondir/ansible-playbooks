@@ -1,7 +1,7 @@
 ---
-# Rename ONE config profile's inbounds to the <CC>_<protocol> tag scheme
-# (vars/inbound-tags.yml): Reality TCP -> <CC>_VLESS_TCP_REALITY, xHTTP ->
-# <CC>_VLESS_XHTTP_TLS. Inbounds of any other kind are left as they are.
+# Rename ONE config profile's inbounds to the <CC>-<protocol> tag scheme
+# (vars/inbound-tags.yml): Reality TCP -> <CC>-VLESS-TCP-REALITY, xHTTP ->
+# <CC>-VLESS-XHTTP-TLS. Inbounds of any other kind are left as they are.
 #
 # A RENAME IS A RE-CREATION. The panel matches inbounds by tag + protocol
 # (syncInbounds, backend 2.8.0), so a new tag is a delete plus a create with a
@@ -421,7 +421,7 @@
              | flatten | map(attribute='uuid') | list }}
         _unbound: >-
           {%- set out = [] -%}
-          {%- for i in _profile_now.inbounds if i.tag.startswith(_profile_code ~ '_') -%}
+          {%- for i in _profile_now.inbounds if i.tag.startswith(_profile_code ~ '-') -%}
             {%- set miss = [] -%}
             {%- if i.uuid not in _squad_uuids -%}{%- set _ = miss.append('no squad') -%}{%- endif -%}
             {%- if i.uuid not in _node_uuids -%}{%- set _ = miss.append('no node') -%}{%- endif -%}
@@ -438,6 +438,6 @@
                | map('join', ' -> ') | join(', ')) ~ '; bindings restored')
              if _renames | length > 0
              else ('re-bound from the given snapshot' if _restore | length > 0
-                   else 'already on the <CC>_<protocol> scheme, bindings intact') }}.
+                   else 'already on the <CC>-<protocol> scheme, bindings intact') }}.
       tags:
         - debug

@@ -227,7 +227,7 @@
           the survey with the node's name, profile and country; leave Limit
           EMPTY. Users of that node reconnect once when Xray restarts.
 
-      # The one-off move of a profile's inbounds to the <CC>_<protocol> tag
+      # The one-off move of a profile's inbounds to the <CC>-<protocol> tag
       # scheme. A rename re-creates the inbound, so the run cuts the profile's
       # users off for seconds while it re-binds squads, nodes and hosts — one
       # profile per run, and the snapshot it prints is how a failed run is
@@ -235,8 +235,8 @@
       "Migrate inbound tags":
         playbook: playbooks/migrate-inbound-tags.yml
         description: >-
-          Rename ONE config profile's inbounds to <CC>_VLESS_TCP_REALITY /
-          <CC>_VLESS_XHTTP_TLS and re-bind squads, nodes and hosts. Its users
+          Rename ONE config profile's inbounds to <CC>-VLESS-TCP-REALITY /
+          <CC>-VLESS-XHTTP-TLS and re-bind squads, nodes and hosts. Its users
           reconnect once. Leave Limit EMPTY. A failed run prints a snapshot —
           re-run with -e 'migrate_restore=<that JSON>' to re-bind.
 

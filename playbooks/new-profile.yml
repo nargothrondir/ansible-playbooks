@@ -222,7 +222,7 @@
           - _tags_elsewhere | length == 0
         fail_msg: >-
           Tag(s) {{ _tags_elsewhere | join(', ') }} already belong to another
-          config profile. Tags are <CC>_<protocol> and unique panel-wide, so one
+          config profile. Tags are <CC>-<protocol> and unique panel-wide, so one
           country supports one profile under this scheme — see
           vars/inbound-tags.yml.
       vars:
@@ -311,7 +311,7 @@
           Config profile '{{ profile_name }}' has no inbound tagged
           '{{ profile_inbound_tag }}'. Its inbounds are tagged:
           {{ profile_inbounds | map(attribute='tag') | join(', ') }}. A profile
-          from before the <CC>_<protocol> scheme is renamed by
+          from before the <CC>-<protocol> scheme is renamed by
           migrate-inbound-tags.yml (Semaphore "Migrate inbound tags"), which
           re-binds squads, hosts and nodes as it goes — never rename it in the
           panel by hand: the tag is its identity, and a rename re-creates it.

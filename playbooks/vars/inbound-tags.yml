@@ -4,8 +4,8 @@
 # One definition, because two playbooks computing the same name is how they
 # come to disagree.
 #
-# Format: <CC>_<PROTOCOL>_<TRANSPORT>_<SECURITY>, e.g. FI_VLESS_TCP_REALITY and
-# FI_VLESS_XHTTP_TLS. The security part is what the CLIENT speaks: the xHTTP
+# Format: <CC>-<PROTOCOL>-<TRANSPORT>-<SECURITY>, e.g. FI-VLESS-TCP-REALITY and
+# FI-VLESS-XHTTP-TLS. The security part is what the CLIENT speaks: the xHTTP
 # inbound itself has none, Angie terminates TLS in front of it.
 #
 # The tag is the inbound's IDENTITY in Remnawave, and it is unique across the
@@ -24,8 +24,8 @@
 # or {} for one about to be created.
 
 _inbound_tag_suffixes:
-  reality-tcp: _VLESS_TCP_REALITY
-  xhttp: _VLESS_XHTTP_TLS
+  reality-tcp: -VLESS-TCP-REALITY
+  xhttp: -VLESS-XHTTP-TLS
 
 # The profile's country, from the panel rather than from the caller: the
 # countryCode of the nodes it serves. A profile with no nodes yet (it is being
