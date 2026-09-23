@@ -140,6 +140,30 @@
   tags:
     - install
 
+# apt keeps every .deb it downloads in /var/cache/apt/archives: 773 MB on kz-1
+# after a few months of daily upgrades, on a 10 GB disk. The apt module's clean
+# reports changed whenever it runs on its own (it exits with changed=True), so
+# the cache is looked at first and cleaned only when it holds a package — a run
+# with nothing to clean stays changed=0.
+- name: Look for downloaded packages in the apt cache
+  ansible.builtin.find:
+    paths: /var/cache/apt/archives
+    patterns: "*.deb"
+  register: upgrade_cached_debs
+  when: upgrade_clean_cache | bool
+  tags:
+    - install
+
+- name: Clear downloaded packages from the apt cache
+  ansible.builtin.apt:
+    clean: true
+    lock_timeout: "{{ upgrade_lock_timeout }}"
+  when:
+    - upgrade_clean_cache | bool
+    - upgrade_cached_debs.matched | default(0) | int > 0
+  tags:
+    - install
+
 # /var/run/reboot-required is an UBUNTU convention. The hook that creates it
 # ships in update-notifier-common, which minimal Debian neither installs nor
 # pulls in — so on this fleet (Debian 13) the file never appears and this check

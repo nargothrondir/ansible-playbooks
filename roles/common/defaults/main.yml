@@ -82,3 +82,9 @@ common_swappiness: 150
 common_page_cluster: 0
 common_watermark_boost_factor: 0
 common_watermark_scale_factor: 125
+
+# Upper bound for the persistent systemd journal (journald SystemMaxUse). Left
+# unset, journald takes up to 10% of the filesystem, capped at 4 GiB — about
+# 1 GB on the fleet's 10 GB disks, which is disk a VPN node needs more than it
+# needs old logs.
+common_journald_max_use: "200M"

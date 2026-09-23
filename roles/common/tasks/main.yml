@@ -150,3 +150,9 @@
   when: common_swap_enabled | bool
   tags:
     - config
+
+- name: Cap the systemd journal
+  ansible.builtin.import_tasks: journald.yml
+  tags:
+    - config
+    - journald

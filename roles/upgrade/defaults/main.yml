@@ -9,6 +9,10 @@ upgrade_autoremove: true
 # Purge configuration files when autoremoving packages.
 upgrade_autoremove_purge: true
 
+# Clear downloaded .deb files from /var/cache/apt/archives after the upgrade.
+# apt keeps every package it has ever fetched there otherwise.
+upgrade_clean_cache: true
+
 # Reuse the apt cache if it was refreshed within this many seconds.
 upgrade_cache_valid_time: 3600
 

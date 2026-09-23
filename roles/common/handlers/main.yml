@@ -7,3 +7,22 @@
   listen: "update grub"
   ansible.builtin.command: update-grub
   changed_when: false
+
+# The restart makes journald load the new cap, but on its own it would not
+# shrink what is already there: journald vacuums only when it rotates or
+# flushes, not at start (server_vacuum's callers in journald-server.c,
+# systemd v257). `journalctl --rotate` triggers server_full_rotate, which
+# vacuums straight after rotating — that is what brings an 850 MB journal
+# down to the cap in the same run.
+- name: Restart journald
+  listen: "restart journald"
+  ansible.builtin.systemd_service:
+    name: systemd-journald
+    state: restarted
+
+# A side effect of the drop-in change that notified it, so reported as
+# unchanged — the same reasoning as update-grub above.
+- name: Rotate the journal so the new cap applies now
+  listen: "restart journald"
+  ansible.builtin.command: journalctl --rotate
+  changed_when: false

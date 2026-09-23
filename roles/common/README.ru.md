@@ -43,6 +43,7 @@ sysctl работает на всём флоте. На хосте с малой 
 | `common_page_cluster` | `0` | `vm.page-cluster` — отключить read-ahead подкачки (вреден для zram). |
 | `common_watermark_boost_factor` | `0` | `vm.watermark_boost_factor`. |
 | `common_watermark_scale_factor` | `125` | `vm.watermark_scale_factor` — раньше запускать reclaim. |
+| `common_journald_max_use` | `200M` | Предел размера журнала systemd (`SystemMaxUse` у journald). Без него journald занимает до 10% диска. Применяется и ежедневным `update.yml`. |
 
 ### Почему потолку conntrack нужен модуль, загруженный на старте
 

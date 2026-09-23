@@ -42,6 +42,7 @@ node serving many concurrent clients. Idempotent.
 | `common_page_cluster` | `0` | `vm.page-cluster` — disable swap read-ahead (harmful for zram). |
 | `common_watermark_boost_factor` | `0` | `vm.watermark_boost_factor`. |
 | `common_watermark_scale_factor` | `125` | `vm.watermark_scale_factor` — start reclaim earlier. |
+| `common_journald_max_use` | `200M` | Upper bound for the systemd journal (journald `SystemMaxUse`). Unset, journald takes up to 10% of the disk. Also applied by the daily `update.yml`. |
 
 ### Why the conntrack cap needs the module loaded at boot
 

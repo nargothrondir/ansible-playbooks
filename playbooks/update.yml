@@ -62,6 +62,16 @@
           ansible.builtin.include_role:
             name: upgrade
 
+        # The journal cap belongs to roles/common, which only provisioning
+        # runs. Applying it here is how hosts built before it existed catch up,
+        # and how a hand edit gets put back. Inside the block so a failure is
+        # rescued into the report like any other; its restart handler runs at
+        # the end of this host's batch.
+        - name: Keep the systemd journal within its size cap
+          ansible.builtin.include_role:
+            name: common
+            tasks_from: journald.yml
+
         - name: Record a successful upgrade
           ansible.builtin.set_fact:
             update_status: ok
