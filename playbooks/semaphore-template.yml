@@ -212,6 +212,21 @@
           back. Leave CLI args and Limit EMPTY. Changes nothing: no host trusts
           the CA yet, so the certificate is a probe of the OpenBao side.
 
+      # How a node that already serves Reality TCP gains xHTTP next to it
+      # (archive #42). provision-node.yml cannot do it: it builds a node from a
+      # root password. This runs the three panel/Dockhand steps of that
+      # pipeline with node_xhttp=true, and they only ever ADD.
+      #
+      # Limit stays EMPTY: every play targets the controller. One node at a
+      # time, with a client connecting through the new entry before the next.
+      "Enable xHTTP":
+        playbook: playbooks/enable-xhttp.yml
+        description: >-
+          Add VLESS over xHTTP to one existing node, next to Reality TCP — the
+          profile inbound, the subscription host and the Angie location. Fill
+          the survey with the node's name, profile and country; leave Limit
+          EMPTY. Users of that node reconnect once when Xray restarts.
+
       # This playbook declares itself, and that is not a curiosity — it is what
       # ends the borrowing. Until now the only way to run it was to repoint an
       # existing template at it, which left that template named for a job it was

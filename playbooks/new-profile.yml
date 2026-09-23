@@ -16,9 +16,18 @@
 # The panel generates the reality keypair (GET /api/system/tools/x25519/generate);
 # the shortId is generated locally — no manual crypto.
 #
+# PROTOCOLS (archive #42). A profile always carries Reality TCP — it is created
+# with it. Further protocols are ADDED next to it, never instead of it:
+# node_xhttp=true appends a VLESS-over-xHTTP inbound to the profile, puts it in
+# the squads that already see the TCP inbound, and gives it its own
+# subscription host. That works the same for a profile created a minute ago and
+# for one that has served users for months; nothing about Reality TCP changes.
+#
 # Required vars (group_vars/control/, token via vault):
 #   remnawave_panel_url   group_vars/control
 #   the API token          from OpenBao (#2): infra/remnawave, field api_token
+#   the xHTTP path         from OpenBao: infra/remnawave, field xhttp_path —
+#                          only when node_xhttp is true and the inbound is new
 #
 # Run:
 #   ansible-playbook playbooks/new-profile.yml \
@@ -51,8 +60,72 @@
     profile_domain: >-
       {{ (node_name ~ '.' ~ (infra_domain | default('')))
          if (node_name | default('')) | length > 0 else '' }}
+    # THE TAG IS THE INBOUND'S IDENTITY. On a config update the panel matches
+    # old and new inbounds by tag + protocol (syncInbounds, backend 2.8.0); a
+    # changed tag is a delete plus a create with a NEW uuid, and the delete
+    # cascades — squad membership and node activation go with it, and the
+    # subscription host is left pointing at nothing. Renaming this tag would cut
+    # every Reality TCP user off without a single task failing. It stays the
+    # profile name, the form every existing profile was created with, and the
+    # <profile>-<key> form below applies to added protocols only.
     profile_inbound_tag: "{{ profile_name }}"
     host_port: 443
+    # Added protocols. Off unless asked for, so provisioning keeps building
+    # Reality-TCP-only nodes until the rollout decides otherwise. Only ever
+    # ADDS: false means "do not add", not "remove" — taking xHTTP off a profile
+    # is a deliberate operation, not the side effect of a default.
+    _profile_xhttp: "{{ node_xhttp | default(false) | bool }}"
+    _xhttp_tag: "{{ profile_name }}-xhttp"
+    # The xHTTP inbound (templates/xray-inbound-xhttp.json.j2) has no TLS and
+    # no port: it listens on this socket, and Angie's grpc_pass in docker-stacks
+    # remnanode/angie.conf is the other end — change both or neither. It trusts
+    # X-Forwarded-For only when X-Real-IP is present, which Angie sets and
+    # overwrites; without that Xray records the socket, not the client.
+    # noSSEHeader: Angie needs no SSE hint to stop buffering (Xray already
+    # sends X-Accel-Buffering: no), so the download stream need not look like
+    # one. Everything else in xhttpSettings is left at Xray's defaults.
+    profile_xhttp_socket: /dev/shm/xhttp.sock
+    # One row per protocol. `tag` is the inbound's identity (see above);
+    # `label` ends the subscription host's remark; `host_params` is merged into the
+    # host created for that inbound, and `host_header` also sets the HTTP Host
+    # to the advertised name (resolved at run time, so not written here).
+    #
+    # xHTTP host: the client does real TLS to the node's own name on 443
+    # (securityLayer TLS overrides the inbound's "none"), and reality relays it
+    # to Angie, which hands the path to the inbound (docker-stacks remnanode).
+    # The path is NOT repeated here: the panel takes it from the inbound when
+    # the host has none. xhttpExtraParams carries xmux, and it is not optional
+    # for Mihomo: without reuse-settings Mihomo opens a fresh TCP+TLS connection
+    # for every proxied connection (v1.19.31, NewReuseManager is skipped on
+    # nil). These are the values the Xray client uses when it has none;
+    # hMaxRequestTimes stays under the web server's keepalive_requests (1000) so
+    # the client retires a connection before the server closes it mid-request.
+    profile_xhttp_xmux:
+      maxConcurrency: "16-32"
+      maxConnections: 0
+      cMaxReuseTimes: 0
+      hMaxRequestTimes: "600-900"
+      hMaxReusableSecs: "1800-3000"
+      hKeepAlivePeriod: 0
+    _profile_protocols:
+      - key: reality-tcp
+        tag: "{{ profile_inbound_tag }}"
+        label: "{{ profile_host_label }}"
+        host_params: {}
+      - key: xhttp
+        tag: "{{ _xhttp_tag }}"
+        label: "xHTTP"
+        host_header: true
+        host_params:
+          securityLayer: TLS
+          alpn: "h2,http/1.1"
+          fingerprint: chrome
+          xhttpExtraParams:
+            xmux: "{{ profile_xhttp_xmux }}"
+    _profile_protocols_enabled: >-
+      {{ _profile_protocols
+         | selectattr('key', 'in', ['reality-tcp'] + (['xhttp'] if _profile_xhttp | bool else []))
+         | list }}
     # The name clients see for the subscription host: "<flag> <NODE> <protocol>",
     # e.g. "🇫🇮 FI-1 Reality TCP" — the format the existing hosts were renamed to.
     # Remnawave stores the remark exactly as given and adds nothing:
@@ -60,11 +133,11 @@
     # only. So the flag is built here from node_country (regional indicator
     # symbols; Ansible has no chr filter, '%c' | format does the same); XX, empty
     # or malformed codes give no flag. A standalone run with no node_name keeps
-    # the profile name. Used on creation only — an existing host is never
-    # renamed.
+    # the profile name (plus the label, for an added protocol). Used on creation
+    # only — an existing host is never renamed.
     #
-    # profile_host_label is per protocol. With a second protocol (xHTTP,
-    # Hysteria2 — archive #42) each inbound gets its own host and its own label.
+    # The label is per protocol: profile_host_label for Reality TCP, the `label`
+    # of its row in _profile_protocols for anything added.
     profile_host_label: "Reality TCP"
     _host_country: "{{ node_country | default('') | upper }}"
     _host_flag: >-
@@ -72,9 +145,6 @@
                           127462 + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.index(_host_country[1])))
          if (_host_country | length == 2 and _host_country.isalpha() and _host_country != 'XX')
          else '' }}
-    profile_host_remark: >-
-      {{ ([_host_flag, node_name | upper, profile_host_label] | select | join(' '))
-         if (node_name | default('')) | length > 0 else profile_name }}
     # WARP routes IP-check domains through a "warp" interface. OFF by default: a
     # bare node has none, and enabling it there times clients out (lab, 2026-07-08).
     profile_use_warp: false
@@ -165,24 +235,140 @@
       no_log: true
       when: existing_profile.uuid is not defined
 
-    - name: Resolve the effective profile uuid and its inbounds
+    - name: Resolve the effective profile uuid, config and inbounds
       ansible.builtin.set_fact:
         profile_uuid: >-
           {{ existing_profile.uuid if existing_profile.uuid is defined
              else created_profile.json.response.uuid }}
+        _profile_config: >-
+          {{ existing_profile.config if existing_profile.uuid is defined
+             else created_profile.json.response.config }}
         profile_inbounds: >-
           {{ existing_profile.inbounds | default([]) if existing_profile.uuid is defined
              else created_profile.json.response.inbounds | default([]) }}
+      no_log: true
 
-    - name: Assert the profile has at least one inbound
+    # Found by TAG, not by position: with a second protocol, inbounds[0] is no
+    # longer necessarily Reality TCP. A profile whose TCP inbound carries some
+    # other tag (renamed by hand, created elsewhere) stops the run here rather
+    # than getting a second TCP inbound or a host bound to the wrong one.
+    - name: Resolve the Reality TCP inbound by its tag
+      ansible.builtin.set_fact:
+        profile_inbound_uuid: >-
+          {{ profile_inbounds | selectattr('tag', 'equalto', profile_inbound_tag)
+             | map(attribute='uuid') | first | default('') }}
+
+    - name: Assert the profile has its Reality TCP inbound
       ansible.builtin.assert:
         that:
-          - profile_inbounds | length > 0
-        fail_msg: "Config profile '{{ profile_name }}' has no inbounds."
+          - profile_inbound_uuid | length > 0
+        fail_msg: >-
+          Config profile '{{ profile_name }}' has no inbound tagged
+          '{{ profile_inbound_tag }}'. Its inbounds are tagged:
+          {{ profile_inbounds | map(attribute='tag') | join(', ') }}. If the
+          Reality TCP inbound carries one of those, pass
+          -e profile_inbound_tag=<that tag> — never rename it in the panel
+          instead: the tag is its identity, and a rename re-creates it.
 
-    - name: Resolve the inbound uuid
+    # --- Add the protocols the profile does not carry yet ---
+    # Reality TCP is never among them: the profile was created with it and the
+    # assert above proved it is there.
+    - name: Determine which added protocols the profile is missing
       ansible.builtin.set_fact:
-        profile_inbound_uuid: "{{ profile_inbounds[0].uuid }}"
+        _protocols_missing: >-
+          {{ _profile_protocols_enabled
+             | rejectattr('key', 'equalto', 'reality-tcp')
+             | rejectattr('tag', 'in', profile_inbounds | map(attribute='tag') | list)
+             | list }}
+
+    # The path is what separates the xHTTP inbound from the decoy site on 443,
+    # so it lives in OpenBao and never in git. The same value reaches Angie as
+    # XHTTP_PATH through dockhand-stack.yml.
+    - name: Fetch the xHTTP path
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: remnawave
+        openbao_read_field: xhttp_path
+        openbao_read_into: _xhttp_path
+      when: "'xhttp' in (_protocols_missing | map(attribute='key') | list)"
+      tags:
+        - config
+
+    # Xray normalises the path to /…/ and Angie matches it as a location
+    # prefix; anything else would render a location that never matches, or
+    # inject into the web server's config. The value itself is not printed.
+    - name: Assert the xHTTP path is a clean /segment/ path
+      ansible.builtin.assert:
+        that:
+          - _xhttp_path is match('^/[A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*/$')
+        fail_msg: >-
+          infra/remnawave xhttp_path in OpenBao must start and end with '/' and
+          contain only letters, digits and . _ ~ - between them.
+      when: "'xhttp' in (_protocols_missing | map(attribute='key') | list)"
+
+    # The update is the CURRENT config with inbounds appended — never a
+    # re-rendered template, which would mint new reality keys, and never a
+    # rewrite of what is there: every existing inbound goes back byte for byte,
+    # so the panel's tag match keeps each one (and its uuid) as it is.
+    - name: Build the profile config with the missing inbounds appended
+      ansible.builtin.set_fact:
+        _profile_config_new: >-
+          {{ _profile_config | combine({'inbounds': _profile_config.inbounds
+               + (_protocols_missing | map(attribute='key')
+                  | map('extract', _protocol_inbound_json) | list)}) }}
+      vars:
+        _protocol_inbound_json:
+          xhttp: "{{ lookup('template', 'templates/xray-inbound-xhttp.json.j2') | from_json }}"
+      no_log: true
+      when: _protocols_missing | length > 0
+
+    # Every node on this profile restarts Xray when its config changes
+    # (startAllNodesByProfile), so users on those nodes reconnect once. Guarded,
+    # so it happens on the run that adds a protocol and never again.
+    - name: Append the missing inbounds to the profile
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/config-profiles"
+        method: PATCH
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body: "{{ {'uuid': profile_uuid, 'config': _profile_config_new} }}"
+        status_code: [200]
+      register: _profile_patched
+      no_log: true
+      changed_when: _profile_patched.status == 200
+      when: _protocols_missing | length > 0
+      tags:
+        - config
+
+    - name: Take the inbounds from the updated profile
+      ansible.builtin.set_fact:
+        profile_inbounds: "{{ _profile_patched.json.response.inbounds }}"
+      when: _profile_patched is not skipped
+
+    # The whole point of appending rather than rewriting. If this ever fails,
+    # the TCP inbound was re-created: its squads, its node activations and its
+    # host binding are gone, and TCP users are cut off. Stop loudly.
+    - name: Assert the Reality TCP inbound kept its identity
+      ansible.builtin.assert:
+        that:
+          - profile_inbound_uuid in (profile_inbounds | map(attribute='uuid') | list)
+          - (_profile_protocols_enabled | map(attribute='tag')
+             | reject('in', profile_inbounds | map(attribute='tag') | list) | list) == []
+        fail_msg: >-
+          After the update the profile no longer has Reality TCP inbound
+          {{ profile_inbound_uuid }}, or lacks an inbound it was meant to gain.
+          If TCP was re-created, re-add it to its squad, its nodes and its host
+          in the panel NOW — TCP users are cut off.
+
+    # uuid of every protocol this run ensures, by key — what the squad and host
+    # steps below work from.
+    - name: Resolve the inbound of every enabled protocol
+      ansible.builtin.set_fact:
+        _protocol_uuids: >-
+          {{ dict(_profile_protocols_enabled | map(attribute='key')
+                  | zip(_profile_protocols_enabled | map(attribute='tag')
+                        | map('extract', profile_inbounds | items2dict(key_name='tag', value_name='uuid')))) }}
 
     # --- Ensure the inbound is in a squad (visibility) ---
     - name: Fetch internal squads from the panel
@@ -199,16 +385,35 @@
     # one-click pipeline, which never passes squad_name) an inbound that is
     # already visible somewhere must not re-trigger squad resolution — otherwise
     # the ambiguity assert below would fail every rerun once a 2nd squad exists.
-    - name: Determine whether the inbound is already in a squad
+    - name: Determine which inbounds are in no squad yet
       ansible.builtin.set_fact:
         squad_member: >-
           {{ profile_inbound_uuid in
              (squads_result.json.response.internalSquads
               | map(attribute='inbounds') | flatten | map(attribute='uuid') | list) }}
+        _inbounds_unsquadded: >-
+          {{ _protocol_uuids.values()
+             | reject('in', squads_result.json.response.internalSquads
+                            | map(attribute='inbounds') | flatten
+                            | map(attribute='uuid') | list)
+             | list }}
         _squad_names: >-
           {{ squads_result.json.response.internalSquads
              | map(attribute='name') | list | join(', ') }}
 
+    # An added protocol joins exactly the squads that already see Reality TCP,
+    # so it reaches the same users and nobody else — no guessing, and no
+    # squad_name needed on an existing profile.
+    - name: Find the squads that already carry the Reality TCP inbound
+      ansible.builtin.set_fact:
+        _tcp_squads: "{{ _tcp_squads | default([]) + [item] }}"
+      loop: "{{ squads_result.json.response.internalSquads }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: profile_inbound_uuid in (item.inbounds | map(attribute='uuid') | list)
+
+    # Only a brand-new profile gets here: its TCP inbound is in no squad yet,
+    # so one has to be chosen.
     - name: Resolve the target squad (by name, or the only one)
       ansible.builtin.set_fact:
         target_squad: >-
@@ -234,7 +439,10 @@
              else 'Multiple squads exist — pass -e squad_name=<name>. Available: ' ~ _squad_names ~ '.' }}
       when: not squad_member | bool
 
-    - name: Add the inbound to the squad (only if not already a member)
+    # The squad's inbound list is REPLACED by the PATCH, so the body is always
+    # what the squad has now plus what is missing — never a list built from
+    # scratch, which would take away every other inbound the squad serves.
+    - name: Add the missing inbounds to the squads (only those in none yet)
       delegate_to: panel
       ansible.builtin.uri:
         url: "{{ remnawave_panel_url }}/api/internal-squads"
@@ -242,11 +450,17 @@
         headers: "{{ _api_headers }}"
         body_format: json
         body: >-
-          {{ {'uuid': target_squad.uuid,
-              'inbounds': ((target_squad.inbounds | map(attribute='uuid') | list) + [profile_inbound_uuid]) | unique} }}
+          {{ {'uuid': item.uuid,
+              'inbounds': ((item.inbounds | map(attribute='uuid') | list)
+                           + _inbounds_unsquadded) | unique} }}
         status_code: [200, 201]
+      register: _squads_patched
+      loop: "{{ _tcp_squads | default([]) if squad_member | bool else [target_squad] }}"
+      loop_control:
+        label: "{{ item.name }}"
       no_log: true
-      when: not squad_member | bool
+      changed_when: _squads_patched.status | default(0) in [200, 201]
+      when: _inbounds_unsquadded | length > 0
 
     # --- Ensure the subscription host exists (presentation) ---
     - name: Fetch subscription hosts from the panel
@@ -263,27 +477,49 @@
     # remark is a display label: it carries a flag and gets renamed by hand in
     # the panel, so a remark comparison stops matching and creates duplicate
     # hosts — the mistake the Beszel role made with system names.
-    - name: Determine whether the subscription host is missing
+    # Every host of a profile advertises the same name: the node's, which its
+    # certificate is issued for. Derived from node_name when there is one;
+    # otherwise taken from the existing Reality TCP host, so a standalone run
+    # that adds a protocol does not need the name re-typed.
+    - name: Resolve the name the subscription hosts advertise
+      ansible.builtin.set_fact:
+        _host_domain: >-
+          {{ profile_domain if (profile_domain | default('') | length > 0)
+             else (hosts_result.json.response
+                   | selectattr('inbound.configProfileInboundUuid', 'defined')
+                   | selectattr('inbound.configProfileInboundUuid', 'equalto', profile_inbound_uuid)
+                   | map(attribute='sni') | select | first | default('')) }}
+
+    - name: Determine which protocols have no subscription host
       ansible.builtin.set_fact:
         # default('') keeps a host with a null/absent inbound from injecting an
         # Undefined into the list — membership tests raise on those under
         # Ansible's strict undefined.
-        host_missing: >-
-          {{ profile_inbound_uuid not in
-             (hosts_result.json.response
-              | map(attribute='inbound.configProfileInboundUuid', default='') | list) }}
+        _protocols_hostless: >-
+          {{ _profile_protocols_enabled
+             | selectattr('key', 'in',
+                 _protocol_uuids | dict2items
+                 | rejectattr('value', 'in', hosts_result.json.response
+                     | map(attribute='inbound.configProfileInboundUuid', default='') | list)
+                 | map(attribute='key') | list)
+             | list }}
 
-    - name: Assert a domain is available when the host must be created
+    - name: Assert a domain is available when a host must be created
       ansible.builtin.assert:
         that:
-          - profile_domain is defined and profile_domain | length > 0
+          - _host_domain | length > 0
         fail_msg: >-
-          Subscription host for '{{ profile_name }}' is missing and must be created,
-          but no domain could be derived — node_name is empty. Pass -e node_name,
-          or -e profile_domain to override the derivation.
-      when: host_missing | bool
+          Subscription hosts for '{{ profile_name }}' are missing
+          ({{ _protocols_hostless | map(attribute='key') | join(', ') }}) and
+          must be created, but no domain could be derived — node_name is empty
+          and no Reality TCP host carries an SNI. Pass -e node_name, or
+          -e profile_domain to override the derivation.
+      when: _protocols_hostless | length > 0
 
-    - name: Create the subscription host (only if none serves this inbound)
+    # A new host is appended at the end of the list (viewPosition is an
+    # autoincrement), so an added protocol never displaces Reality TCP as the
+    # first — default — entry in a client's selector group.
+    - name: Create the missing subscription hosts (one per inbound)
       delegate_to: panel
       ansible.builtin.uri:
         url: "{{ remnawave_panel_url }}/api/hosts"
@@ -293,14 +529,26 @@
         body: >-
           {{ {'inbound': {
                 'configProfileUuid': profile_uuid,
-                'configProfileInboundUuid': profile_inbound_uuid},
-              'remark': profile_host_remark,
-              'address': profile_domain,
+                'configProfileInboundUuid': _protocol_uuids[item.key]},
+              'remark': _remark,
+              'address': _host_domain,
               'port': host_port | int,
-              'sni': profile_domain} }}
+              'sni': _host_domain}
+             | combine(item.host_params)
+             | combine({'host': _host_domain} if item.host_header | default(false) else {}) }}
         status_code: [200, 201]
+      vars:
+        _remark: >-
+          {{ ([_host_flag, node_name | upper, item.label] | select | join(' '))
+             if (node_name | default('')) | length > 0
+             else (profile_name if item.key == 'reality-tcp'
+                   else profile_name ~ ' ' ~ item.label) }}
+      register: _hosts_created
+      loop: "{{ _protocols_hostless }}"
+      loop_control:
+        label: "{{ item.key }}"
       no_log: true
-      when: host_missing | bool
+      changed_when: _hosts_created.status | default(0) in [200, 201]
 
     # Published so the smoke test can connect to exactly the name this profile
     # advertises, without deriving it a second time. Two places computing one
@@ -316,7 +564,9 @@
         msg: >-
           Profile "{{ profile_name }}" ready (uuid {{ profile_uuid }},
           {{ 'created' if existing_profile.uuid is not defined else 'already existed' }});
-          inbound {{ 'already in a squad' if squad_member | bool
-                     else 'added to squad "' ~ target_squad.name | default('?') ~ '"' }}; host ensured.
+          protocols {{ _protocol_uuids.keys() | join(', ') }};
+          added now: {{ _protocols_missing | map(attribute='key') | join(', ') or 'none' }};
+          squads {{ 'updated' if _inbounds_unsquadded | length > 0 else 'already covered' }};
+          hosts created: {{ _protocols_hostless | map(attribute='key') | join(', ') or 'none' }}.
       tags:
         - debug

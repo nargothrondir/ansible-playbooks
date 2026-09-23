@@ -138,6 +138,30 @@
           type: ""
           required: false
 
+      # The values the node was provisioned with. node_name finds the node (by
+      # its mesh address) and names its stack; node_profile is the profile
+      # that gains the inbound; node_country gives the new host its flag.
+      "Enable xHTTP":
+        - name: node_name
+          title: Node name
+          description: >-
+            The node's short name as provisioned (e.g. fi-1) — lowercase, as in
+            its mesh name
+          type: ""
+          required: true
+        - name: node_profile
+          title: Config profile
+          description: >-
+            The config profile the node is on (e.g. Finland). It gains the
+            xHTTP inbound; Reality TCP is left as it is
+          type: ""
+          required: true
+        - name: node_country
+          title: Country code
+          description: ISO-2 country code, for the flag in the new host's name (e.g. FI)
+          type: ""
+          required: true
+
       "DNS (encrypted resolver)":
         - name: dns_target
           title: Target

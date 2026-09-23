@@ -1,0 +1,43 @@
+---
+# Add VLESS over xHTTP to a node that already serves Reality TCP (archive #42).
+# ADDS, never replaces: Reality TCP — its inbound, keys, squad, node activation
+# and subscription host — stays exactly as it is.
+#
+# The same three playbooks provisioning uses, run with node_xhttp=true:
+#   1. new-profile.yml   appends the xHTTP inbound to the node's config profile,
+#                        puts it in the squads that already see Reality TCP,
+#                        and creates its subscription host ("<flag> <NODE> xHTTP");
+#   2. new-node.yml      adds that inbound to what the node serves;
+#   3. dockhand-stack.yml gives the stack XHTTP_PATH, which makes Angie render
+#                        the xHTTP location, and redeploys it.
+# Each step is idempotent, so a re-run changes nothing and a failed run can be
+# repeated as is.
+#
+# Order matters for users, not for correctness: until step 3 the node answers
+# the xHTTP path with the decoy site, so the new subscription entry does not
+# work for a few minutes. Reality TCP is unaffected throughout, apart from one
+# Xray restart per node when steps 1 and 2 change its config.
+#
+# Prerequisites: the docker-stacks change that renders the location from
+# XHTTP_PATH is merged AND deployed, and infra/remnawave xhttp_path exists in
+# OpenBao.
+#
+# Run from Semaphore ("Enable xHTTP"), survey: node_name, node_profile,
+# node_country — the same values the node was provisioned with. Limit stays
+# EMPTY: every play targets the controller and talks to the panel and Dockhand
+# APIs only.
+
+- name: Add xHTTP to the node's config profile
+  ansible.builtin.import_playbook: new-profile.yml
+  vars:
+    node_xhttp: true
+
+- name: Serve the xHTTP inbound on the node
+  ansible.builtin.import_playbook: new-node.yml
+  vars:
+    node_xhttp: true
+
+- name: Switch the xHTTP location on in the node's stack
+  ansible.builtin.import_playbook: dockhand-stack.yml
+  vars:
+    node_xhttp: true

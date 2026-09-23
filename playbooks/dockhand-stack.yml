@@ -480,6 +480,53 @@
       tags:
         - config
 
+    # xHTTP (archive #42): Angie renders the xHTTP location only when
+    # XHTTP_PATH is set (docker-stacks remnanode), so giving the stack this
+    # variable IS switching xHTTP on for this node. The value is the same path
+    # the profile's xHTTP inbound listens for, read from the same OpenBao field.
+    - name: Fetch the xHTTP path
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: remnawave
+        openbao_read_field: xhttp_path
+        openbao_read_into: _xhttp_path
+      when:
+        - node_xhttp | default(false) | bool
+        - "'XHTTP_PATH' not in _existing_keys"
+      tags:
+        - config
+
+    # It is rendered into the web server's config, so it must be a plain
+    # /segment/ prefix. The value itself is not printed.
+    - name: Assert the xHTTP path is a clean /segment/ path
+      ansible.builtin.assert:
+        that:
+          - _xhttp_path is match('^/[A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*/$')
+        fail_msg: >-
+          infra/remnawave xhttp_path in OpenBao must start and end with '/' and
+          contain only letters, digits and . _ ~ - between them.
+      when:
+        - node_xhttp | default(false) | bool
+        - "'XHTTP_PATH' not in _existing_keys"
+      tags:
+        - config
+
+    # Kept whenever the stack already has it, not only when asked for: the PUT
+    # below sends the full list, and a run without node_xhttp must not switch
+    # xHTTP off by leaving the variable out. Off is a deliberate operation.
+    - name: Add the xHTTP path to the environment this playbook wants
+      ansible.builtin.set_fact:
+        _desired_env: >-
+          {{ _desired_env + [{'key': 'XHTTP_PATH',
+                              'value': '***' if 'XHTTP_PATH' in _existing_keys else _xhttp_path,
+                              'isSecret': true}] }}
+      no_log: true
+      when: >-
+        (node_xhttp | default(false) | bool)
+        or 'XHTTP_PATH' in _existing_keys
+      tags:
+        - config
+
     - name: Split the desired environment into comparable and unreadable halves
       ansible.builtin.set_fact:
         _desired_plain: >-
@@ -559,6 +606,7 @@
           camouflage page
           {{ _existing_env.get('CAMO_SITE') | default(_camo_site, true) }}
           ({{ 'assigned' if 'CAMO_SITE' not in _existing_keys else 'kept' }});
+          xHTTP {{ 'on' if (_desired_env | selectattr('key', 'equalto', 'XHTTP_PATH') | list) else 'off' }};
           environment {{ 'written' if _env_needs_write | bool else 'already matched' }};
           {{ 'DEPLOYED' if not (_stack_deployed is skipped) else 'not deployed' }};
           polling auto-update on, webhook off.
