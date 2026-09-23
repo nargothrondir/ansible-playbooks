@@ -21,7 +21,8 @@
 #                                    subscription host's name, and the location number
 #                                    in the Beszel name — it must be listed in the
 #                                    inventory's beszel_location_numbers
-#   node_provider  (optional)        hosting provider, shown in brackets in the Beszel name
+#   node_provider  (optional)        hosting provider, shown in brackets in the panel's node
+#                                    name ("FI-1 [...]") and in the Beszel name
 #   node_profile   (required)        config profile name; created if it does not exist
 #   node_root_password (optional, secret)
 #                                    root password, for a provider that offers no key
@@ -709,6 +710,14 @@
 # by now). Both imported plays are idempotent — safe to re-run.
 - name: Register the node in the Remnawave panel
   ansible.builtin.import_playbook: new-node.yml
+  vars:
+    # "FI-1 [Provider]" — the node's own name, upper-cased as the panel shows
+    # it, and the provider when the survey gave one. No "Node": the panel's
+    # nodes page needs no reminder of what it lists. Only the name the node is
+    # created with — new-node.yml finds it by address afterwards, so a rename
+    # in the panel is safe.
+    node_display_name: >-
+      {{ node_name | upper }}{{ (' [' ~ node_provider ~ ']') if (node_provider | default('') | length > 0) else '' }}
 
 # Last: the workload container. The panel must know the node first, because
 # SECRET_KEY is minted from the panel's CA, and the node must be provisioned
