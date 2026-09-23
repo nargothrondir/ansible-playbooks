@@ -162,6 +162,22 @@
           type: ""
           required: true
 
+      "Migrate inbound tags":
+        - name: profile_name
+          title: Config profile
+          description: >-
+            The config profile whose inbounds get the <CC>-<protocol> tags (e.g.
+            Finland). One per run
+          type: ""
+          required: true
+        - name: profile_code
+          title: Country code override
+          description: >-
+            Leave empty — the code is read from the profile's nodes. Only for a
+            profile whose nodes are in more than one country
+          type: ""
+          required: false
+
       "DNS (encrypted resolver)":
         - name: dns_target
           title: Target

@@ -37,6 +37,11 @@
   hosts: controller
   gather_facts: false
 
+  # The inbound tag format and the profile's country code, shared with
+  # migrate-inbound-tags.yml.
+  vars_files:
+    - vars/inbound-tags.yml
+
   vars:
     # Called standalone with -e profile_name; from provision-node.yml it reuses
     # node_profile.
@@ -64,18 +69,18 @@
     # old and new inbounds by tag + protocol (syncInbounds, backend 2.8.0); a
     # changed tag is a delete plus a create with a NEW uuid, and the delete
     # cascades — squad membership and node activation go with it, and the
-    # subscription host is left pointing at nothing. Renaming this tag would cut
-    # every Reality TCP user off without a single task failing. It stays the
-    # profile name, the form every existing profile was created with, and the
-    # <profile>-<key> form below applies to added protocols only.
-    profile_inbound_tag: "{{ profile_name }}"
+    # subscription host is left pointing at nothing. So this playbook never
+    # renames anything: it looks the TCP inbound up by the tag the format in
+    # vars/inbound-tags.yml gives it, and a profile still carrying an older tag
+    # stops the run — migrate-inbound-tags.yml is what renames.
+    profile_inbound_tag: "{{ _profile_code ~ _inbound_tag_suffixes['reality-tcp'] }}"
     host_port: 443
     # Added protocols. Off unless asked for, so provisioning keeps building
     # Reality-TCP-only nodes until the rollout decides otherwise. Only ever
     # ADDS: false means "do not add", not "remove" — taking xHTTP off a profile
     # is a deliberate operation, not the side effect of a default.
     _profile_xhttp: "{{ node_xhttp | default(false) | bool }}"
-    _xhttp_tag: "{{ profile_name }}-xhttp"
+    _xhttp_tag: "{{ _profile_code ~ _inbound_tag_suffixes['xhttp'] }}"
     # The xHTTP inbound (templates/xray-inbound-xhttp.json.j2) has no TLS and
     # no port: it listens on this socket, and Angie's grpc_pass in docker-stacks
     # remnanode/angie.conf is the other end — change both or neither. It trusts
@@ -84,6 +89,12 @@
     # noSSEHeader: Angie needs no SSE hint to stop buffering (Xray already
     # sends X-Accel-Buffering: no), so the download stream need not look like
     # one. Everything else in xhttpSettings is left at Xray's defaults.
+    #
+    # The inbound still carries "port": host_port. Xray drops it for a socket
+    # listener (infra/conf/xray.go, v26.6.27: PortList = nil when listen is a
+    # path), but the panel's host form pre-fills the port from the inbound, and
+    # an inbound without one leaves that required field empty for anyone
+    # editing the host by hand.
     profile_xhttp_socket: /dev/shm/xhttp.sock
     # One row per protocol. `tag` is the inbound's identity (see above);
     # `label` ends the subscription host's remark; `host_params` is merged into the
@@ -189,6 +200,40 @@
           {{ profiles_result.json.response.configProfiles
              | selectattr('name', 'equalto', profile_name) | list | first | default({}) }}
 
+    # The code prefixes every inbound tag (vars/inbound-tags.yml), so it has to
+    # be settled before anything is looked up or created by tag.
+    - name: Assert the profile's country code is settled
+      ansible.builtin.assert:
+        that:
+          - _profile_code is match('^[A-Z]{2}$')
+          - _profile_code != 'XX'
+        fail_msg: >-
+          Cannot tell which country profile '{{ profile_name }}' is for — its
+          inbound tags start with that code. Its nodes report
+          [{{ _profile_node_codes | join(', ') }}]; with none, node_country is
+          used ('{{ node_country | default('') }}'). Pass -e profile_code=<CC>.
+
+    # Tags are unique across the whole panel. A second profile in the same
+    # country would claim the same ones; the panel would refuse with a bare
+    # P2002, so say which profile holds them instead.
+    - name: Assert no other profile holds this profile's tags
+      ansible.builtin.assert:
+        that:
+          - _tags_elsewhere | length == 0
+        fail_msg: >-
+          Tag(s) {{ _tags_elsewhere | join(', ') }} already belong to another
+          config profile. Tags are <CC>-<protocol> and unique panel-wide, so one
+          country supports one profile under this scheme — see
+          vars/inbound-tags.yml.
+      vars:
+        _tags_elsewhere: >-
+          {{ _profile_protocols_enabled | map(attribute='tag')
+             | select('in', profiles_result.json.response.configProfiles
+                            | rejectattr('name', 'equalto', profile_name)
+                            | map(attribute='inbounds') | flatten
+                            | map(attribute='tag') | list)
+             | list }}
+
     - name: Assert a domain is given when the profile must be created
       ansible.builtin.assert:
         that:
@@ -265,10 +310,11 @@
         fail_msg: >-
           Config profile '{{ profile_name }}' has no inbound tagged
           '{{ profile_inbound_tag }}'. Its inbounds are tagged:
-          {{ profile_inbounds | map(attribute='tag') | join(', ') }}. If the
-          Reality TCP inbound carries one of those, pass
-          -e profile_inbound_tag=<that tag> — never rename it in the panel
-          instead: the tag is its identity, and a rename re-creates it.
+          {{ profile_inbounds | map(attribute='tag') | join(', ') }}. A profile
+          from before the <CC>-<protocol> scheme is renamed by
+          migrate-inbound-tags.yml (Semaphore "Migrate inbound tags"), which
+          re-binds squads, hosts and nodes as it goes — never rename it in the
+          panel by hand: the tag is its identity, and a rename re-creates it.
 
     # --- Add the protocols the profile does not carry yet ---
     # Reality TCP is never among them: the profile was created with it and the

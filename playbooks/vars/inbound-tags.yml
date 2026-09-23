@@ -1,0 +1,41 @@
+---
+# How a config profile's inbounds are TAGGED — shared by new-profile.yml, which
+# creates them, and migrate-inbound-tags.yml, which renamed the older ones.
+# One definition, because two playbooks computing the same name is how they
+# come to disagree.
+#
+# Format: <CC>-<PROTOCOL>-<TRANSPORT>-<SECURITY>, e.g. FI-VLESS-TCP-REALITY and
+# FI-VLESS-XHTTP-TLS. The security part is what the CLIENT speaks: the xHTTP
+# inbound itself has none, Angie terminates TLS in front of it.
+#
+# The tag is the inbound's IDENTITY in Remnawave, and it is unique across the
+# whole panel, not per profile (backend 2.8.0, schema.prisma:
+# ConfigProfileInbounds @@unique([tag])). Hence the country code in front — and
+# hence the limit of this scheme: two profiles in one country would claim the
+# same tags. The panel refuses the second (P2002), and both playbooks assert
+# before asking, naming the profile that already holds the tag.
+#
+# Changing a tag re-creates the inbound (syncInbounds matches by tag +
+# protocol), which drops its squad membership and node activation and orphans
+# its host. So a format change here is never a code change alone — it needs a
+# migration run per profile, as migrate-inbound-tags.yml does.
+#
+# Expects `existing_profile` — the profile record from GET /api/config-profiles,
+# or {} for one about to be created.
+
+_inbound_tag_suffixes:
+  reality-tcp: -VLESS-TCP-REALITY
+  xhttp: -VLESS-XHTTP-TLS
+
+# The profile's country, from the panel rather than from the caller: the
+# countryCode of the nodes it serves. A profile with no nodes yet (it is being
+# created) takes node_country. -e profile_code overrides both, for the case
+# this cannot settle — nodes of two countries on one profile.
+_profile_node_codes: >-
+  {{ existing_profile.nodes | default([]) | map(attribute='countryCode')
+     | map('upper') | reject('equalto', 'XX') | unique | list }}
+_profile_code: >-
+  {{ (profile_code | upper) if (profile_code | default('') | length > 0)
+     else (_profile_node_codes[0] if (_profile_node_codes | length == 1)
+     else ('' if (_profile_node_codes | length > 1)
+     else (node_country | default('') | upper))) }}
