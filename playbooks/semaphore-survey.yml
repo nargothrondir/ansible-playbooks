@@ -82,6 +82,13 @@
           description: ISO-2 country code for the panel flag (e.g. PL)
           type: ""
           required: false
+        # Shown in brackets in the Beszel system name ("3.1 FI Node [...]").
+        # Optional: without it the name simply has no brackets.
+        - name: node_provider
+          title: Hosting provider
+          description: Hosting provider name, shown in brackets in the monitoring hub (optional)
+          type: ""
+          required: false
         # NOT profile_domain. It used to be asked for, and asking made it
         # possible to disagree with the certificate — which is issued for
         # <node_name>.<zone> and nothing else. The help text suggested a

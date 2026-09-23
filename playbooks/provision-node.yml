@@ -9,6 +9,24 @@
 #                                    Recorded in OpenBao (infra/hosts) once the run
 #                                    succeeds, and nowhere else: not the inventory, not
 #                                    the Telegram report (CLAUDE.md §7)
+#   node_name      (required, >=3)   DNS-safe short name (lowercase letters, digits,
+#                                    hyphens) ending in -<number>, the node's number in
+#                                    its location (fi-1, fi-2); becomes the system
+#                                    hostname, the NetBird peer name, the panel node name
+#                                    and the Dockhand/Hawser environment name
+#   node_address   (optional)        address the panel connects to; defaults to the mesh
+#                                    DNS name <node_name>.<netbird_dns_domain>
+#   node_country   (required in practice)
+#                                    ISO-2 country code (e.g. PL): the flag in the
+#                                    subscription host's name, and the location number
+#                                    in the Beszel name — it must be listed in the
+#                                    inventory's beszel_location_numbers
+#   node_provider  (optional)        hosting provider, shown in brackets in the Beszel name
+#   node_profile   (required)        config profile name; created if it does not exist
+#   node_root_password (optional, secret)
+#                                    root password, for a provider that offers no key
+#                                    injection; used once to install the admin key and
+#                                    never stored — see the seeding play below
 #
 # infra/hosts must exist before the first run — the guard below refuses to work
 # from an empty table, because an empty table is what lets a production address
@@ -18,18 +36,6 @@
 #
 #   docker exec -i -e BAO_TOKEN="$BAO_TOKEN" openbao bao kv put infra/hosts <first-node>=-
 #   docker exec -i -e BAO_TOKEN="$BAO_TOKEN" openbao bao kv patch infra/hosts <next-node>=-
-#   node_name      (required, >=3)   DNS-safe short name (lowercase letters, digits,
-#                                    hyphens); becomes the system hostname, the NetBird
-#                                    peer name, the panel node name and the
-#                                    Dockhand/Hawser environment name
-#   node_address   (optional)        address the panel connects to; defaults to the mesh
-#                                    DNS name <node_name>.<netbird_dns_domain>
-#   node_country   (optional)        ISO-2 country code (e.g. PL); defaults to XX
-#   node_profile   (required)        config profile name; created if it does not exist
-#   node_root_password (optional, secret)
-#                                    root password, for a provider that offers no key
-#                                    injection; used once to install the admin key and
-#                                    never stored — see the seeding play below
 #
 # REBUILDING A HOST THE INVENTORY ALREADY KNOWS — wiping the lab node and
 # running this pipeline is how the pipeline gets tested — needs the host named
@@ -165,6 +171,26 @@
         fail_msg: >
           Required survey vars: node_ip, node_name (>=3, DNS-safe: lowercase
           letters, digits, hyphens), node_profile.
+
+    # The node's Beszel name is "<location>.<number> <CC> Node [<provider>]":
+    # the location number from the inventory's beszel_location_numbers, the
+    # number from node_name's trailing -N, so FI-1 in the panel is 3.1 in the
+    # hub. Checked here, before anything is created, so a new country fails
+    # while that still costs nothing — rather than a node quietly named without
+    # its number. Read through hostvars['controller']: implicit localhost is not
+    # in the inventory and gets no group_vars.
+    - name: Assert the node can be named in the monitoring hub
+      ansible.builtin.assert:
+        that:
+          - node_name is match('^.+-[0-9]+$')
+          - (node_country | default('') | upper)
+            in (hostvars['controller'].beszel_location_numbers | default({}))
+        fail_msg: >-
+          The Beszel name needs node_name to end in -<number> (fi-1, fi-2) and
+          node_country ('{{ node_country | default('') }}') to have a location
+          number in beszel_location_numbers (group_vars/all in the inventory).
+          Add the country there, with a number no other country uses, and
+          re-run.
 
     # Guardrail: a mistyped node_ip must never re-provision a production
     # machine (a real near-miss — a serving node's address was entered by
@@ -584,6 +610,14 @@
     beszel_agent_admin_password: >-
       {{ (hostvars['controller']._beszel_admin | default({})).admin_password
          | default('') }}
+    # "3.1 FI Node [Provider]" — the location number from the inventory, then
+    # the node's own number, so FI-1 in the panel is 3.1 in the hub; validated
+    # in the second play. Only the name a NEW system is created with: the
+    # agent's token still derives from beszel_agent_system_name (the inventory
+    # name), which is how the role finds the system after it has been renamed.
+    beszel_agent_system_label: >-
+      {{ hostvars['controller'].beszel_location_numbers[node_country | upper] }}.{{ node_name | regex_search('[0-9]+$') }}
+      {{ node_country | upper }} Node{{ (' [' ~ node_provider ~ ']') if (node_provider | default('') | length > 0) else '' }}
   roles:
     - hawser
     # SSH-only detection + progressive bans; its nftables bouncer coexists with
