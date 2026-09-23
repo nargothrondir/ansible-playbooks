@@ -86,7 +86,7 @@
     # one. Everything else in xhttpSettings is left at Xray's defaults.
     profile_xhttp_socket: /dev/shm/xhttp.sock
     # One row per protocol. `tag` is the inbound's identity (see above);
-    # `label` ends the subscription host's remark; `host` is merged into the
+    # `label` ends the subscription host's remark; `host_params` is merged into the
     # host created for that inbound, and `host_header` also sets the HTTP Host
     # to the advertised name (resolved at run time, so not written here).
     #
@@ -111,12 +111,12 @@
       - key: reality-tcp
         tag: "{{ profile_inbound_tag }}"
         label: "{{ profile_host_label }}"
-        host: {}
+        host_params: {}
       - key: xhttp
         tag: "{{ _xhttp_tag }}"
         label: "xHTTP"
         host_header: true
-        host:
+        host_params:
           securityLayer: TLS
           alpn: "h2,http/1.1"
           fingerprint: chrome
@@ -534,7 +534,7 @@
               'address': _host_domain,
               'port': host_port | int,
               'sni': _host_domain}
-             | combine(item.host)
+             | combine(item.host_params)
              | combine({'host': _host_domain} if item.host_header | default(false) else {}) }}
         status_code: [200, 201]
       vars:
