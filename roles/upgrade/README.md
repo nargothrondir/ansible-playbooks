@@ -46,6 +46,7 @@ so its apt hook can never prompt in the middle of an Ansible run.
 | `upgrade_apt_type` | `dist` | apt strategy (`dist` = full-upgrade; `safe` = no removals) |
 | `upgrade_autoremove` | `true` | Remove no-longer-required packages |
 | `upgrade_autoremove_purge` | `true` | Purge config files when autoremoving |
+| `upgrade_clean_cache` | `true` | Clear downloaded `.deb` files from the apt cache after the upgrade (only when there are any, so an idle run stays `changed=0`) |
 | `upgrade_cache_valid_time` | `3600` | Seconds the apt cache is considered fresh |
 | `upgrade_lock_timeout` | `900` | Seconds each apt task waits for the dpkg lock (module default 60) — outlasts an apt-daily run that starts mid-play |
 | `upgrade_hold_packages` | `[]` | Packages this host must never upgrade unattended |
