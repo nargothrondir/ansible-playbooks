@@ -61,5 +61,8 @@ beszel_agent_register: true
 beszel_agent_admin_email: ""
 beszel_agent_admin_password: ""
 beszel_agent_owner_email: ""                        # dashboard owner; empty = the sole/first user
-beszel_agent_system_name: "{{ inventory_hostname }}"   # system name in the hub
+beszel_agent_system_name: "{{ inventory_hostname }}"   # identity: seeds the token; do not change for a live node
+# Name a NEW system is created with in the hub. Only used at creation: the node
+# is found by its token afterwards, so renaming the system in the hub is safe.
+beszel_agent_system_label: "{{ beszel_agent_system_name }}"
 beszel_agent_system_host: "{{ inventory_hostname }}"   # display host (WebSocket = nominal)

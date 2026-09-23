@@ -126,7 +126,7 @@
 
 - name: Find an existing system by name (a node the hub has no token for)
   ansible.builtin.uri:
-    url: "{{ beszel_agent_hub_url }}/api/collections/systems/records?filter={{ (\"(name='\" ~ beszel_agent_system_name ~ \"')\") | urlencode }}"
+    url: "{{ beszel_agent_hub_url }}/api/collections/systems/records?filter={{ (\"(name='\" ~ beszel_agent_system_label ~ \"')\") | urlencode }}"
     method: GET
     headers:
       Authorization: "{{ beszel_agent_auth.json.token }}"
@@ -150,7 +150,7 @@
       Authorization: "{{ beszel_agent_auth.json.token }}"
     body_format: json
     body:
-      name: "{{ beszel_agent_system_name }}"
+      name: "{{ beszel_agent_system_label }}"
       host: "{{ beszel_agent_system_host }}"
       port: "{{ beszel_agent_port | string }}"
       users:
