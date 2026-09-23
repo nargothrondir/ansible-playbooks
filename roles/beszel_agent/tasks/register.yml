@@ -83,7 +83,48 @@
   tags:
     - config
 
-- name: Find an existing system by name
+# THE TOKEN IS THE IDENTITY, NOT THE NAME. The token is derived from the node's
+# inventory-side name (UUIDv5), which never changes, while the system's name in
+# the hub is a display label the operator may edit. The role used to look the
+# system up by that label: once systems were renamed in the dashboard
+# ("3.0 FI Node [...]"), every lookup missed, and a run created a second, empty
+# system per node — carrying the SAME token as the real one, so two fingerprint
+# records then claimed one agent (Sync Beszel agent, tasks #476/#477).
+#
+# So the fingerprint record holding this node's token is looked up first; when
+# it exists, its system is this node's system whatever it is called. Only a node
+# with no record at all — a new one — falls through to name lookup and creation.
+- name: Find the fingerprint record holding this node's token
+  ansible.builtin.uri:
+    url: "{{ beszel_agent_hub_url }}/api/collections/fingerprints/records?filter={{ (\"(token='\" ~ _beszel_agent_derived_token ~ \"')\") | urlencode }}"
+    method: GET
+    headers:
+      Authorization: "{{ beszel_agent_auth.json.token }}"
+    status_code: 200
+  register: beszel_agent_fp_by_token
+  delegate_to: localhost
+  become: false
+  no_log: true
+  vars:
+    _beszel_agent_derived_token: "{{ (beszel_agent_system_name ~ '-beszel') | to_uuid }}"
+  tags:
+    - config
+
+# Two records with one token is exactly the state the old lookup left behind,
+# and picking one would be a guess about which system keeps the history.
+- name: Assert the node's token belongs to at most one system
+  ansible.builtin.assert:
+    that:
+      - beszel_agent_fp_by_token.json['items'] | length <= 1
+    fail_msg: >-
+      {{ beszel_agent_fp_by_token.json['items'] | length }} fingerprint records
+      in the hub carry the token of {{ beszel_agent_system_name }}, so the agent
+      could attach to any of their systems. Delete the duplicate system(s) in
+      the hub — the one the agent is NOT reporting to — and re-run.
+  tags:
+    - config
+
+- name: Find an existing system by name (a node the hub has no token for)
   ansible.builtin.uri:
     url: "{{ beszel_agent_hub_url }}/api/collections/systems/records?filter={{ (\"(name='\" ~ beszel_agent_system_name ~ \"')\") | urlencode }}"
     method: GET
@@ -91,12 +132,16 @@
       Authorization: "{{ beszel_agent_auth.json.token }}"
     status_code: 200
   register: beszel_agent_system_lookup
+  when: beszel_agent_fp_by_token.json['items'] | length == 0
   delegate_to: localhost
   become: false
   no_log: true
   tags:
     - config
 
+# changed_when reads the response: the task runs only when the system is
+# missing, so a created record is the change — the uri module itself reports a
+# POST as unchanged, which is how the duplicates above went unnoticed.
 - name: Create the system if missing
   ansible.builtin.uri:
     url: "{{ beszel_agent_hub_url }}/api/collections/systems/records"
@@ -112,7 +157,10 @@
         - "{{ beszel_agent_owner.json['items'][0].id }}"
     status_code: 200
   register: beszel_agent_system_create
-  when: beszel_agent_system_lookup.json['items'] | length == 0
+  changed_when: beszel_agent_system_create.json.id is defined
+  when:
+    - beszel_agent_fp_by_token.json['items'] | length == 0
+    - beszel_agent_system_lookup.json['items'] | length == 0
   delegate_to: localhost
   become: false
   no_log: true
@@ -122,12 +170,16 @@
 - name: Resolve the system id
   ansible.builtin.set_fact:
     beszel_agent_system_id: >-
-      {{ beszel_agent_system_lookup.json['items'][0].id
-         if (beszel_agent_system_lookup.json['items'] | length > 0)
-         else beszel_agent_system_create.json.id }}
+      {{ beszel_agent_fp_by_token.json['items'][0].system
+         if (beszel_agent_fp_by_token.json['items'] | length > 0)
+         else (beszel_agent_system_lookup.json['items'][0].id
+               if (beszel_agent_system_lookup.json['items'] | length > 0)
+               else beszel_agent_system_create.json.id) }}
   tags:
     - config
 
+# A system found by name may already have a record under an older token; that
+# record is reused as-is rather than given a second one.
 - name: Find an existing token for the system
   ansible.builtin.uri:
     url: "{{ beszel_agent_hub_url }}/api/collections/fingerprints/records?filter={{ (\"(system='\" ~ beszel_agent_system_id ~ \"')\") | urlencode }}"
@@ -136,14 +188,15 @@
       Authorization: "{{ beszel_agent_auth.json.token }}"
     status_code: 200
   register: beszel_agent_fp_lookup
+  when: beszel_agent_fp_by_token.json['items'] | length == 0
   delegate_to: localhost
   become: false
   no_log: true
   tags:
     - config
 
-# Deterministic token per node (UUIDv5 of the name) so re-creation is stable;
-# an existing record's token is reused as-is, keeping the run idempotent.
+# Deterministic token per node (UUIDv5 of the inventory-side name), so a
+# re-created record carries the token the agent already holds.
 - name: Create the token record if missing
   ansible.builtin.uri:
     url: "{{ beszel_agent_hub_url }}/api/collections/fingerprints/records"
@@ -157,7 +210,10 @@
       fingerprint: ""
     status_code: 200
   register: beszel_agent_fp_create
-  when: beszel_agent_fp_lookup.json['items'] | length == 0
+  changed_when: beszel_agent_fp_create.json.id is defined
+  when:
+    - beszel_agent_fp_by_token.json['items'] | length == 0
+    - beszel_agent_fp_lookup.json['items'] | length == 0
   delegate_to: localhost
   become: false
   no_log: true
@@ -167,9 +223,11 @@
 - name: Set the agent token for this node
   ansible.builtin.set_fact:
     beszel_agent_token: >-
-      {{ beszel_agent_fp_lookup.json['items'][0].token
-         if (beszel_agent_fp_lookup.json['items'] | length > 0)
-         else beszel_agent_fp_create.json.token }}
+      {{ beszel_agent_fp_by_token.json['items'][0].token
+         if (beszel_agent_fp_by_token.json['items'] | length > 0)
+         else (beszel_agent_fp_lookup.json['items'][0].token
+               if (beszel_agent_fp_lookup.json['items'] | length > 0)
+               else beszel_agent_fp_create.json.token) }}
   no_log: true
   tags:
     - config

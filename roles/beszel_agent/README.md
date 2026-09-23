@@ -40,7 +40,7 @@ systemd service** (not Docker), adopting the layout of Beszel's own installer
 | `beszel_agent_admin_email` | `vault_beszel_admin_email` | Hub PocketBase **superuser** email (registration). |
 | `beszel_agent_admin_password` | `""` | Hub superuser password — from OpenBao `infra/beszel`, supplied by the playbook. |
 | `beszel_agent_owner_email` | `""` | Dashboard owner of the systems; empty = the sole/first user. |
-| `beszel_agent_system_name` | `{{ inventory_hostname }}` | System name in the hub. |
+| `beszel_agent_system_name` | `{{ inventory_hostname }}` | Name a NEW system gets in the hub, and the seed of the node's token (UUIDv5). The node is found by that token, not by this name, so renaming the system in the hub is safe; changing this variable is not — it changes the token. |
 | `beszel_agent_system_host` | `{{ inventory_hostname }}` | Display host (nominal for WebSocket). |
 | `beszel_agent_docker_group` | `true` | Add the agent user to `docker` for container stats. |
 | `beszel_agent_extra_filesystems` | `""` | `EXTRA_FILESYSTEMS` (extra disks to monitor). |
