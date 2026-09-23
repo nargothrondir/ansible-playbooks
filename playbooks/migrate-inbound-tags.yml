@@ -346,7 +346,7 @@
             headers: "{{ _api_headers }}"
             body_format: json
             body: >-
-              {{ {'uuid': item.host,
+              {{ {'uuid': item.host_uuid,
                   'inbound': {'configProfileUuid': existing_profile.uuid,
                               'configProfileInboundUuid': _uuid_by_tag[item.tag]}} }}
             status_code: [200]
@@ -356,7 +356,7 @@
             _host_pairs: >-
               {%- set out = [] -%}
               {%- for tag, b in _snapshot.items() -%}{%- for h in b.hosts -%}
-                {%- set _ = out.append({'tag': tag, 'host': h}) -%}
+                {%- set _ = out.append({'tag': tag, 'host_uuid': h}) -%}
               {%- endfor -%}{%- endfor -%}
               {{- out -}}
           loop_control:
@@ -364,7 +364,7 @@
           no_log: true
           changed_when: _hosts_fixed.status | default(0) == 200
           when: >-
-            (_hosts_now | selectattr('uuid', 'equalto', item.host)
+            (_hosts_now | selectattr('uuid', 'equalto', item.host_uuid)
              | map(attribute='inbound.configProfileInboundUuid', default='') | first | default(''))
             != _uuid_by_tag[item.tag]
 
