@@ -81,8 +81,9 @@
   tags:
     - install
 
-# Install once (creates guard): Beszel self-updates the binary afterwards, so the
-# role must not re-download and fight it. The static build works on any libc.
+# Install once (creates guard): the update timer below keeps the binary current
+# afterwards, so the role must not re-download and fight it. The static build
+# works on any libc.
 - name: Install the Beszel agent binary
   ansible.builtin.unarchive:
     src: "https://github.com/henrygd/beszel/releases/download/v{{ beszel_agent_version }}/beszel-agent_linux_{{ beszel_agent_arch }}.tar.gz"
@@ -119,3 +120,64 @@
     daemon_reload: true
   tags:
     - service
+
+# Automatic updates, as Beszel's installer sets them up. A newly deployed update
+# unit also triggers one update straight away (handler), so a node catches up
+# in this run — where a failure is visible — rather than some night later.
+- name: Deploy the beszel-agent update service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - beszel-agent-update.service
+    - beszel-agent-update.timer
+  notify: "update beszel-agent now"
+  when: beszel_agent_auto_update | bool
+  tags:
+    - config
+
+- name: Ensure the beszel-agent update timer is enabled and running
+  ansible.builtin.systemd_service:
+    name: beszel-agent-update.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: beszel_agent_auto_update | bool
+  tags:
+    - service
+
+# The switch works both ways: turning it off must stop updates, not leave a
+# timer behind that nothing manages. Reads the unit first so a host that never
+# had it is left alone (disabling a missing unit fails).
+- name: Look for a leftover update timer
+  ansible.builtin.stat:
+    path: /etc/systemd/system/beszel-agent-update.timer
+  register: beszel_agent_update_timer
+  when: not beszel_agent_auto_update | bool
+  tags:
+    - service
+
+- name: Stop and disable the update timer when automatic updates are off
+  ansible.builtin.systemd_service:
+    name: beszel-agent-update.timer
+    state: stopped
+    enabled: false
+  when:
+    - not beszel_agent_auto_update | bool
+    - beszel_agent_update_timer.stat.exists | default(false)
+  tags:
+    - service
+
+- name: Remove the update units when automatic updates are off
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  loop:
+    - beszel-agent-update.timer
+    - beszel-agent-update.service
+  when: not beszel_agent_auto_update | bool
+  tags:
+    - config
