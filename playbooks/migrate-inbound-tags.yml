@@ -15,7 +15,9 @@
 #      its NEW tag, and prints that snapshot to the task log;
 #   2. PATCHes the config with only the tags changed;
 #   3. re-binds squads (users), then nodes (serving), then hosts (subscription)
-#      to the new uuids, and asserts every binding is back.
+#      to the new uuids, switches back on any node the panel switched off
+#      meanwhile (it does that to a node left with no inbound — see the task),
+#      and asserts every binding is back and every such node is on.
 # Users of the profile's nodes are cut off from step 2 until the node re-bind,
 # a few seconds, and Xray restarts on those nodes more than once. Run it one
 # profile at a time, at a quiet hour.
@@ -185,14 +187,17 @@
         _snapshot_json: >-
           {%- set out = {} -%}
           {%- for r in _renames -%}
-            {%- set sq = [] -%}{%- set nd = [] -%}
+            {%- set sq = [] -%}{%- set nd = [] -%}{%- set on = [] -%}
             {%- for q in _squads -%}
               {%- if r.uuid in (q.inbounds | map(attribute='uuid') | list) -%}{%- set _ = sq.append(q.uuid) -%}{%- endif -%}
             {%- endfor -%}
             {%- for n in _nodes -%}
-              {%- if r.uuid in (n.configProfile.activeInbounds | map(attribute='uuid') | list) -%}{%- set _ = nd.append(n.uuid) -%}{%- endif -%}
+              {%- if r.uuid in (n.configProfile.activeInbounds | map(attribute='uuid') | list) -%}
+                {%- set _ = nd.append(n.uuid) -%}
+                {%- if not n.isDisabled -%}{%- set _ = on.append(n.uuid) -%}{%- endif -%}
+              {%- endif -%}
             {%- endfor -%}
-            {%- set _ = out.update({r.to: {'squads': sq, 'nodes': nd,
+            {%- set _ = out.update({r.to: {'squads': sq, 'nodes': nd, 'enabled_nodes': on,
                   'hosts': _hosts | selectattr('inbound.configProfileInboundUuid', 'defined')
                                   | selectattr('inbound.configProfileInboundUuid', 'equalto', r.uuid)
                                   | map(attribute='uuid') | list}}) -%}
@@ -336,6 +341,56 @@
           changed_when: _nodes_fixed.status | default(0) == 200
           when: _wanted | reject('in', _current) | list | length > 0
 
+        # THE PANEL SWITCHES A NODE OFF when it restarts one that serves no
+        # inbound: start-all-nodes-by-profile.processor.ts (backend 2.8.0) sets
+        # isDisabled and clears the node's profile. The rename above queues that
+        # restart for every node of the profile, and until the re-bind a node
+        # whose inbounds were ALL renamed serves none — a TCP-only profile always,
+        # any profile when every inbound is renamed at once. Whether the queue
+        # reaches the node inside that window is a race; pl-1 lost it on the first
+        # run and stayed off. The re-bind puts the profile and inbounds back, but
+        # PATCH /api/nodes has no isDisabled, so switching the node on is its own
+        # call. The pause lets a restart already in flight finish first, so it
+        # cannot switch the node off again behind our back.
+        - name: Let the panel finish restarting the profile's nodes
+          ansible.builtin.pause:
+            seconds: 10
+          when: _renames | length > 0
+
+        - name: Re-read the nodes after the restart
+          delegate_to: panel
+          ansible.builtin.uri:
+            url: "{{ remnawave_panel_url }}/api/nodes"
+            method: GET
+            headers: "{{ _api_headers }}"
+            status_code: [200]
+          register: _nodes_after
+          no_log: true
+          changed_when: false
+          check_mode: false
+
+        # Only the nodes that were ON before the rename: one an operator had
+        # switched off stays off.
+        - name: Note which nodes must be on again
+          ansible.builtin.set_fact:
+            _must_be_enabled: >-
+              {{ _snapshot.values() | map(attribute='enabled_nodes', default=[])
+                 | flatten | unique | list }}
+
+        - name: Switch back on the nodes the panel switched off
+          delegate_to: panel
+          ansible.builtin.uri:
+            url: "{{ remnawave_panel_url }}/api/nodes/{{ item }}/actions/enable"
+            method: POST
+            headers: "{{ _api_headers }}"
+            status_code: [200, 201]
+          register: _nodes_enabled
+          loop: >-
+            {{ _nodes_after.json.response | selectattr('isDisabled')
+               | map(attribute='uuid') | select('in', _must_be_enabled) | list }}
+          no_log: true
+          changed_when: _nodes_enabled.status | default(0) in [200, 201]
+
         # The host keeps its remark, address and every other setting — only the
         # inbound it points at changes.
         - name: Point the subscription hosts at the renamed inbounds
@@ -427,6 +482,10 @@
             {%- if i.uuid not in _node_uuids -%}{%- set _ = miss.append('no node') -%}{%- endif -%}
             {%- if i.uuid not in _host_uuids -%}{%- set _ = miss.append('no host') -%}{%- endif -%}
             {%- if miss -%}{%- set _ = out.append(i.tag ~ ': ' ~ miss | join(', ')) -%}{%- endif -%}
+          {%- endfor -%}
+          {%- for n in _final.results[3].json.response
+                if n.isDisabled and n.uuid in (_must_be_enabled | default([])) -%}
+            {%- set _ = out.append('node ' ~ n.name ~ ': switched off, was on before the rename') -%}
           {%- endfor -%}
           {{- out -}}
 
