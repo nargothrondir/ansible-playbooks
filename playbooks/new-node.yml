@@ -10,6 +10,9 @@
 #   remnawave_panel_url   e.g. "https://panel.example.com" (no trailing slash)
 #   remnawave_api_token   from OpenBao (#2): infra/remnawave, field api_token
 #
+# An EXISTING node is left as is, except that node_xhttp=true adds the
+# profile's xHTTP inbound to what it serves (archive #42).
+#
 # Run (node_address defaults to <node_name>.<netbird_dns_domain>, the mesh name;
 # pass it explicitly only for nodes reached over a public address):
 #   ansible-playbook playbooks/new-node.yml \
@@ -144,6 +147,80 @@
       register: new_node_result
       no_log: true
 
+    # --- Serve added protocols on a node that already exists (archive #42) ---
+    # activeInbounds is set once, at creation, and the panel does not extend it
+    # when the profile gains an inbound — an existing node would never serve
+    # xHTTP. So it is reconciled here, and only ever EXTENDED: the body is what
+    # the node serves now plus what is missing, so Reality TCP stays exactly as
+    # it is. node_xhttp=false means "do not add", never "remove".
+    #
+    # Selected by network, not tag: the inbound's tag is new-profile.yml's
+    # business, and "the profile's xHTTP inbounds" is what this step means.
+    - name: Find the existing node and the xHTTP inbounds it does not serve
+      ansible.builtin.set_fact:
+        _existing_node: >-
+          {{ nodes_result.json.response
+             | selectattr('address', 'equalto', _node_address) | first | default({}) }}
+        _node_inbounds_wanted: >-
+          {{ (node_profile_resolved.inbounds | selectattr('network', 'equalto', 'xhttp')
+              | map(attribute='uuid') | list)
+             if (node_xhttp | default(false) | bool) else [] }}
+      no_log: true
+
+    - name: Work out which wanted inbounds are missing on the node
+      ansible.builtin.set_fact:
+        _node_active_uuids: >-
+          {{ _existing_node.configProfile.activeInbounds | map(attribute='uuid') | list }}
+        _node_inbounds_missing: >-
+          {{ _node_inbounds_wanted
+             | reject('in', _existing_node.configProfile.activeInbounds
+                            | map(attribute='uuid') | list)
+             | list }}
+      when: _existing_node.uuid is defined
+
+    # Adding another profile's inbound to a node would be refused by the panel
+    # at best; moving a node between profiles is not something to do on the
+    # way to enabling a protocol.
+    - name: Assert the node is on the profile it is being extended from
+      ansible.builtin.assert:
+        that:
+          - _existing_node.configProfile.activeConfigProfileUuid == node_profile_resolved.uuid
+        fail_msg: >-
+          Node {{ _node_address }} is on another config profile than
+          "{{ node_profile }}" — refusing to add that profile's inbounds to it.
+      when:
+        - _existing_node.uuid is defined
+        - _node_inbounds_missing | default([]) | length > 0
+
+    # Xray on that node restarts with the new inbound set, so its users
+    # reconnect once. Guarded: only the run that adds something pays that.
+    - name: Add the missing inbounds to the node
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/nodes"
+        method: PATCH
+        headers: >-
+          {{ _api_headers
+             | combine({'Host': remnawave_panel_host}
+                       if (remnawave_panel_host | default('') | length > 0)
+                       else {}) }}
+        body_format: json
+        body: >-
+          {{ {'uuid': _existing_node.uuid,
+              'configProfile': {
+                'activeConfigProfileUuid': node_profile_resolved.uuid,
+                'activeInbounds': (_node_active_uuids + _node_inbounds_missing) | unique
+              }} }}
+        status_code: [200]
+      register: _node_extended
+      no_log: true
+      changed_when: _node_extended.status | default(0) == 200
+      when:
+        - _existing_node.uuid is defined
+        - _node_inbounds_missing | default([]) | length > 0
+      tags:
+        - config
+
     # Published so the smoke test in provision-node.yml finds the node by the
     # exact address registered here, without deriving it a second time.
     - name: Publish the registered address for the rest of the run
@@ -158,6 +235,8 @@
           Node "{{ node_name }}" ({{ _node_address }}:{{ node_port }})
           {{ 'registered — the panel will now connect to it'
              if (new_node_result is not skipped)
-             else 'already existed — left as is' }}.
+             else ('already existed — now also serves ' ~ _node_inbounds_missing | length ~ ' added inbound(s)'
+                   if _node_extended is changed
+                   else 'already existed — left as is') }}.
       tags:
         - debug
