@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+# Mirrors the timer Beszel's own installer writes (install-agent.sh). The
+# randomised delay keeps the fleet from updating in the same minute.
+[Unit]
+Description=Run beszel-agent update {{ beszel_agent_update_calendar }}
+
+[Timer]
+OnCalendar={{ beszel_agent_update_calendar }}
+Persistent=true
+RandomizedDelaySec={{ beszel_agent_update_random_delay }}
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+# Mirrors the unit Beszel's own installer writes when asked to enable automatic
+# updates (supplemental/scripts/install-agent.sh). Runs as root on purpose: the
+# binary under {{ beszel_agent_dir }} is root-owned, and `update` restarts
+# beszel-agent.service itself once the new binary is in place.
+[Unit]
+Description=Update beszel-agent if needed
+Wants=beszel-agent.service
+
+[Service]
+Type=oneshot
+ExecStart={{ beszel_agent_dir }}/beszel-agent update

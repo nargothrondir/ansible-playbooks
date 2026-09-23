@@ -3,9 +3,22 @@
 # install. The agent dials the hub over WebSocket (HUB_URL + TOKEN), so it opens
 # no inbound port. https://beszel.dev
 
-# Bootstrap binary version. Installed ONLY if the binary is absent — Beszel
-# self-updates thereafter, so the role must not re-pin and fight it.
-beszel_agent_version: "0.18.7"
+# Bootstrap binary version. Installed ONLY if the binary is absent — the agent
+# updates itself thereafter (beszel_agent_auto_update), so the role must not
+# re-pin and fight it.
+beszel_agent_version: "0.20.0"
+
+# Let the agent update itself, the way Beszel's installer does when asked
+# "enable automatic updates? y/n": a daily timer runs `beszel-agent update`,
+# which fetches the latest release, verifies its SHA-256 against the release
+# digest (since 0.18.8), swaps the binary and restarts the agent. Until this
+# existed nothing ever ran that command, and the fleet sat on its bootstrap
+# version. false removes the timer again.
+beszel_agent_auto_update: true
+# systemd OnCalendar / RandomizedDelaySec for that timer — the installer's own
+# values.
+beszel_agent_update_calendar: daily
+beszel_agent_update_random_delay: 4h
 beszel_agent_arch: amd64
 beszel_agent_user: beszel
 beszel_agent_dir: /opt/beszel-agent

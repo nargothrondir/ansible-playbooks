@@ -113,6 +113,18 @@
           differ is off the mesh for a few seconds while they are re-applied.
           Leave Limit EMPTY for every node, or set <host>,controller for one.
 
+      # The agent's role, re-applied to running nodes: provisioning installs it
+      # on a new one, and this is how a change to the role — the update timer
+      # first of all — reaches the ones already serving. Limit must carry the
+      # controller: its play reads the hub credentials, and the node play
+      # asserts they were read.
+      "Sync Beszel agent":
+        playbook: playbooks/beszel.yml
+        description: >-
+          Bring each node's Beszel agent in line with the role — registration
+          in the hub, the systemd unit and the automatic update timer. Leave
+          Limit EMPTY for every node, or set <host>,controller for one.
+
       # Targeting here is the playbook's own variable rather than --limit,
       # because apt-sources.yml chooses its hosts from apt_sources_target and
       # defaults to the lab group. A run with no arguments therefore cannot

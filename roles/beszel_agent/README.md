@@ -28,7 +28,10 @@ systemd service** (not Docker), adopting the layout of Beszel's own installer
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `beszel_agent_version` | `0.18.7` | Bootstrap binary version (install-if-absent; Beszel self-updates after). |
+| `beszel_agent_version` | `0.20.0` | Bootstrap binary version (install-if-absent; the update timer keeps it current after). |
+| `beszel_agent_auto_update` | `true` | Daily `beszel-agent update` timer, as Beszel's installer creates on "enable automatic updates". Verifies the release SHA-256 (0.18.8+) and restarts the agent. `false` removes the timer. |
+| `beszel_agent_update_calendar` | `daily` | Timer `OnCalendar`. |
+| `beszel_agent_update_random_delay` | `4h` | Timer `RandomizedDelaySec`, so nodes do not update in the same minute. |
 | `beszel_agent_arch` | `amd64` | Release architecture. |
 | `beszel_agent_hub_url` | `""` | **Required** — hub URL (WebSocket + registration API). Set it in the inventory; not defaulted here so no real hostname ships with the repo. |
 | `beszel_agent_key` | `""` | Hub public key. Auto-fetched during registration; set only if `register` is off. |

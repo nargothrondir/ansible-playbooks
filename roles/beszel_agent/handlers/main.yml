@@ -5,3 +5,13 @@
     name: beszel-agent
     state: restarted
     daemon_reload: true
+
+# Oneshot, so `systemctl start` returns only when the update has finished — a
+# failed download or checksum mismatch fails this run instead of passing
+# silently in a timer at night. The binary restarts the agent itself.
+- name: Update beszel-agent now
+  listen: "update beszel-agent now"
+  ansible.builtin.systemd_service:
+    name: beszel-agent-update.service
+    state: started
+    daemon_reload: true
