@@ -65,6 +65,7 @@
 | [playbooks/provision-node.yml](playbooks/provision-node.yml) | bootstrap, apt_sources, upgrade, debian_release, ssh_hardening, common, dns, netbird, docker, xanmod, hawser, crowdsec, ufw, beszel_agent, notify_telegram + API панели | (survey) |
 | [playbooks/new-profile.yml](playbooks/new-profile.yml) | — (вызов API панели) | control |
 | [playbooks/new-node.yml](playbooks/new-node.yml) | — (вызов API панели) | control |
+| [playbooks/enable-xhttp.yml](playbooks/enable-xhttp.yml) | — (API панели и Dockhand; new-profile + new-node + dockhand-stack с `node_xhttp=true`: добавляет VLESS поверх xHTTP на существующую ноду рядом с Reality TCP) | control |
 | [playbooks/dns-record.yml](playbooks/dns-record.yml) | — (API Cloudflare; импортируется provision-node.yml или отдельно) | `dns_target` (по умолчанию: controller) |
 | [playbooks/dockhand-environment.yml](playbooks/dockhand-environment.yml) | — (API Dockhand через панель; импортируется provision-node.yml или отдельно) | `dockhand_env_target` (по умолчанию: controller) |
 | [playbooks/dockhand-stack.yml](playbooks/dockhand-stack.yml) | — (API Dockhand и панели через панель; разворачивает From-Git стек ноды) | `dockhand_stack_target` (по умолчанию: controller) |
