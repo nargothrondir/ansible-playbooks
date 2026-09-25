@@ -26,7 +26,7 @@ It is built around a single source of truth:
 
 > **Always read `references/CLAUDE.md` before producing any action plan or code.**
 
-`references/CLAUDE.md` contains the full specification (v4.0, 359 lines).
+`references/CLAUDE.md` contains the full specification (v4.1, 406 lines).
 Worked examples live in `references/workflow.md` and
 `references/ansible-standards.md` — read those on demand.
 This file is a navigation aid and quick reference only.
@@ -41,7 +41,7 @@ Every task follows this sequence — no exceptions:
 1. Read references/CLAUDE.md
 2. Analyse the request (§3)
 3. Produce an action plan (§4) — translated into the user's language
-4. Wait for confirmation if required (§4 Confirmation Gate)
+4. Keep going; stop only where §4 says to
 5. Write code following the conventions (§5–§7)
 6. Validate (§8)
 7. Commit (§9)
@@ -64,15 +64,12 @@ for which is which. What the spec adds is the part no linter can infer:
 4. **never `changed_when: true`** — CI greps for it; waive with same-line `# spec-ok: <reason>`
 5. **Deployment layer test** (core §12) — "if Dockhand were down, must this container still come up?"
 
-### Confirmation Gate — always wait when (core §4)
+### When to stop, and what done means (core §4)
 
-- Creating a new role
-- Adding/removing dependencies in `meta/main.yml` or `requirements.yml`
-- Changing inventory structure or group layout
-- Modifying more than 3 files in one task
-- Any destructive operation
-- Any change to `ansible.cfg` or `.ansible-lint`
-- Any infra-wide file (e.g. `inventory/group_vars/all*`)
+Deliberately not restated here — a copy of that list is what drifted last
+time. Read core §4: keep going by default; stop only for destructive steps,
+anything outside the repository, infra-wide files, weakened checks,
+architecture-changing assumptions, or a question only the user can answer.
 
 ### Process, scaled to blast radius (core §3, §4, §13)
 
@@ -92,10 +89,10 @@ Target environment for this repository:
 |-----------|---------|
 | OS | Debian 12/13 (nodes), Ubuntu LTS supported |
 | User provisioning | `ansible` automation user — key-only, passwordless sudo (created by bootstrap) |
-| Networking | Netbird (mesh VPN); DoH via dnscrypt-proxy (planned — no role yet) |
+| Networking | Netbird mesh — hosts addressed by mesh name, no IPs in any repository; encrypted DNS via the `dns` role (systemd-resolved, DNS over TLS) |
 | Containers | Docker (via official repo) |
 | Container delivery | Dockhand From-Git stacks + Hawser edge agents (core §12) |
-| Monitoring | Beszel (hub + per-node agents), btop |
+| Monitoring | Beszel (hub + per-node agents that update themselves daily), btop |
 | Secrets | OpenBao, the only store — daily snapshots, restore proven |
 | Auth | SSH key only after bootstrap; password only for initial root login |
 
@@ -108,7 +105,7 @@ Target environment for this repository:
 | Task type | Primary sections |
 |-----------|-----------------|
 | New role or playbook | §3 Before writing code, §4 Action plan, §5 Structure |
-| Modifying existing role | §3 Dependency impact, §4 Confirmation gate + diff discipline |
+| Modifying existing role | §3 Dependency impact, §4 When to stop + diff discipline |
 | Variables / handlers / tags / errors | §6 Repository conventions |
 | Secrets | §7 Security |
 | Committing, branch cleanup | §8 Validation, §9 Commits and branches |

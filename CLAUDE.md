@@ -1,9 +1,9 @@
 # AI Agent Guidelines for Ansible Playbook Development
 
-*Version 4.0*
+*Version 4.1*
 *Repository: Ansible Playbooks*
 *Author: Senior DevOps Engineer*
-*Last updated: 2026-07-27*
+*Last updated: 2026-09-25*
 
 ---
 
@@ -76,6 +76,10 @@ This is the only bypass of the confirmation gate.
   without its evidence status — **verified** (opened it) · **inspected within
   available context** (partial) · **unable to verify** (not in scope) — and
   never claim *verified* for a file you did not actually read.
+- **A subagent's report is evidence to check, not a verdict to adopt.** Open
+  the `path:line` or URL it quotes before building on it — the agents here
+  quote by contract, so the check is cheap. What you could not confirm is
+  marked as such, with where you looked.
 - Pre-existing violations found while working: style/project-rule — note and
   ask, do not silently fix; safety/correctness — fix immediately and note;
   missing mandatory artifacts (README, meta) — note and ask, do not
@@ -107,7 +111,7 @@ This is the only bypass of the confirmation gate.
   supported — an unsupported scenario that happens to work is still a defect
   waiting for the next upgrade.
 
-## 4. Action plan and confirmation gate
+## 4. Action plan, when to stop, and when it is done
 
 Produce an action plan before any code, **sized to the change**. Low-risk
 edit (single file, no structural impact, no new dependency): one line.
@@ -117,13 +121,42 @@ terse line each is the norm and is enough: the requirement is coverage, not
 ceremony. A plan long enough to feel like paperwork is a plan that will be
 skipped next time.
 
-Wait for explicit approval when ANY of these applies; otherwise present the
-plan and proceed immediately:
+**Then keep going.** A plan is information, not a request. When a step does
+not need the user, do it, and put the status note in the same message as the
+next action. A new role, a new dependency, a change across many files — each
+is a line in the plan, not a stop.
 
-- new role · dependency change (`meta/`, `requirements.yml`) · inventory
-  structure or group layout · more than 3 files in one task · `ansible.cfg`
-  or `.ansible-lint` · destructive operation · infra-wide file (e.g. the
-  inventory's `group_vars/all*`) · an architecture-changing assumption
+**Stop and ask only when the next step:**
+
+- is **destructive** — deleting data, issues or a branch (other than the one
+  just merged, §9), rewriting history, force-pushing;
+- acts **outside this repository** — writing to OpenBao, the panel, Dockhand
+  or Semaphore through their APIs; merging in `docker-stacks` (a merge there
+  is a deploy) or in the inventory repository; anything that runs on the
+  fleet;
+- touches an **infra-wide file** (the inventory's `group_vars/all*`,
+  `ansible.cfg`, `.ansible-lint`) or **weakens a check** (§8);
+- rests on an assumption that **changes the architecture** (§3);
+- cannot be taken without an answer only the user has.
+
+Permission prompts for the destructive commands stay on in
+`.claude/settings.json`, as a second line behind this list.
+
+**Done means,** unless the task says otherwise:
+
+- a change here: CI green, then squash-merged with its branch deleted — that
+  merge is not a deploy and needs no approval — and the operator handed the
+  commands that roll it out, each with what success looks like (§1);
+- a change that reaches the fleet: proven on one node before the rest;
+- a question: answered, with the evidence status of each claim (§3).
+
+**Work of many steps keeps its checklist in `.claude/TASKS.md`** (gitignored:
+the repository is public). Tick items as they finish, add what turns up. A
+long run gets its older turns summarised; the file survives that, the
+conversation does not.
+
+**Report as done · found · needs from you.** The last part is never buried:
+it is what the user acts on.
 
 **Diff discipline:** modify only files the task requires; no opportunistic
 cleanup, reformatting, or refactoring — even inside an already-open file.
@@ -175,6 +208,12 @@ The opinionated choices an agent cannot infer:
   more than clicking and the API contract will be wrong at least once —
   undocumented fields, renamed between versions, silently accepted and
   dropped. Pay it: the alternative is state nobody can reconstruct.
+- **A record in another system is found by a stable key, never by its display
+  name.** Panel nodes by address, subscription hosts by inbound UUID, Beszel
+  systems by their token. Display names are for people and get renamed by
+  hand; a lookup by name then misses, and the next run creates a duplicate —
+  which happened three times in one week (#117, #120). Look up by name only
+  what nothing but this repository ever names, such as a Semaphore template.
 - **Privilege:** role-level `become: true`, not per-task repetition; escalate
   only where needed; `become_user` when not root.
 - **Templates render, don't compute** — logic lives in variables and tasks,
@@ -210,6 +249,10 @@ The opinionated choices an agent cannot infer:
   findable only by someone already looking. Hosts are addressed by mesh name,
   and inventories or issues are inspected by counting addresses, never by
   printing them.
+- **The same holds for hosting provider names and our own domains**, and for
+  the text around the code as much as the code: commit messages, pull-request
+  titles and bodies. They identify the fleet as surely as an address. In
+  anything public use placeholders — `[Provider]`, `example.com`.
 - A value that is genuinely not a secret (a port, a role id) belongs in plain
   group_vars: putting it in the store costs a round trip and buys nothing.
 - `no_log: true` on any task handling credentials (passwords, tokens, API
@@ -231,6 +274,9 @@ The opinionated choices an agent cannot infer:
   wrong and hardest to notice.
 - Roles support `ansible-playbook --check`; Molecule where scenario coverage
   beyond check mode is warranted.
+- **Before merging anything non-trivial, review the diff for blockers only:**
+  file, line, why it is wrong, how to show it fails (`/code-review` does this).
+  Style notes wait; a blocker found here is cheaper than one found on a node.
 
 ## 9. Commits, branches and issues
 
@@ -251,9 +297,10 @@ adjacent fixes are the exception).
 
 **A branch is deleted once it stops being needed** — merged or abandoned,
 remote *and* local. Anything worth keeping belongs on `main` or in an issue,
-not in a branch nobody will open again. Deletion is a destructive operation
-and falls under the §4 gate; the two halves have different safety conditions,
-and **the branch of an open pull request is never deleted**:
+not in a branch nobody will open again. Deleting the branch of a pull request
+you just merged is part of done (§4); any other deletion is destructive and a
+§4 stop. The two halves have different safety conditions, and **the branch of
+an open pull request is never deleted**:
 
 - **Local** — safe once every local commit also exists on a remote:
 
