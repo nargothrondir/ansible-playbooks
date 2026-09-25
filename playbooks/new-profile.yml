@@ -81,14 +81,14 @@
     # is a deliberate operation, not the side effect of a default.
     _profile_xhttp: "{{ node_xhttp | default(false) | bool }}"
     _xhttp_tag: "{{ _profile_code ~ _inbound_tag_suffixes['xhttp'] }}"
-    # The xHTTP inbound (templates/xray-inbound-xhttp.json.j2) has no TLS and
-    # no port: it listens on this socket, and Angie's grpc_pass in docker-stacks
+    # The xHTTP inbound (templates/xray-inbound-xhttp.json.j2) has no TLS: it
+    # listens on this socket, and Angie's grpc_pass in docker-stacks
     # remnanode/angie.conf is the other end — change both or neither. It trusts
     # X-Forwarded-For only when X-Real-IP is present, which Angie sets and
     # overwrites; without that Xray records the socket, not the client.
-    # noSSEHeader: Angie needs no SSE hint to stop buffering (Xray already
-    # sends X-Accel-Buffering: no), so the download stream need not look like
-    # one. Everything else in xhttpSettings is left at Xray's defaults.
+    # Everything else in xhttpSettings is left at Xray's defaults — including
+    # noSSEHeader, which XHTTP's design notes (Xray-core discussion #4113)
+    # offer only as a remedy for stream-one trouble, not as a setting to carry.
     #
     # The inbound still carries "port": host_port. Xray drops it for a socket
     # listener (infra/conf/xray.go, v26.6.27: PortList = nil when listen is a
