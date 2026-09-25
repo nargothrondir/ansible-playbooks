@@ -28,3 +28,7 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# The agent's working checklist for long runs (CLAUDE.md §4). Local only:
+# it can name hosts and findings, and this repository is public.
+.claude/TASKS.md
