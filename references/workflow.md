@@ -12,12 +12,13 @@ Illustrative, not exhaustive:
 | Default SSH port is 22 | Implementation | Standard default; does not affect role design |
 | Package name for a tool on Debian | Implementation | Deterministic; resolvable from OS facts |
 | Whether a role creates a user or expects one to exist | **Architectural** | Changes the role's responsibility boundary |
-| Secrets from HashiCorp Vault vs `ansible-vault` | **Architectural** | Changes the entire secrets strategy |
+| Reading a secret from anywhere but OpenBao through the AppRole | **Architectural** | Changes the secrets strategy (core §7: one store) |
 | Which inventory group a playbook targets | **Architectural** | Changes the blast radius of the change |
 | Whether a service is enabled at boot | Implementation | Operationally scoped; state and proceed |
 
-When in doubt — ask: one clarifying question is cheaper than a rebuilt
-architecture. But do not manufacture doubt to avoid a routine decision.
+An architectural assumption is a question for the user: one message is
+cheaper than a rebuilt architecture. An implementation assumption is stated
+in the plan and the work continues.
 
 ## Action plan formats
 
