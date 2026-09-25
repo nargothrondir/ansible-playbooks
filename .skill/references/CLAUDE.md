@@ -252,7 +252,9 @@ The opinionated choices an agent cannot infer:
 - **The same holds for hosting provider names and our own domains**, and for
   the text around the code as much as the code: commit messages, pull-request
   titles and bodies. They identify the fleet as surely as an address. In
-  anything public use placeholders — `[Provider]`, `example.com`.
+  anything public use placeholders — `[Provider]`, `example.com`. CI checks a
+  pull request's title, body and commit messages with the same guard as the
+  files (`pr-text-guard`; bot-authored pull requests excepted).
 - A value that is genuinely not a secret (a port, a role id) belongs in plain
   group_vars: putting it in the store costs a round trip and buys nothing.
 - `no_log: true` on any task handling credentials (passwords, tokens, API

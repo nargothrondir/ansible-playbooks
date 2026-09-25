@@ -12,6 +12,18 @@
 set -uo pipefail
 
 FAILED=0
+
+# --text <file>: scan one file of free text instead of the tracked files — a
+# pull request's title, body and commit messages, collected by
+# .github/workflows/pr-text-guard.yml. The same patterns, the same allowlists.
+# One difference: the log of a public repository is public, so in this mode a
+# finding names its line but never its value — printing it would publish the
+# very leak it caught.
+TEXT_FILE=""
+if [ "${1:-}" = "--text" ]; then
+  TEXT_FILE="${2:?--text needs a file to scan}"
+fi
+show() { if [ -n "$TEXT_FILE" ]; then echo "<value hidden>"; else echo "$1"; fi; }
 err() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::error::$1"; else echo "  ✗ $1"; fi; FAILED=$((FAILED + 1)); }
 
 # Files never scanned: binaries and vendored third-party content.
@@ -22,7 +34,10 @@ SCAN_EXCLUDE='\.(png|jpg|jpeg|ico|svg|webmanifest|woff2?|ttf)$'
 # is ONE grep invocation rather than one per file: the per-file version took
 # over two minutes on a Windows workstation, and a guard nobody can afford to
 # run locally is not a guard.
-scan_files() { git ls-files -z | tr '\0' '\n' | grep -vE "$SCAN_EXCLUDE" | tr '\n' '\0'; }
+scan_files() {
+  if [ -n "$TEXT_FILE" ]; then printf '%s\0' "$TEXT_FILE"; return; fi
+  git ls-files -z | tr '\0' '\n' | grep -vE "$SCAN_EXCLUDE" | tr '\n' '\0'
+}
 
 # --- public resolvers -------------------------------------------------------
 # Addresses of PUBLIC DNS resolvers this project configures or documents
@@ -58,10 +73,10 @@ while IFS= read -r hit; do
   file="${hit%%:*}"; rest="${hit#*:}"; lineno="${rest%%:*}"; text="${rest#*:}"
   for ip in $(echo "$text" | grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b'); do
     echo "$ip" | grep -qE "$ip_ok" && continue
-    err "$file:$lineno real-looking IP '$ip' — use an RFC 5737 range (203.0.113.x) or move it out of this repository"
+    err "$file:$lineno real-looking IP '$(show "$ip")' — use an RFC 5737 range (203.0.113.x) or move it out of this repository"
     found=1
   done
-done <<< "$(scan_files | xargs -0 grep -nE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' 2>/dev/null || true)"
+done <<< "$(scan_files | xargs -0 grep -nHE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' 2>/dev/null || true)"
 [ "$found" = 0 ] && echo "  ✓ no real-looking IPv4 literals"
 
 # --- 1b. IPv6 literals -----------------------------------------------------
@@ -95,13 +110,13 @@ while IFS= read -r hit; do
     # Not an address without real content: rules out Foo::Bar scope operators.
     [ "$(echo "$ip6" | tr -cd '0-9a-fA-F' | wc -c)" -ge 4 ] || continue
     echo "$ip6" | tr 'A-Z' 'a-z' | grep -qE "$ip6_ok" && continue
-    err "$file:$lineno real-looking IPv6 '$ip6' — use 2001:db8:: or move it out of this repository"
+    err "$file:$lineno real-looking IPv6 '$(show "$ip6")' — use 2001:db8:: or move it out of this repository"
     found=1
   done
 # Candidate lines only: a compressed address, or an uncompressed one written
 # out in full. Scanning every line with two colons made the guard several times
 # slower for nothing — almost every YAML line has two colons.
-done <<< "$(scan_files | xargs -0 grep -nE '([0-9a-fA-F]{1,4}::|::[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){7})' 2>/dev/null || true)"
+done <<< "$(scan_files | xargs -0 grep -nHE '([0-9a-fA-F]{1,4}::|::[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){7})' 2>/dev/null || true)"
 [ "$found" = 0 ] && echo "  ✓ no real-looking IPv6 literals"
 
 # --- 2. Domains ------------------------------------------------------------
@@ -134,7 +149,7 @@ IPCHECK_OK='|whoer\.net|browserleaks\.com|2ip\.io|2ip\.ru'
 # Upstreams this project genuinely talks to, plus a few names that merely look
 # like domains (containerd.io is a Debian PACKAGE name). Extend only for a NEW
 # upstream — never to silence one of our own hostnames.
-domain_ok='(example\.(com|org|net)|localhost|github\.com|githubusercontent\.com|github\.io|ghcr\.io|debian\.org|ubuntu\.com|docker\.com|docker\.io|containerd\.io|letsencrypt\.org|cloudflare\.com|netbird\.io|netbird\.cloud|crowdsec\.net|packagecloud\.io|xanmod\.org|ansible\.com|readthedocs\.io|python\.org|telegram\.org|mozilla\.org|openbao\.org|hashicorp\.com|angie\.software|sshaudit\.com|renovatebot\.com|deepwiki\.com|beszel\.dev|semaphoreui\.com|w3\.org|schema\.org|dns\.google|cloudflare-dns\.com|quad9\.net|mullvad\.net|dns0\.eu|adguard-dns\.com'"$IPCHECK_OK"')$'
+domain_ok='(example\.(com|org|net)|localhost|github\.com|githubusercontent\.com|github\.io|ghcr\.io|debian\.org|ubuntu\.com|docker\.com|docker\.io|containerd\.io|letsencrypt\.org|cloudflare\.com|netbird\.io|netbird\.cloud|crowdsec\.net|packagecloud\.io|xanmod\.org|ansible\.com|readthedocs\.io|python\.org|telegram\.org|mozilla\.org|openbao\.org|hashicorp\.com|angie\.software|sshaudit\.com|renovatebot\.com|deepwiki\.com|beszel\.dev|semaphoreui\.com|claude\.com|anthropic\.com|w3\.org|schema\.org|dns\.google|cloudflare-dns\.com|quad9\.net|mullvad\.net|dns0\.eu|adguard-dns\.com'"$IPCHECK_OK"')$'
 found=0
 while IFS= read -r hit; do
     [ -z "$hit" ] && continue
@@ -150,10 +165,10 @@ while IFS= read -r hit; do
       echo "$parent" | grep -qE "$domain_ok" && continue
       parent2="${parent#*.}"
       echo "$parent2" | grep -qE "$domain_ok" && continue
-      err "$file:$lineno domain '$d' is not a known upstream — parameterize it, or use example.com"
+      err "$file:$lineno domain '$(show "$d")' is not a known upstream — parameterize it, or use example.com"
       found=1
     done
-done <<< "$(scan_files | xargs -0 grep -niE "\b[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)*\.($TLDS)\b" 2>/dev/null || true)"
+done <<< "$(scan_files | xargs -0 grep -niHE "\b[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)*\.($TLDS)\b" 2>/dev/null || true)"
 [ "$found" = 0 ] && echo "  ✓ no unknown domains"
 
 # --- 3. Public SSH keys ----------------------------------------------------
@@ -168,7 +183,11 @@ while IFS= read -r hit; do
   echo "$hit" | grep -qiE 'example|placeholder|molecule|AAAA\.\.\.' && continue
   err "${hit%%:*} contains a real SSH public key — it identifies specific machines; keep it with the inventory"
   found=1
-done <<< "$(git grep -nE 'ssh-(ed25519|rsa) AAAA' -- . 2>/dev/null || true)"
+done <<< "$(if [ -n "$TEXT_FILE" ]; then
+               grep -nE 'ssh-(ed25519|rsa) AAAA' "$TEXT_FILE" 2>/dev/null | sed "s#^#$TEXT_FILE:#"
+             else
+               git grep -nE 'ssh-(ed25519|rsa) AAAA' -- . 2>/dev/null
+             fi || true)"
 [ "$found" = 0 ] && echo "  ✓ no real SSH public keys"
 
 echo

@@ -1,0 +1,54 @@
+---
+# CI: the text around the code carries no infrastructure tells (CLAUDE.md §7).
+#
+# tells-guard.sh scans the tracked files; a pull request's title and body and
+# its commit messages are published just as surely and it never saw them. This
+# runs the same guard over that text, in the mode that hides what it finds —
+# this repository's Actions logs are public.
+#
+# Bot-authored pull requests are skipped. Renovate quotes upstream release
+# notes, full of other people's domains; failing every one of them would turn a
+# guard for our own text into a check the normal workflow cannot pass.
+name: PR text guard
+
+on:
+  pull_request:
+    # `edited` too: a body fixed after opening has to be re-checked.
+    types: [opened, edited, synchronize, reopened]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pr-text-guard:
+    name: pr-text-guard
+    if: github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Through env, never interpolated into the script: a title is attacker-
+      # controlled text, and ${{ }} inside `run:` would execute it.
+      - name: Collect the pull request's title, body and commit messages
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            printf '%s\n' "$PR_TITLE"
+            printf '%s\n' "$PR_BODY"
+            git log --format='%B' "$BASE_SHA..$HEAD_SHA"
+          } > "$RUNNER_TEMP/pr-text.txt"
+
+      - name: Fail on infrastructure tells in the pull request's text
+        run: bash .github/scripts/tells-guard.sh --text "$RUNNER_TEMP/pr-text.txt"
