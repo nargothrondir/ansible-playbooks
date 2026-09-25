@@ -56,7 +56,7 @@ violation late would be expensive. Worked examples live in `references/`
 When remediating a safety violation *requires* a destructive step (e.g.
 removing a committed secret), do it immediately, prefer the least destructive
 remediation that fully resolves the issue, and report it in the action plan.
-This is the only bypass of the confirmation gate.
+This is the only case where a §4 stop is skipped.
 
 ## 3. Before writing code
 
@@ -211,9 +211,9 @@ The opinionated choices an agent cannot infer:
 - **A record in another system is found by a stable key, never by its display
   name.** Panel nodes by address, subscription hosts by inbound UUID, Beszel
   systems by their token. Display names are for people and get renamed by
-  hand; a lookup by name then misses, and the next run creates a duplicate —
-  which happened three times in one week (#117, #120). Look up by name only
-  what nothing but this repository ever names, such as a Semaphore template.
+  hand; a lookup by name then misses, and the next run creates a duplicate.
+  Look up by name only what nothing but this repository ever names, such as a
+  Semaphore template.
 - **Privilege:** role-level `become: true`, not per-task repetition; escalate
   only where needed; `become_user` when not root.
 - **Templates render, don't compute** — logic lives in variables and tasks,
@@ -352,8 +352,8 @@ One test decides where Dockerized software lives:
   gap between merging and rolling out is the feature.
   An inbound webhook is allowed only where the endpoint is already public for
   another reason AND the call is signature-verified; opening a port to gain one
-  does not qualify. Dockhand has two and they are NOT interchangeable — measured
-  2026-08-19, after an evening spent believing a merge had deployed:
+  does not qualify. Dockhand has two and they are not interchangeable
+  (measured 2026-08-19):
   `/api/git/webhook/{repo}` deploys a single stack named after the repository,
   which a multi-stack repo like docker-stacks does not have, so it changes
   nothing here; `/api/git/stacks/{id}/webhook` is the one that reaches a

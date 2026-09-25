@@ -10,7 +10,7 @@ description: >
   Ansible code (playbooks, roles, tasks, handlers, templates, variables,
   inventory, ansible.cfg, requirements.yml); discusses Ansible role
   architecture or structure; or asks about automating any part of their
-  VPS stack with Ansible (Debian upgrade, user creation, DoH, Netbird,
+  VPS stack with Ansible (Debian upgrade, user creation, encrypted DNS, Netbird,
   Docker, SSH hardening, package management).
 
   Do NOT trigger for general DevOps questions without Ansible context
@@ -35,17 +35,9 @@ This file is a navigation aid and quick reference only.
 
 ## Workflow at a Glance
 
-Every task follows this sequence — no exceptions:
-
-```
-1. Read references/CLAUDE.md
-2. Analyse the request (§3)
-3. Produce an action plan (§4) — translated into the user's language
-4. Keep going; stop only where §4 says to
-5. Write code following the conventions (§5–§7)
-6. Validate (§8)
-7. Commit (§9)
-```
+Read `references/CLAUDE.md`, then work to its definition of done (§4): a
+plan sized to the change, conventions §5–§7, validation §8, commits §9 — and
+for a question, an answer with the evidence status of each claim (§3).
 
 ---
 
