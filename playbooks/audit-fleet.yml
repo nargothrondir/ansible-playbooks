@@ -1,17 +1,19 @@
 ---
-# Audit the whole fleet against the invariants of the REALITY + xHTTP
-# architecture — READ-ONLY. Every task is a GET or a computation; nothing is
+# Audit the whole fleet against the invariants of the REALITY + xHTTP +
+# Hysteria2 architecture — READ-ONLY. Every task is a GET or a computation; nothing is
 # written to the panel, Dockhand or OpenBao, and a run reports changed=0.
 #
 # What it checks (the contract is written down in the remnawave-cookbook skill,
 # audit.md, and mirrors its offline validate.py where the two overlap):
-#   profiles  — every Reality TCP and xHTTP inbound carries a tag in the
-#               <CC>-<protocol> scheme (vars/inbound-tags.yml); the xHTTP
+#   profiles  — every Reality TCP, xHTTP and Hysteria2 inbound carries a tag
+#               in the <CC>-<protocol> scheme (vars/inbound-tags.yml); the xHTTP
 #               inbound listens on profile_xhttp_socket, has a port, and trusts
-#               X-Real-IP;
+#               X-Real-IP; the Hysteria2 inbound has TLS from certificate FILES
+#               (inline PEM means the key travels in every config pushed);
 #   bindings  — each such inbound is in a squad, active on a node and published
 #               by a host;
 #   hosts     — port 443; for xHTTP also securityLayer TLS and an xmux block;
+#               for Hysteria2 ALPN h3 and no pinnedPeerCertSha256;
 #   nodes     — switched on, attached to a profile, connected;
 #   stacks    — a node that serves xHTTP has XHTTP_PATH in its Dockhand stack,
 #               and one that does not, does not. XHTTP_UPSTREAM is reported.
@@ -171,7 +173,8 @@
                       | select('in', audit_legacy_nodes) | list | length > 0) -%}
             {%- for i in p.inbounds -%}
               {%- set key = 'reality-tcp' if (i.type == 'vless' and i.network in ['tcp', 'raw'] and i.security == 'reality')
-                             else ('xhttp' if (i.type == 'vless' and i.network == 'xhttp') else '') -%}
+                             else ('xhttp' if (i.type == 'vless' and i.network == 'xhttp')
+                             else ('hysteria2' if (i.type == 'hysteria' and i.network == 'hysteria') else '')) -%}
               {%- if key -%}
                 {%- set where = p.name ~ ' / ' ~ i.tag -%}
                 {%- if not (i.tag is match('^[A-Z]{2}' ~ (_inbound_tag_suffixes[key] | regex_escape) ~ '$')) -%}
@@ -194,6 +197,15 @@
                     {%- set _ = out.append({'level': 'error', 'where': where, 'msg': 'does not trust ' ~ audit_trusted_header ~ ' — client addresses are lost'}) -%}
                   {%- endif -%}
                 {%- endif -%}
+                {%- if key == 'hysteria2' -%}
+                  {%- set ss = (i.rawInbound or {}).get('streamSettings', {}) -%}
+                  {%- set certs = ss.get('tlsSettings', {}).get('certificates', []) -%}
+                  {%- if ss.get('security') != 'tls' -%}
+                    {%- set _ = out.append({'level': 'error', 'where': where, 'msg': 'security ' ~ ss.get('security', 'none') ~ ', not tls — Xray does not start a Hysteria2 listener without TLS, and the node loses every protocol'}) -%}
+                  {%- elif certs | length == 0 or certs | selectattr('certificateFile', 'undefined') | list | length > 0 -%}
+                    {%- set _ = out.append({'level': 'error', 'where': where, 'msg': 'certificate not given as certificateFile/keyFile — inline PEM puts the private key in every config the panel pushes'}) -%}
+                  {%- endif -%}
+                {%- endif -%}
                 {%- for h in _hosts if (h.inbound or {}).get('configProfileInboundUuid') == i.uuid -%}
                   {%- set hw = where ~ ' / host "' ~ h.remark ~ '"' -%}
                   {%- if h.port != 443 -%}{%- set _ = out.append({'level': 'error', 'where': hw, 'msg': 'port ' ~ h.port ~ ', not 443'}) -%}{%- endif -%}
@@ -202,6 +214,12 @@
                   {%- endif -%}
                   {%- if key == 'xhttp' and not ((h.xhttpExtraParams or {}).get('xmux')) -%}
                     {%- set _ = out.append({'level': 'error', 'where': hw, 'msg': 'no xhttpExtraParams.xmux — Mihomo opens a new connection per proxied connection'}) -%}
+                  {%- endif -%}
+                  {%- if key == 'hysteria2' and 'h3' not in ((h.alpn or '') ~ '').split(',') -%}
+                    {%- set _ = out.append({'level': 'error', 'where': hw, 'msg': 'ALPN ' ~ (h.alpn or 'unset') ~ ' — the Hysteria2 listener offers h3 only'}) -%}
+                  {%- endif -%}
+                  {%- if key == 'hysteria2' and h.get('pinnedPeerCertSha256') -%}
+                    {%- set _ = out.append({'level': 'error', 'where': hw, 'msg': 'pinnedPeerCertSha256 set — panel 2.8.0 turns it into skip-cert-verify for Mihomo without passing the pin'}) -%}
                   {%- endif -%}
                 {%- endfor -%}
               {%- endif -%}
