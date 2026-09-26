@@ -1,0 +1,86 @@
+---
+# Add Hysteria2 to a node that already serves Reality TCP. ADDS, never
+# replaces: Reality TCP and xHTTP — inbounds, keys, squads, node activation and
+# subscription hosts — stay exactly as they are.
+#
+#   1. on the node       check that remnanode can read the node's certificate,
+#                        then open UDP host_port (443) in ufw;
+#   2. new-profile.yml   appends the Hysteria2 inbound to the node's config
+#                        profile, puts it in the squads that already see Reality
+#                        TCP, and creates its subscription host
+#                        ("<flag> <NODE> Hysteria2");
+#   3. new-node.yml      adds that inbound to what the node serves.
+# Each step is idempotent, so a re-run changes nothing and a failed run can be
+# repeated as is.
+#
+# Why step 1 comes first: Xray refuses to start with a TLS inbound whose
+# certificate it cannot read, and it runs every inbound of the node in one
+# process — so a missing certificate would take Reality TCP and xHTTP down with
+# it. The certificate is Angie's own (docker-stacks remnanode mounts the
+# angie-acme volume read-only at /etc/xray-tls); a node whose stack predates
+# that mount has not had its 09:00 UTC sync since, and the run stops before it
+# touches anything.
+#
+# Rolling back one node: in the panel, take the Hysteria2 inbound off the node's
+# active inbounds (Nodes → the node → inbounds). Xray restarts without it.
+#
+# Run from Semaphore ("Enable Hysteria2"), survey: node_name, node_profile,
+# node_country — the same values the node was provisioned with. Limit stays
+# EMPTY: the first play targets the node by name, the rest the controller.
+
+- name: Check the node can serve Hysteria2
+  hosts: "{{ node_name }}"
+  become: true
+
+  vars:
+    # Must match new-profile.yml's profile_hysteria2_cert_dir.
+    _hysteria2_cert_dir: /etc/xray-tls/letsencrypt
+    # Hysteria2 listens on the same number as Reality, on UDP (new-profile.yml
+    # host_port). Nothing else on a node uses UDP, so this opens it.
+    ufw_public_udp:
+      - port: 443
+        comment: Hysteria2
+
+  tasks:
+    # Read-only: `test -s` inside the container, as the root Xray runs as.
+    - name: Check that remnanode can read the certificate and key
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - remnanode
+          - sh
+          - -c
+          - test -s {{ _hysteria2_cert_dir }}/certificate.pem && test -s {{ _hysteria2_cert_dir }}/private.key
+      register: _hysteria2_cert_check
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the certificate is there before Xray is asked to use it
+      ansible.builtin.assert:
+        that:
+          - _hysteria2_cert_check.rc == 0
+        fail_msg: >-
+          remnanode on {{ inventory_hostname }} cannot read
+          {{ _hysteria2_cert_dir }}/certificate.pem and private.key
+          (rc {{ _hysteria2_cert_check.rc }}: {{ _hysteria2_cert_check.stderr | default('') }}).
+          Either its stack predates the read-only angie-acme mount in
+          docker-stacks remnanode — it arrives with the 09:00 UTC sync, or a
+          redeploy of the stack in Dockhand — or Angie has not issued the
+          certificate yet. Nothing was changed.
+
+    - name: Open the Hysteria2 port in the firewall
+      ansible.builtin.include_role:
+        name: ufw
+      tags:
+        - config
+
+- name: Add Hysteria2 to the node's config profile
+  ansible.builtin.import_playbook: new-profile.yml
+  vars:
+    node_hysteria2: true
+
+- name: Serve the Hysteria2 inbound on the node
+  ansible.builtin.import_playbook: new-node.yml
+  vars:
+    node_hysteria2: true

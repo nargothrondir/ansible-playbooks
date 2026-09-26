@@ -162,6 +162,29 @@
           type: ""
           required: true
 
+      # Same three values, same meaning; node_name also picks the host the
+      # first play runs on.
+      "Enable Hysteria2":
+        - name: node_name
+          title: Node name
+          description: >-
+            The node's short name as provisioned (e.g. fi-1) — lowercase, as in
+            the inventory and its mesh name
+          type: ""
+          required: true
+        - name: node_profile
+          title: Config profile
+          description: >-
+            The config profile the node is on (e.g. Finland). It gains the
+            Hysteria2 inbound; Reality TCP and xHTTP are left as they are
+          type: ""
+          required: true
+        - name: node_country
+          title: Country code
+          description: ISO-2 country code, for the flag in the new host's name (e.g. FI)
+          type: ""
+          required: true
+
       "Migrate inbound tags":
         - name: profile_name
           title: Config profile

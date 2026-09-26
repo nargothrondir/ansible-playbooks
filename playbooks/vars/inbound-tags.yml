@@ -4,9 +4,11 @@
 # One definition, because two playbooks computing the same name is how they
 # come to disagree.
 #
-# Format: <CC>-<PROTOCOL>-<TRANSPORT>-<SECURITY>, e.g. FI-VLESS-TCP-REALITY and
-# FI-VLESS-XHTTP-TLS. The security part is what the CLIENT speaks: the xHTTP
-# inbound itself has none, Angie terminates TLS in front of it.
+# Format: <CC>-<PROTOCOL>-<TRANSPORT>-<SECURITY>, e.g. FI-VLESS-TCP-REALITY,
+# FI-VLESS-XHTTP-TLS and FI-HYSTERIA2-QUIC-TLS. The security part is what the
+# CLIENT speaks: the xHTTP inbound itself has none, Angie terminates TLS in
+# front of it. Hysteria2's transport is QUIC on the wire, whatever Xray calls
+# its network ("hysteria").
 #
 # The tag is the inbound's IDENTITY in Remnawave, and it is unique across the
 # whole panel, not per profile (backend 2.8.0, schema.prisma:
@@ -26,6 +28,7 @@
 _inbound_tag_suffixes:
   reality-tcp: -VLESS-TCP-REALITY
   xhttp: -VLESS-XHTTP-TLS
+  hysteria2: -HYSTERIA2-QUIC-TLS
 
 # The profile's country, from the panel rather than from the caller: the
 # countryCode of the nodes it serves. A profile with no nodes yet (it is being

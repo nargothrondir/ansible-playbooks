@@ -11,7 +11,8 @@
 #   remnawave_api_token   from OpenBao (#2): infra/remnawave, field api_token
 #
 # An EXISTING node is left as is, except that node_xhttp=true adds the
-# profile's xHTTP inbound to what it serves (archive #42).
+# profile's xHTTP inbound to what it serves (archive #42), and node_hysteria2=true
+# its Hysteria2 inbound.
 #
 # Run (node_address defaults to <node_name>.<netbird_dns_domain>, the mesh name;
 # pass it explicitly only for nodes reached over a public address):
@@ -152,19 +153,23 @@
     # when the profile gains an inbound — an existing node would never serve
     # xHTTP. So it is reconciled here, and only ever EXTENDED: the body is what
     # the node serves now plus what is missing, so Reality TCP stays exactly as
-    # it is. node_xhttp=false means "do not add", never "remove".
+    # it is. node_xhttp=false means "do not add", never "remove"; the same for
+    # node_hysteria2.
     #
     # Selected by network, not tag: the inbound's tag is new-profile.yml's
     # business, and "the profile's xHTTP inbounds" is what this step means.
-    - name: Find the existing node and the xHTTP inbounds it does not serve
+    # Xray calls Hysteria2's network "hysteria".
+    - name: Find the existing node and the added-protocol inbounds it does not serve
       ansible.builtin.set_fact:
         _existing_node: >-
           {{ nodes_result.json.response
              | selectattr('address', 'equalto', _node_address) | first | default({}) }}
         _node_inbounds_wanted: >-
-          {{ (node_profile_resolved.inbounds | selectattr('network', 'equalto', 'xhttp')
-              | map(attribute='uuid') | list)
-             if (node_xhttp | default(false) | bool) else [] }}
+          {{ node_profile_resolved.inbounds
+             | selectattr('network', 'in',
+                 (['xhttp'] if (node_xhttp | default(false) | bool) else [])
+                 + (['hysteria'] if (node_hysteria2 | default(false) | bool) else []))
+             | map(attribute='uuid') | list }}
       no_log: true
 
     - name: Work out which wanted inbounds are missing on the node

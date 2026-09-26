@@ -66,6 +66,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | [playbooks/new-profile.yml](playbooks/new-profile.yml) | — (panel API call) | control |
 | [playbooks/new-node.yml](playbooks/new-node.yml) | — (panel API call) | control |
 | [playbooks/enable-xhttp.yml](playbooks/enable-xhttp.yml) | — (panel + Dockhand APIs; new-profile + new-node + dockhand-stack with `node_xhttp=true`: adds VLESS over xHTTP to an existing node next to Reality TCP) | control |
+| [playbooks/enable-hysteria2.yml](playbooks/enable-hysteria2.yml) | ufw (on the node: certificate check, UDP 443); then new-profile + new-node with `node_hysteria2=true`: adds Hysteria2 to an existing node next to Reality TCP | the node, control |
 | [playbooks/migrate-inbound-tags.yml](playbooks/migrate-inbound-tags.yml) | — (panel API; renames one profile's inbounds to `<CC>-VLESS-TCP-REALITY` / `<CC>-VLESS-XHTTP-TLS` and re-binds squads, nodes and hosts) | control |
 | [playbooks/audit-fleet.yml](playbooks/audit-fleet.yml) | — (panel + Dockhand APIs, read-only; checks every profile, inbound binding, host, node and node stack against the REALITY + xHTTP invariants) | control |
 | [playbooks/dns-record.yml](playbooks/dns-record.yml) | — (Cloudflare API; imported by provision-node.yml, or standalone) | `dns_target` (default: controller) |
