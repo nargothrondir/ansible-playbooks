@@ -17,7 +17,8 @@
 #               and one that does not, does not. XHTTP_UPSTREAM is reported.
 #
 # Errors fail the run; warnings do not. Profiles deliberately left on the old
-# tags are listed in audit_legacy_profiles (the inventory's group_vars/control)
+# tags are listed in audit_legacy_profiles by name, or in audit_legacy_nodes by
+# a node's mesh name (e.g. xx-1) — both in the inventory's group_vars/control —
 # and their tags are reported as warnings instead of errors.
 #
 # Run from Semaphore ("Audit fleet"): no survey, Limit EMPTY. Safe to schedule.
@@ -31,6 +32,9 @@
 
   vars:
     audit_legacy_profiles: []
+    # By node, for when the node's name is known but its profile's is not:
+    # every profile such a node is on counts as legacy.
+    audit_legacy_nodes: []
     # Must match new-profile.yml's profile_xhttp_socket and the web server's
     # grpc_pass target in docker-stacks remnanode/angie.conf.
     audit_xhttp_socket: /dev/shm/xhttp.sock
@@ -161,7 +165,10 @@
           {%- set node_uuids = _nodes | map(attribute='configProfile.activeInbounds') | flatten | map(attribute='uuid') | list -%}
           {%- set host_uuids = _hosts | map(attribute='inbound.configProfileInboundUuid', default='') | list -%}
           {%- for p in _profiles -%}
-            {%- set legacy = p.name in audit_legacy_profiles -%}
+            {%- set legacy = p.name in audit_legacy_profiles
+                  or (_nodes | selectattr('uuid', 'in', p.nodes | default([]) | map(attribute='uuid') | list)
+                      | map(attribute='address') | map('regex_replace', '\..*$', '')
+                      | select('in', audit_legacy_nodes) | list | length > 0) -%}
             {%- for i in p.inbounds -%}
               {%- set key = 'reality-tcp' if (i.type == 'vless' and i.network in ['tcp', 'raw'] and i.security == 'reality')
                              else ('xhttp' if (i.type == 'vless' and i.network == 'xhttp') else '') -%}
@@ -170,7 +177,7 @@
                 {%- if not (i.tag is match('^[A-Z]{2}' ~ (_inbound_tag_suffixes[key] | regex_escape) ~ '$')) -%}
                   {%- set _ = out.append({'level': 'warn' if legacy else 'error', 'where': where,
                         'msg': 'tag outside the <CC>' ~ _inbound_tag_suffixes[key] ~ ' scheme'
-                               ~ (' (listed in audit_legacy_profiles)' if legacy else '')}) -%}
+                               ~ (' (legacy: audit_legacy_profiles / audit_legacy_nodes)' if legacy else '')}) -%}
                 {%- endif -%}
                 {%- if i.uuid not in squad_uuids -%}{%- set _ = out.append({'level': 'error', 'where': where, 'msg': 'in no squad — users do not see it'}) -%}{%- endif -%}
                 {%- if i.uuid not in node_uuids -%}{%- set _ = out.append({'level': 'error', 'where': where, 'msg': 'active on no node — nothing serves it'}) -%}{%- endif -%}

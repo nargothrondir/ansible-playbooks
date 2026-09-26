@@ -243,7 +243,7 @@
       # Read-only: every task is a GET, the run reports changed=0, and it is
       # safe on a schedule. What it checks is written down in the
       # remnawave-cookbook skill (audit.md). Both fields stay EMPTY. Profiles
-      # deliberately left on old tags go in audit_legacy_profiles
+      # deliberately left on old tags go in audit_legacy_profiles (by name)
       # (group_vars/control) and are reported as warnings, not errors.
       "Audit fleet":
         playbook: playbooks/audit-fleet.yml
