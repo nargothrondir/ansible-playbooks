@@ -67,6 +67,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | [playbooks/new-node.yml](playbooks/new-node.yml) | — (panel API call) | control |
 | [playbooks/enable-xhttp.yml](playbooks/enable-xhttp.yml) | — (panel + Dockhand APIs; new-profile + new-node + dockhand-stack with `node_xhttp=true`: adds VLESS over xHTTP to an existing node next to Reality TCP) | control |
 | [playbooks/migrate-inbound-tags.yml](playbooks/migrate-inbound-tags.yml) | — (panel API; renames one profile's inbounds to `<CC>-VLESS-TCP-REALITY` / `<CC>-VLESS-XHTTP-TLS` and re-binds squads, nodes and hosts) | control |
+| [playbooks/audit-fleet.yml](playbooks/audit-fleet.yml) | — (panel + Dockhand APIs, read-only; checks every profile, inbound binding, host, node and node stack against the REALITY + xHTTP invariants) | control |
 | [playbooks/dns-record.yml](playbooks/dns-record.yml) | — (Cloudflare API; imported by provision-node.yml, or standalone) | `dns_target` (default: controller) |
 | [playbooks/dockhand-environment.yml](playbooks/dockhand-environment.yml) | — (Dockhand API via the panel; imported by provision-node.yml, or standalone) | `dockhand_env_target` (default: controller) |
 | [playbooks/dockhand-stack.yml](playbooks/dockhand-stack.yml) | — (Dockhand + panel APIs via the panel; deploys the node's From-Git workload stack) | `dockhand_stack_target` (default: controller) |

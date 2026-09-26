@@ -240,6 +240,19 @@
           reconnect once. Leave Limit EMPTY. A failed run prints a snapshot —
           re-run with -e 'migrate_restore=<that JSON>' to re-bind.
 
+      # Read-only: every task is a GET, the run reports changed=0, and it is
+      # safe on a schedule. What it checks is written down in the
+      # remnawave-cookbook skill (audit.md). Both fields stay EMPTY. Profiles
+      # deliberately left on old tags go in audit_legacy_profiles
+      # (group_vars/control) and are reported as warnings, not errors.
+      "Audit fleet":
+        playbook: playbooks/audit-fleet.yml
+        description: >-
+          Check every profile, inbound, host, node and node stack against the
+          REALITY + xHTTP invariants — tags, squad/node/host bindings, host
+          settings, nodes switched on, XHTTP_PATH where xHTTP is served.
+          Read-only. Leave CLI args and Limit EMPTY.
+
       # This playbook declares itself, and that is not a curiosity — it is what
       # ends the borrowing. Until now the only way to run it was to repoint an
       # existing template at it, which left that template named for a job it was

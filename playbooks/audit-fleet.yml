@@ -1,0 +1,263 @@
+---
+# Audit the whole fleet against the invariants of the REALITY + xHTTP
+# architecture — READ-ONLY. Every task is a GET or a computation; nothing is
+# written to the panel, Dockhand or OpenBao, and a run reports changed=0.
+#
+# What it checks (the contract is written down in the remnawave-cookbook skill,
+# audit.md, and mirrors its offline validate.py where the two overlap):
+#   profiles  — every Reality TCP and xHTTP inbound carries a tag in the
+#               <CC>-<protocol> scheme (vars/inbound-tags.yml); the xHTTP
+#               inbound listens on profile_xhttp_socket, has a port, and trusts
+#               X-Real-IP;
+#   bindings  — each such inbound is in a squad, active on a node and published
+#               by a host;
+#   hosts     — port 443; for xHTTP also securityLayer TLS and an xmux block;
+#   nodes     — switched on, attached to a profile, connected;
+#   stacks    — a node that serves xHTTP has XHTTP_PATH in its Dockhand stack,
+#               and one that does not, does not. XHTTP_UPSTREAM is reported.
+#
+# Errors fail the run; warnings do not. Profiles deliberately left on the old
+# tags are listed in audit_legacy_profiles (the inventory's group_vars/control)
+# and their tags are reported as warnings instead of errors.
+#
+# Run from Semaphore ("Audit fleet"): no survey, Limit EMPTY. Safe to schedule.
+
+- name: Audit the fleet
+  hosts: controller
+  gather_facts: false
+
+  vars_files:
+    - vars/inbound-tags.yml
+
+  vars:
+    audit_legacy_profiles: []
+    # Must match new-profile.yml's profile_xhttp_socket and the web server's
+    # grpc_pass target in docker-stacks remnanode/angie.conf.
+    audit_xhttp_socket: /dev/shm/xhttp.sock
+    audit_trusted_header: X-Real-IP
+    _stack_name: "{{ dockhand_stack_name | default('remnanode') }}"
+    _dockhand_api: "{{ dockhand_api_url | default('http://127.0.0.1:3040') }}"
+    _api_headers:
+      Authorization: "Bearer {{ _remnawave_api_token }}"
+      X-Forwarded-For: "127.0.0.1"
+      X-Forwarded-Proto: "https"
+
+  tasks:
+    - name: Assert the panel URL is configured
+      ansible.builtin.assert:
+        that:
+          - remnawave_panel_url | default('') | length > 0
+        fail_msg: remnawave_panel_url must be set in group_vars/control.
+
+    - name: Fetch the Remnawave API token
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: remnawave
+        openbao_read_field: api_token
+        openbao_read_into: _remnawave_api_token
+      tags:
+        - config
+
+    - name: Fetch the Dockhand API token
+      ansible.builtin.include_tasks: tasks/openbao-read.yml
+      vars:
+        openbao_read_path: dockhand
+        openbao_read_field: api_token
+        openbao_read_into: _dockhand_api_token
+      tags:
+        - config
+
+    - name: Read profiles, squads, hosts and nodes from the panel
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ remnawave_panel_url }}/api/{{ item }}"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _panel
+      loop:
+        - config-profiles
+        - internal-squads
+        - hosts
+        - nodes
+      no_log: true
+      changed_when: false
+      check_mode: false
+
+    - name: Unpack the panel state
+      ansible.builtin.set_fact:
+        _profiles: "{{ _panel.results[0].json.response.configProfiles }}"
+        _squads: "{{ _panel.results[1].json.response.internalSquads }}"
+        _hosts: "{{ _panel.results[2].json.response }}"
+        _nodes: "{{ _panel.results[3].json.response }}"
+      no_log: true
+
+    - name: List the Dockhand environments
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ _dockhand_api }}/api/environments"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _dockhand_api_token }}"
+        status_code: [200]
+      register: _dockhand_envs
+      no_log: true
+      changed_when: false
+      check_mode: false
+
+    # A node is matched to its Dockhand environment by its mesh name — the
+    # first label of its panel address, upper-cased, which is how
+    # dockhand-environment.yml names environments. The panel's display name is
+    # never used: people rename it.
+    - name: Match each node to its Dockhand environment
+      ansible.builtin.set_fact:
+        _node_envs: >-
+          {%- set out = [] -%}
+          {%- for n in _nodes -%}
+            {%- set short = n.address.split('.')[0] -%}
+            {%- set env = _dockhand_envs.json | selectattr('name', 'equalto', short | upper) | list -%}
+            {%- set _ = out.append({'node': n.uuid, 'short': short,
+                                    'env_id': (env | first).id if env else none}) -%}
+          {%- endfor -%}
+          {{- out -}}
+
+    - name: Read each node's stack environment
+      delegate_to: panel
+      ansible.builtin.uri:
+        url: "{{ _dockhand_api }}/api/stacks/{{ _stack_name }}/env?env={{ item.env_id | int }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _dockhand_api_token }}"
+        status_code: [200, 404]
+      register: _stack_envs
+      loop: "{{ _node_envs | selectattr('env_id') | list }}"
+      loop_control:
+        label: "{{ item.short }}"
+      no_log: true
+      changed_when: false
+      check_mode: false
+
+    # Keys only: secret values come back masked anyway, and a non-secret value
+    # is read for XHTTP_UPSTREAM alone.
+    - name: Index the stack environments by node
+      ansible.builtin.set_fact:
+        _env_by_node: >-
+          {%- set out = {} -%}
+          {%- for r in _stack_envs.results | default([]) if r.status | default(0) == 200 -%}
+            {%- set vars_ = r.json.variables | default(r.json) | default([]) -%}
+            {%- set _ = out.update({r.item.node: {
+                  'keys': vars_ | map(attribute='key') | list,
+                  'upstream': (vars_ | selectattr('key', 'equalto', 'XHTTP_UPSTREAM')
+                               | map(attribute='value') | first | default('grpc'))}}) -%}
+          {%- endfor -%}
+          {{- out -}}
+      no_log: true
+
+    - name: Check every invariant
+      ansible.builtin.set_fact:
+        _findings: >-
+          {%- set out = [] -%}
+          {%- set squad_uuids = _squads | map(attribute='inbounds') | flatten | map(attribute='uuid') | list -%}
+          {%- set node_uuids = _nodes | map(attribute='configProfile.activeInbounds') | flatten | map(attribute='uuid') | list -%}
+          {%- set host_uuids = _hosts | map(attribute='inbound.configProfileInboundUuid', default='') | list -%}
+          {%- for p in _profiles -%}
+            {%- set legacy = p.name in audit_legacy_profiles -%}
+            {%- for i in p.inbounds -%}
+              {%- set key = 'reality-tcp' if (i.type == 'vless' and i.network in ['tcp', 'raw'] and i.security == 'reality')
+                             else ('xhttp' if (i.type == 'vless' and i.network == 'xhttp') else '') -%}
+              {%- if key -%}
+                {%- set where = p.name ~ ' / ' ~ i.tag -%}
+                {%- if not (i.tag is match('^[A-Z]{2}' ~ (_inbound_tag_suffixes[key] | regex_escape) ~ '$')) -%}
+                  {%- set _ = out.append({'level': 'warn' if legacy else 'error', 'where': where,
+                        'msg': 'tag outside the <CC>' ~ _inbound_tag_suffixes[key] ~ ' scheme'
+                               ~ (' (listed in audit_legacy_profiles)' if legacy else '')}) -%}
+                {%- endif -%}
+                {%- if i.uuid not in squad_uuids -%}{%- set _ = out.append({'level': 'error', 'where': where, 'msg': 'in no squad — users do not see it'}) -%}{%- endif -%}
+                {%- if i.uuid not in node_uuids -%}{%- set _ = out.append({'level': 'error', 'where': where, 'msg': 'active on no node — nothing serves it'}) -%}{%- endif -%}
+                {%- if i.uuid not in host_uuids -%}{%- set _ = out.append({'level': 'error', 'where': where, 'msg': 'published by no host — absent from subscriptions'}) -%}{%- endif -%}
+                {%- if key == 'xhttp' -%}
+                  {%- set raw = i.rawInbound or {} -%}
+                  {%- if (raw.get('listen', '') ~ '').split(',')[0] != audit_xhttp_socket -%}
+                    {%- set _ = out.append({'level': 'error', 'where': where, 'msg': 'listens on ' ~ raw.get('listen', 'nothing') ~ ', not ' ~ audit_xhttp_socket ~ ' (the web server passes there)'}) -%}
+                  {%- endif -%}
+                  {%- if raw.get('port') is none -%}
+                    {%- set _ = out.append({'level': 'warn', 'where': where, 'msg': 'no port — the panel host form has nothing to fill its required port from'}) -%}
+                  {%- endif -%}
+                  {%- if audit_trusted_header not in (raw.get('streamSettings', {}).get('sockopt', {}).get('trustedXForwardedFor', [])) -%}
+                    {%- set _ = out.append({'level': 'error', 'where': where, 'msg': 'does not trust ' ~ audit_trusted_header ~ ' — client addresses are lost'}) -%}
+                  {%- endif -%}
+                {%- endif -%}
+                {%- for h in _hosts if (h.inbound or {}).get('configProfileInboundUuid') == i.uuid -%}
+                  {%- set hw = where ~ ' / host "' ~ h.remark ~ '"' -%}
+                  {%- if h.port != 443 -%}{%- set _ = out.append({'level': 'error', 'where': hw, 'msg': 'port ' ~ h.port ~ ', not 443'}) -%}{%- endif -%}
+                  {%- if key == 'xhttp' and h.securityLayer != 'TLS' -%}
+                    {%- set _ = out.append({'level': 'error', 'where': hw, 'msg': 'securityLayer ' ~ h.securityLayer ~ ' — the subscription would offer xHTTP without TLS'}) -%}
+                  {%- endif -%}
+                  {%- if key == 'xhttp' and not ((h.xhttpExtraParams or {}).get('xmux')) -%}
+                    {%- set _ = out.append({'level': 'error', 'where': hw, 'msg': 'no xhttpExtraParams.xmux — Mihomo opens a new connection per proxied connection'}) -%}
+                  {%- endif -%}
+                {%- endfor -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {%- for n in _nodes -%}
+            {%- set where = 'node ' ~ n.address.split('.')[0] -%}
+            {%- if n.isDisabled -%}
+              {%- set _ = out.append({'level': 'error', 'where': where, 'msg': 'switched off'}) -%}
+            {%- elif not n.configProfile.activeConfigProfileUuid -%}
+              {%- set _ = out.append({'level': 'error', 'where': where, 'msg': 'attached to no profile'}) -%}
+            {%- elif not n.isConnected -%}
+              {%- set _ = out.append({'level': 'warn', 'where': where, 'msg': 'not connected to the panel right now'}) -%}
+            {%- endif -%}
+            {%- set serves_xhttp = n.configProfile.activeInbounds | selectattr('network', 'equalto', 'xhttp') | list | length > 0 -%}
+            {%- set env = _env_by_node.get(n.uuid) -%}
+            {%- if env is none -%}
+              {%- set _ = out.append({'level': 'warn', 'where': where, 'msg': 'no Dockhand stack environment found — stack not checked'}) -%}
+            {%- elif serves_xhttp and 'XHTTP_PATH' not in env['keys'] -%}
+              {%- set _ = out.append({'level': 'error', 'where': where, 'msg': 'serves xHTTP but its stack has no XHTTP_PATH — the web server answers the path with the decoy'}) -%}
+            {%- elif not serves_xhttp and 'XHTTP_PATH' in env['keys'] -%}
+              {%- set _ = out.append({'level': 'warn', 'where': where, 'msg': 'stack has XHTTP_PATH but the node serves no xHTTP inbound'}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{- out -}}
+
+    - name: Summarise the fleet
+      ansible.builtin.set_fact:
+        _audit_errors: "{{ _findings | selectattr('level', 'equalto', 'error') | list }}"
+        _audit_warnings: "{{ _findings | selectattr('level', 'equalto', 'warn') | list }}"
+        _audit_nodes: >-
+          {%- set out = [] -%}
+          {%- for n in _nodes -%}
+            {%- set env = _env_by_node.get(n.uuid) -%}
+            {%- set _ = out.append(n.address.split('.')[0] ~ ': '
+                  ~ ('off' if n.isDisabled else ('connected' if n.isConnected else 'disconnected'))
+                  ~ ', inbounds ' ~ (n.configProfile.activeInbounds | map(attribute='tag') | join(' + ') or 'none')
+                  ~ ', xray ' ~ ((n.versions or {}).get('xray') or '?')
+                  ~ ', upstream ' ~ ((env or {}).get('upstream') or '-')) -%}
+          {%- endfor -%}
+          {{- out -}}
+
+    - name: Report the fleet
+      ansible.builtin.debug:
+        msg: >-
+          {{ ['Nodes:'] + _audit_nodes
+             + ['Errors (' ~ (_audit_errors | length) ~ '):']
+             + (_audit_errors | map(attribute='where') | zip(_audit_errors | map(attribute='msg'))
+                | map('join', ': ') | list)
+             + ['Warnings (' ~ (_audit_warnings | length) ~ '):']
+             + (_audit_warnings | map(attribute='where') | zip(_audit_warnings | map(attribute='msg'))
+                | map('join', ': ') | list) }}
+      tags:
+        - debug
+        - always
+
+    - name: Assert the fleet holds every invariant
+      ansible.builtin.assert:
+        that:
+          - _audit_errors | length == 0
+        fail_msg: >-
+          {{ _audit_errors | length }} invariant(s) broken — see "Report the
+          fleet" above. The remnawave-cookbook skill's diagnostics.md maps
+          each to its cause and fix.
+        success_msg: >-
+          Fleet holds every invariant ({{ _audit_warnings | length }} warning(s)).
