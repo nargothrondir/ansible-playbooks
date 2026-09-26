@@ -527,6 +527,40 @@
       tags:
         - config
 
+    # How Angie reaches the xHTTP inbound on this node — grpc (grpc_pass, what
+    # the stack uses when the variable is absent) or http (proxy_pass,
+    # unbuffered). For comparing the two on one node: pass -e xhttp_upstream=
+    # in CLI args. A value already on the stack is kept when none is given,
+    # for the same full-list reason as XHTTP_PATH above; putting a node back is
+    # -e xhttp_upstream=grpc, not leaving the variable out.
+    #
+    # A changed value is a changed environment, so the deploy below recreates
+    # Angie and gomplate renders the other block — no manual restart.
+    - name: Assert the xHTTP upstream is one Angie knows
+      ansible.builtin.assert:
+        that:
+          - xhttp_upstream in ['grpc', 'http']
+        fail_msg: >-
+          xhttp_upstream must be grpc or http, got '{{ xhttp_upstream }}'.
+          docker-stacks remnanode/angie.conf would refuse anything else too, but
+          only after the deploy — this stops the run before it.
+      when: xhttp_upstream | default('', true) | length > 0
+      tags:
+        - config
+
+    - name: Add the xHTTP upstream to the environment this playbook wants
+      ansible.builtin.set_fact:
+        _desired_env: >-
+          {{ _desired_env + [{'key': 'XHTTP_UPSTREAM',
+                              'value': xhttp_upstream | default('', true)
+                                       or _existing_env.get('XHTTP_UPSTREAM'),
+                              'isSecret': false}] }}
+      when: >-
+        (xhttp_upstream | default('', true) | length > 0)
+        or 'XHTTP_UPSTREAM' in _existing_keys
+      tags:
+        - config
+
     - name: Split the desired environment into comparable and unreadable halves
       ansible.builtin.set_fact:
         _desired_plain: >-
@@ -606,7 +640,9 @@
           camouflage page
           {{ _existing_env.get('CAMO_SITE') | default(_camo_site, true) }}
           ({{ 'assigned' if 'CAMO_SITE' not in _existing_keys else 'kept' }});
-          xHTTP {{ 'on' if (_desired_env | selectattr('key', 'equalto', 'XHTTP_PATH') | list) else 'off' }};
+          xHTTP {{ 'on' if (_desired_env | selectattr('key', 'equalto', 'XHTTP_PATH') | list) else 'off' }}
+          (upstream {{ _desired_env | selectattr('key', 'equalto', 'XHTTP_UPSTREAM')
+                       | map(attribute='value') | first | default('grpc') }});
           environment {{ 'written' if _env_needs_write | bool else 'already matched' }};
           {{ 'DEPLOYED' if not (_stack_deployed is skipped) else 'not deployed' }};
           polling auto-update on, webhook off.

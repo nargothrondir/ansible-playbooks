@@ -22,6 +22,11 @@
 # XHTTP_PATH is merged AND deployed, and infra/remnawave xhttp_path exists in
 # OpenBao.
 #
+# Switching how Angie reaches the inbound on a node (grpc_pass or proxy_pass —
+# docker-stacks XHTTP_UPSTREAM) is a re-run of this with CLI args
+# -e xhttp_upstream=http, or =grpc to put it back. On a node that already has
+# xHTTP only the stack changes: its environment is rewritten and it redeploys.
+#
 # Run from Semaphore ("Enable xHTTP"), survey: node_name, node_profile,
 # node_country — the same values the node was provisioned with. Limit stays
 # EMPTY: every play targets the controller and talks to the panel and Dockhand
