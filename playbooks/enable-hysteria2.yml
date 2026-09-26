@@ -28,8 +28,11 @@
 # node_country — the same values the node was provisioned with. Limit stays
 # EMPTY: the first play targets the node by name, the rest the controller.
 
+# A node_name the inventory does not know matches no host, and Ansible skips a
+# play with no hosts instead of failing — so the next play refuses to go on
+# unless this one actually ran and passed.
 - name: Check the node can serve Hysteria2
-  hosts: "{{ node_name }}"
+  hosts: "{{ node_name | default('no-node-name-given') }}"
   become: true
 
   vars:
@@ -74,6 +77,23 @@
         name: ufw
       tags:
         - config
+
+    - name: Record that the node passed
+      ansible.builtin.set_fact:
+        _hysteria2_node_ready: true
+
+- name: Refuse to touch the panel unless the node check passed
+  hosts: controller
+  gather_facts: false
+  tasks:
+    - name: Assert the node check ran and passed
+      ansible.builtin.assert:
+        that:
+          - (hostvars.get(node_name | default(''), {}))._hysteria2_node_ready | default(false) | bool
+        fail_msg: >-
+          The node check did not run for node_name '{{ node_name | default('') }}'
+          — it is not a host in the inventory (names are lowercase, e.g. fi-1),
+          or the check failed above. Nothing was changed in the panel.
 
 - name: Add Hysteria2 to the node's config profile
   ansible.builtin.import_playbook: new-profile.yml
