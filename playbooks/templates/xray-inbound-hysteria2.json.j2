@@ -1,0 +1,27 @@
+{
+  "tag": "{{ _hysteria2_tag }}",
+  "port": {{ host_port | int }},
+  "protocol": "hysteria",
+  "settings": { "version": 2, "clients": [] },
+  "sniffing": {
+    "enabled": true,
+    "destOverride": ["http", "tls", "quic"]
+  },
+  "streamSettings": {
+    "network": "hysteria",
+    "security": "tls",
+    "tlsSettings": {
+      "alpn": ["h3"],
+      "certificates": [
+        {
+          "certificateFile": "{{ profile_hysteria2_cert_dir }}/certificate.pem",
+          "keyFile": "{{ profile_hysteria2_cert_dir }}/private.key"
+        }
+      ]
+    },
+    "hysteriaSettings": {
+      "version": 2,
+      "masquerade": {{ _hysteria2_masquerade | to_json }}
+    }
+  }
+}

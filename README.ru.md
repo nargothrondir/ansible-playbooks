@@ -66,6 +66,7 @@
 | [playbooks/new-profile.yml](playbooks/new-profile.yml) | — (вызов API панели) | control |
 | [playbooks/new-node.yml](playbooks/new-node.yml) | — (вызов API панели) | control |
 | [playbooks/enable-xhttp.yml](playbooks/enable-xhttp.yml) | — (API панели и Dockhand; new-profile + new-node + dockhand-stack с `node_xhttp=true`: добавляет VLESS поверх xHTTP на существующую ноду рядом с Reality TCP) | control |
+| [playbooks/enable-hysteria2.yml](playbooks/enable-hysteria2.yml) | ufw (на ноде: проверка сертификата, UDP 443); затем new-profile + new-node с `node_hysteria2=true`: добавляет Hysteria2 на существующую ноду рядом с Reality TCP | нода, control |
 | [playbooks/migrate-inbound-tags.yml](playbooks/migrate-inbound-tags.yml) | — (API панели; переименовывает inbound одного профиля в `<CC>-VLESS-TCP-REALITY` / `<CC>-VLESS-XHTTP-TLS` и заново привязывает сквады, ноды и хосты) | control |
 | [playbooks/audit-fleet.yml](playbooks/audit-fleet.yml) | — (API панели и Dockhand, только чтение; проверяет профили, привязки inbound, хосты, ноды и стеки нод на инварианты REALITY + xHTTP) | control |
 | [playbooks/dns-record.yml](playbooks/dns-record.yml) | — (API Cloudflare; импортируется provision-node.yml или отдельно) | `dns_target` (по умолчанию: controller) |

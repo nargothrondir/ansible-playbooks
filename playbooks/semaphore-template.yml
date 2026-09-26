@@ -227,6 +227,19 @@
           the survey with the node's name, profile and country; leave Limit
           EMPTY. Users of that node reconnect once when Xray restarts.
 
+      # The same for Hysteria2, with one play on the node itself first: it
+      # checks that remnanode can read the node's certificate (a TLS inbound
+      # Xray cannot load stops every protocol on the node) and opens UDP 443.
+      # Limit stays EMPTY — that play targets the node by node_name.
+      "Enable Hysteria2":
+        playbook: playbooks/enable-hysteria2.yml
+        description: >-
+          Add Hysteria2 (UDP 443) to one existing node, next to Reality TCP and
+          xHTTP — checks the node's certificate, opens the port, adds the
+          profile inbound and the subscription host. Fill the survey with the
+          node's name, profile and country; leave Limit EMPTY. Users of that
+          node reconnect once when Xray restarts.
+
       # The one-off move of a profile's inbounds to the <CC>-<protocol> tag
       # scheme. A rename re-creates the inbound, so the run cuts the profile's
       # users off for seconds while it re-binds squads, nodes and hosts — one

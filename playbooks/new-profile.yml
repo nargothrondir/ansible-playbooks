@@ -20,14 +20,17 @@
 # with it. Further protocols are ADDED next to it, never instead of it:
 # node_xhttp=true appends a VLESS-over-xHTTP inbound to the profile, puts it in
 # the squads that already see the TCP inbound, and gives it its own
-# subscription host. That works the same for a profile created a minute ago and
-# for one that has served users for months; nothing about Reality TCP changes.
+# subscription host; node_hysteria2=true does the same for Hysteria2. That works
+# the same for a profile created a minute ago and for one that has served users
+# for months; nothing about Reality TCP changes.
 #
 # Required vars (group_vars/control/, token via vault):
 #   remnawave_panel_url   group_vars/control
 #   the API token          from OpenBao (#2): infra/remnawave, field api_token
 #   the xHTTP path         from OpenBao: infra/remnawave, field xhttp_path —
 #                          only when node_xhttp is true and the inbound is new
+#   node_name              when node_hysteria2 adds the inbound: its masquerade
+#                          points at the node's own name
 #
 # Run:
 #   ansible-playbook playbooks/new-profile.yml \
@@ -81,6 +84,8 @@
     # is a deliberate operation, not the side effect of a default.
     _profile_xhttp: "{{ node_xhttp | default(false) | bool }}"
     _xhttp_tag: "{{ _profile_code ~ _inbound_tag_suffixes['xhttp'] }}"
+    _profile_hysteria2: "{{ node_hysteria2 | default(false) | bool }}"
+    _hysteria2_tag: "{{ _profile_code ~ _inbound_tag_suffixes['hysteria2'] }}"
     # The xHTTP inbound (templates/xray-inbound-xhttp.json.j2) has no TLS: it
     # listens on this socket, and Angie's grpc_pass in docker-stacks
     # remnanode/angie.conf is the other end — change both or neither. It trusts
@@ -118,6 +123,29 @@
       hMaxRequestTimes: "600-900"
       hMaxReusableSecs: "1800-3000"
       hKeepAlivePeriod: 0
+    # The Hysteria2 inbound (templates/xray-inbound-hysteria2.json.j2) listens
+    # on UDP host_port — the same number as Reality on TCP, so to an observer
+    # the node is one HTTPS site that also speaks HTTP/3. Nothing else on the
+    # node uses UDP 443; the port is opened by enable-hysteria2.yml.
+    #
+    # Its TLS is the node's own certificate, the one Angie issues and renews
+    # for <node_name>.<infra_domain>: docker-stacks mounts the angie-acme
+    # volume read-only into remnanode at /etc/xray-tls, and `letsencrypt` is
+    # the acme_client name in remnanode/angie.conf. Xray re-reads the files
+    # hourly (transport/internet/tls/config.go, v26.6.27), so renewals need no
+    # restart. The path must not exist in the panel container: the panel
+    # inlines certificate files it finds on its OWN filesystem, key included,
+    # into every node config it pushes (processCertificates, backend 2.8.0).
+    profile_hysteria2_cert_dir: /etc/xray-tls/letsencrypt
+    # What a non-Hysteria2 HTTP/3 request gets: the node's own decoy site, the
+    # same page TCP 443 serves, instead of a bare 404 — so the UDP side tells
+    # the same story. Go's ReverseProxy dials the name (hub.go, v26.6.27);
+    # override with {} to fall back to Xray's 404.
+    profile_hysteria2_masquerade:
+      type: proxy
+      url: "https://{{ profile_domain }}"
+      rewriteHost: true
+    _hysteria2_masquerade: "{{ profile_hysteria2_masquerade }}"
     _profile_protocols:
       - key: reality-tcp
         tag: "{{ profile_inbound_tag }}"
@@ -133,9 +161,21 @@
           fingerprint: chrome
           xhttpExtraParams:
             xmux: "{{ profile_xhttp_xmux }}"
+      # Hysteria2 host: the base host already carries the node's name as
+      # address and SNI, which the certificate covers. Only ALPN is added — h3,
+      # what the listener offers. No fingerprint (Mihomo's hysteria2 has no
+      # such key) and never pinnedPeerCertSha256: panel 2.8.0 turns it into
+      # skip-cert-verify for Mihomo without passing the pin.
+      - key: hysteria2
+        tag: "{{ _hysteria2_tag }}"
+        label: "Hysteria2"
+        host_params:
+          alpn: "h3"
     _profile_protocols_enabled: >-
       {{ _profile_protocols
-         | selectattr('key', 'in', ['reality-tcp'] + (['xhttp'] if _profile_xhttp | bool else []))
+         | selectattr('key', 'in', ['reality-tcp']
+                                   + (['xhttp'] if _profile_xhttp | bool else [])
+                                   + (['hysteria2'] if _profile_hysteria2 | bool else []))
          | list }}
     # The name clients see for the subscription host: "<flag> <NODE> <protocol>",
     # e.g. "🇫🇮 FI-1 Reality TCP" — the format the existing hosts were renamed to.
@@ -352,6 +392,17 @@
           contain only letters, digits and . _ ~ - between them.
       when: "'xhttp' in (_protocols_missing | map(attribute='key') | list)"
 
+    # The masquerade dials the node's own name; without one it would point at
+    # "https://" and every probe of the UDP side would get a 502.
+    - name: Assert the node's name is known when Hysteria2 is added
+      ansible.builtin.assert:
+        that:
+          - profile_domain | default('') | length > 0
+        fail_msg: >-
+          Adding Hysteria2 needs the node's name for its masquerade — pass
+          -e node_name (or -e profile_domain).
+      when: "'hysteria2' in (_protocols_missing | map(attribute='key') | list)"
+
     # The update is the CURRENT config with inbounds appended — never a
     # re-rendered template, which would mint new reality keys, and never a
     # rewrite of what is there: every existing inbound goes back byte for byte,
@@ -363,8 +414,16 @@
                + (_protocols_missing | map(attribute='key')
                   | map('extract', _protocol_inbound_json) | list)}) }}
       vars:
+        # Each template is rendered only for a protocol being added: the xHTTP
+        # one needs the path, which is fetched only then.
+        _missing_keys: "{{ _protocols_missing | map(attribute='key') | list }}"
         _protocol_inbound_json:
-          xhttp: "{{ lookup('template', 'templates/xray-inbound-xhttp.json.j2') | from_json }}"
+          xhttp: >-
+            {{ (lookup('template', 'templates/xray-inbound-xhttp.json.j2') | from_json)
+               if 'xhttp' in _missing_keys else {} }}
+          hysteria2: >-
+            {{ (lookup('template', 'templates/xray-inbound-hysteria2.json.j2') | from_json)
+               if 'hysteria2' in _missing_keys else {} }}
       no_log: true
       when: _protocols_missing | length > 0
 
