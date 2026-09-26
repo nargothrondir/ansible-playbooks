@@ -8,6 +8,12 @@ ufw_public_tcp:
   - port: 443
     comment: HTTPS
 
+# Public UDP ports allowed from anywhere. Empty: a node serves nothing over UDP
+# until a QUIC protocol is switched on — playbooks/enable-hysteria2.yml passes
+# its port here when it adds Hysteria2. Opening a port before something listens
+# on it only tells a scanner the host is worth a second look.
+ufw_public_udp: []
+
 # TCP ports reachable ONLY from the mesh interface (see ufw_mesh_interface).
 # Bound to the interface, NOT to a peer IP: mesh IPs regenerate on the NetBird
 # self-host migration (#6), and WHO inside the mesh may connect is enforced by

@@ -23,6 +23,7 @@ remnanode работает в `network_mode: host`, так что нод фло�
 | Переменная | По умолчанию | Описание |
 |------------|--------------|----------|
 | `ufw_public_tcp` | `[{port: 22, comment: SSH}, {port: 443, comment: HTTPS}]` | TCP-порты, доступные отовсюду; `comment` виден в `ufw status` |
+| `ufw_public_udp` | `[]` | UDP-порты, доступные отовсюду. Пусто, пока не включён протокол поверх QUIC — `playbooks/enable-hysteria2.yml` передаёт свой порт |
 | `ufw_mesh_tcp` | `[{port: 2222, …}, {port: automation_ssh_port, …}, {port: 22022, …}]` | TCP-порты, доступные только с mesh-интерфейса. 22022 — точка входа NB-SSH; сам NetBird его не открывает |
 | `ufw_mesh_interface` | `wt0` | Имя интерфейса NetBird (WireGuard) |
 
