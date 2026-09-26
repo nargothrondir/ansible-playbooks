@@ -22,6 +22,7 @@ uses `network_mode: host`, so this does not apply to fleet nodes.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ufw_public_tcp` | `[{port: 22, comment: SSH}, {port: 443, comment: HTTPS}]` | TCP ports allowed from anywhere; `comment` appears in `ufw status` |
+| `ufw_public_udp` | `[]` | UDP ports allowed from anywhere. Empty until a QUIC protocol is switched on — `playbooks/enable-hysteria2.yml` passes its port |
 | `ufw_mesh_tcp` | `[{port: 2222, …}, {port: automation_ssh_port, …}, {port: 22022, …}]` | TCP ports allowed only from the mesh interface. 22022 is NB-SSH's endpoint — NetBird does not open it itself |
 | `ufw_mesh_interface` | `wt0` | NetBird (WireGuard) interface name |
 

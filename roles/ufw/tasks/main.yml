@@ -51,6 +51,19 @@
     - config
     - ufw
 
+- name: Allow public UDP ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: udp
+    comment: "{{ item.comment }} (roles/ufw)"
+  loop: "{{ ufw_public_udp }}"
+  loop_control:
+    label: "{{ item.port }}/udp — {{ item.comment }}"
+  tags:
+    - config
+    - ufw
+
 - name: Allow mesh-only TCP ports on the NetBird interface
   community.general.ufw:
     rule: allow
