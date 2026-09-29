@@ -38,8 +38,9 @@
 #   docker exec -i -e BAO_TOKEN="$BAO_TOKEN" openbao bao kv put infra/hosts <first-node>=-
 #   docker exec -i -e BAO_TOKEN="$BAO_TOKEN" openbao bao kv patch infra/hosts <next-node>=-
 #
-# REBUILDING A HOST THE INVENTORY ALREADY KNOWS — wiping the lab node and
-# running this pipeline is how the pipeline gets tested — needs the host named
+# REBUILDING A HOST THE INVENTORY ALREADY KNOWS — reinstalling a node and
+# running this pipeline over it is how the pipeline gets tested now that there
+# is no separate lab node — needs the host named
 # in CLI args: -e provision_rebuild_host=<name>. The address alone is refused,
 # because the address alone is what a typo produces. The failure message names
 # the host it found, so the flag can be pasted from it.
@@ -226,8 +227,8 @@
              | list | first | default('') }}
 
     # Rebuilding a machine that is already in the inventory is a REAL workflow —
-    # wiping the lab node and running this pipeline is how the pipeline itself
-    # gets tested — so refusing outright would mean editing the private
+    # reinstalling a node and running this pipeline over it is how the pipeline
+    # itself gets tested — so refusing outright would mean editing the private
     # inventory for every test run. A guard people route around gets routed
     # around carelessly.
     #
