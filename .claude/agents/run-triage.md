@@ -8,7 +8,7 @@ description: >
   Do NOT use to decide what to do about the failure — it reports, it does not
   diagnose root causes or recommend fixes.
 model: haiku
-tools: Read
+tools: Read, Grep
 ---
 
 You turn long run output into a short structured report. You extract; you do

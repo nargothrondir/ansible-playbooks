@@ -38,6 +38,14 @@ a 404, or a JS-only site that returned nothing useful — say so and name what
 you could not read. Do not substitute a plausible answer from memory. If the
 fetch was partial, say which part you got.
 
+**WebFetch is not a raw fetch.** It passes the page through a small model
+that answers your prompt, so a "quote" can come back condensed or reworded
+without saying so. Prefer raw sources — the CHANGELOG or a file at the tag on
+raw.githubusercontent.com — over rendered pages, and mark any quote you could
+not confirm verbatim as `(via WebFetch, unconfirmed)`. The caller confirms the
+quotes a decision rests on with a raw fetch; your job is to say which ones
+those are.
+
 ## Output
 
 ```

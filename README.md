@@ -190,16 +190,19 @@ Development log: [`OBSERVATIONS.md`](./OBSERVATIONS.md) · roadmap:
 
 ### Subagents
 
-`.claude/agents/` defines four narrow helpers that run on a cheaper model.
-They are delegated work whose output is **cheap to verify**, never work that
-produces a judgement:
+`.claude/agents/` defines five narrow helpers that run on cheaper models than
+the main session. They are delegated work whose output is **cheap to verify**,
+never work that produces a judgement. Extraction runs on Haiku; the two whose
+contract needs precise reading — falsifying a claim, mapping a changelog onto
+our files — run on Sonnet:
 
-| Agent | Does | Returns |
-|-------|------|---------|
-| `repo-scout` | read-only search across the repo (the §3 dependency checks) | `file:line` evidence |
-| `run-triage` | structure long Ansible/CI/diagnostic output | failures per host, recap, flags |
-| `claim-checker` | verify a factual claim before it is written down | CONFIRMED / REFUTED / UNVERIFIABLE + quote |
-| `upstream-facts` | fetch facts from upstream docs and releases | quotes with URLs |
+| Agent | Model | Does | Returns |
+|-------|-------|------|---------|
+| `repo-scout` | haiku | read-only search across the repo (the §3 dependency checks) | `file:line` evidence |
+| `run-triage` | haiku | structure long Ansible/CI/diagnostic output | failures per host, recap, flags |
+| `claim-checker` | sonnet | verify a factual claim before it is written down | CONFIRMED / REFUTED / UNVERIFIABLE + quote |
+| `upstream-facts` | haiku | fetch facts from upstream docs and releases | quotes with URLs |
+| `bump-reviewer` | sonnet | read the upstream changelog across a version bump's range | quoted changes, each mapped to the `path:line` it touches |
 
 Anything deterministic belongs in CI instead — see
 [`.github/scripts/spec-guards.sh`](.github/scripts/spec-guards.sh).
@@ -216,7 +219,7 @@ Anything deterministic belongs in CI instead — see
 ansible-playbooks/
 ├── CLAUDE.md               # AI agent specification (source of truth)
 ├── references/             # agent-spec details, read on demand
-├── .claude/agents/         # narrow subagents (cheap model, verifiable output)
+├── .claude/agents/         # narrow subagents (cheaper models, verifiable output)
 ├── ROADMAP.md              # planned improvements to the spec
 ├── OBSERVATIONS.md         # log of observed agent behaviour
 ├── inventory/
