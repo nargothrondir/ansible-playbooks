@@ -23,7 +23,7 @@
 # a node's mesh name (e.g. xx-1) — both in the inventory's group_vars/control —
 # and their tags are reported as warnings instead of errors.
 #
-# Run from Semaphore ("Audit fleet"): no survey, Limit EMPTY. Safe to schedule.
+# Run from Semaphore ("Fleet: Audit"): no survey, Limit EMPTY. Safe to schedule.
 
 - name: Audit the fleet
   hosts: controller

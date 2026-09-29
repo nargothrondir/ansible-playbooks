@@ -32,7 +32,7 @@
 # Idempotent: a profile already on the scheme with its bindings intact changes
 # nothing.
 #
-# Run from Semaphore ("Migrate inbound tags"), survey: profile_name. Limit
+# Run from Semaphore ("Node: Migrate inbound tags"), survey: profile_name. Limit
 # stays EMPTY — every play targets the controller.
 
 - name: Rename a profile's inbounds to the country-code tag scheme

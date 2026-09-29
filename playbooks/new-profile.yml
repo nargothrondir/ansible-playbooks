@@ -352,7 +352,7 @@
           '{{ profile_inbound_tag }}'. Its inbounds are tagged:
           {{ profile_inbounds | map(attribute='tag') | join(', ') }}. A profile
           from before the <CC>-<protocol> scheme is renamed by
-          migrate-inbound-tags.yml (Semaphore "Migrate inbound tags"), which
+          migrate-inbound-tags.yml (Semaphore "Node: Migrate inbound tags"), which
           re-binds squads, hosts and nodes as it goes — never rename it in the
           panel by hand: the tag is its identity, and a rename re-creates it.
 
