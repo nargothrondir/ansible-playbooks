@@ -361,21 +361,19 @@
           pipeline did not build. Fill dns_target in the survey. Stops on a node
           whose containers are already running; see roles/dns/README.md.
 
-      # Both run playbooks/common.yml with arguments this file cannot see, and
-      # both predate it: one aimed at the lab group, which is empty now, the
-      # other rolled out the zram swap. Placed and renamed only — `create:
-      # false` keeps a rebuild from making two guesses at their arguments.
-      # Whether either is still needed is an open question.
-      "Fleet: Apply common (lab)":
+      # One template for the common role, whatever the target. It replaces two
+      # hand-made ones that each baked a target into their arguments — one the
+      # lab group, which is empty now, the other the zram swap roll-out, long
+      # finished. common.yml was written for exactly this: the target is a
+      # variable, and the survey (semaphore-survey.yml) makes it required, so
+      # a run states what it touches.
+      "Fleet: Apply common":
         view: Fleet
-        formerly: ["Apply common (lab)"]
         playbook: playbooks/common.yml
-        create: false
-      "Fleet: Apply common (zram swap)":
-        view: Fleet
-        formerly: ["common-zram-swap"]
-        playbook: playbooks/common.yml
-        create: false
+        description: >-
+          Re-apply the common baseline (swap, sysctls, packages, journald) to
+          the target given in the survey: one node, a group, or fleet.
+          Add --check --diff in CLI args for a dry run first. Leave Limit EMPTY.
 
       # The survey (node name, admin address, profile, country…) comes from
       # semaphore-survey.yml; the header of provision-node.yml documents it.

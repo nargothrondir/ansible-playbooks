@@ -10,8 +10,8 @@
 #   common_target=lab     the lab node (the default, so a mis-click cannot
 #                         touch production)
 #
-# Semaphore: set it as a survey variable named `common_target`, or pass
-# `-e common_target=<host>` in the template's CLI args. `--check --diff` gives
+# Semaphore: the "Fleet: Apply common" template asks for `common_target` in its
+# survey, or pass `-e common_target=<host>` in CLI args. `--check --diff` gives
 # a dry run first (note: the swap tasks read state with `command`, which check
 # mode skips, so their preview is indicative rather than exact).
 - name: Apply the common baseline
