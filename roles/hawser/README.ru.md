@@ -30,7 +30,7 @@
   правка compose доезжает до флота, и он оставляет её в истории **этого**
   репозитория, а не только чужого.
 
-**Доставляет её мёрдж.** Шаблон `Sync Hawser` в Semaphore запускается сам, когда
+**Доставляет её мёрдж.** Шаблон `Fleet: Sync Hawser` в Semaphore запускается сам, когда
 в `ansible-playbooks` появляется коммит в `main` — опция шаблона *Auto-run task
 if new git commit have been found*, репозиторий `ansible-playbooks`, интервал
 проверки 10 минут. Renovate предлагает бамп пина, вы читаете диф compose и
@@ -77,8 +77,8 @@ Semaphore спрашивает GitHub, GitHub к нам не стучится.
 
 | Шаблон | CLI args | Limit |
 |---|---|---|
-| `Rotate Hawser token` | `-e node_name=<хост> -e dockhand_force_rotate=true` | **пусто** |
-| `Sync Hawser` | пусто | `<хост>,controller` |
+| `Node: Rotate Hawser token` | `-e node_name=<хост> -e dockhand_force_rotate=true` | **пусто** |
+| `Fleet: Sync Hawser` | пусто | `<хост>,controller` |
 
 Плейбук ротации нацелен на контроллер и обращается только к API OpenBao и
 Dockhand — на саму ноду он не заходит, поэтому лимит с её именем оставит плей

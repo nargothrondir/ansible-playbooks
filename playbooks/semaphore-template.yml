@@ -7,21 +7,35 @@
 # templates that already exist. This one creates them. They are deliberately
 # separate: creating is a POST that must not fire twice, editing is a diff.
 #
-# Contract verified against Semaphore's OpenAPI at v2.19.7 — the version we run,
-# not the current release: POST /api/project/{id}/templates answers 201 with the
-# created record, and TemplateRequest carries project_id, inventory_id,
-# repository_id, environment_id, name, playbook, app and git_branch.
+# Contract verified against Semaphore's source at v2.19.14 — the version we
+# run, not the current release: POST /api/project/{id}/templates answers 201
+# with the created record and accepts view_id with the rest of the template;
+# POST /api/project/{id}/views takes project_id, title and position and answers
+# 201; PUT on a template or a view replaces the whole record.
 #
 # Designed to run FROM Semaphore itself (an ad-hoc template with no survey):
 # inside the container its API is http://127.0.0.1:3000. Override
 # semaphore_api_url for a run from elsewhere. The template must have the
 # Variable Group carrying OPENBAO_SECRET_ID attached, or the first read fails.
 #
-# EXISTING TEMPLATES ARE NOT TOUCHED. A template whose name is already there is
-# left exactly as it is, including settings that differ from what is declared
-# below. Reconciling them needs a PUT and a field-by-field diff, and doing that
-# in the same playbook would put every working template at risk of a bad
-# comparison. If a template needs changing, change it deliberately.
+# EXISTING TEMPLATES KEEP THEIR SETTINGS. A template that is already there is
+# left as it is, including settings that differ from what is declared below.
+# Reconciling them needs a PUT and a field-by-field diff, and doing that in the
+# same playbook would put every working template at risk of a bad comparison.
+# If a template's settings need changing, change them deliberately.
+#
+# Two things are the exception, and only these two: the NAME and the VIEW (the
+# tab it sits on). They are how the operator finds a template, they carry no
+# behaviour, and they are the part that drifts when templates are made by hand
+# — the UI was a name-sorted list of mixed conventions until they were declared
+# here. A template is found by its declared name or by one of its `formerly`
+# names, renamed to the declared one and moved to its view. The PUT carries the
+# full object read back from the API, so nothing else about it changes
+# (tasks/semaphore-template-place.yml).
+#
+# NAMES ARE "Object: action". The All tab sorts by name, so the prefix is what
+# keeps a component's templates together there: "OpenBao: Back up" next to
+# "OpenBao: Deploy", not at the other end of the alphabet.
 #
 # IDS ARE RESOLVED FROM NAMES. Numeric ids are local to one Semaphore instance
 # and mean nothing in git; a rebuilt instance renumbers everything. Where a name
@@ -54,6 +68,15 @@
     # every managed host, and a fleet-wide run recreates every agent at once —
     # fine for a label, wrong for anything else, and the choice belongs to
     # whoever presses the button rather than to this file.
+    # The tabs, in the order they appear after Semaphore's own "All". A view is
+    # looked up by title: nothing but this file names these four (§6), and the
+    # title is what the operator sees. Views made by hand are left alone.
+    semaphore_views:
+      - Fleet    # routine work on every node at once
+      - Nodes    # one node's life: provisioning and its protocols
+      - Panel    # the control plane: OpenBao and Semaphore itself
+      - Access   # SSH and certificates — rare, and careful
+
     semaphore_templates:
 
       # "Sync", not "Deploy" or "Upgrade": the run does three different jobs and
@@ -66,7 +89,9 @@
       # First install is NOT one of the jobs in practice: a new node gets its
       # agent from provision-node.yml, and nobody reaches for this template to
       # build one.
-      "Sync Hawser":
+      "Fleet: Sync Hawser":
+        view: Fleet
+        formerly: ["Sync Hawser"]
         playbook: playbooks/hawser.yml
         description: >-
           Bring the Hawser agent in line with what is declared — new compose,
@@ -79,21 +104,23 @@
       # ONE node's token had no button, and the header of that playbook has
       # documented the procedure since July as something nobody could perform.
       #
-      # Limit stays EMPTY here, which is the opposite of Sync Hawser. This
+      # Limit stays EMPTY here, which is the opposite of "Fleet: Sync Hawser". This
       # playbook targets the controller and speaks only to the OpenBao and
       # Dockhand APIs; it never touches the node. A limit naming the node would
       # leave the play with no hosts.
       #
       # Rotation REVOKES the previous token, so the node is unmanaged from the
-      # moment this finishes until Sync Hawser hands the new one to the agent.
+      # moment this finishes until "Fleet: Sync Hawser" hands the new one to the agent.
       # Traffic is unaffected — Hawser carries management, not user connections —
       # but the two runs belong together, one host at a time.
-      "Rotate Hawser token":
+      "Node: Rotate Hawser token":
+        view: Nodes
+        formerly: ["Rotate Hawser token"]
         playbook: playbooks/dockhand-environment.yml
         description: >-
           Mint and issue a new Hawser token for one node, revoking the old one.
           Pass -e node_name=<host> -e dockhand_force_rotate=true in CLI args and
-          leave Limit EMPTY. The node is unmanaged until Sync Hawser is run for
+          leave Limit EMPTY. The node is unmanaged until "Fleet: Sync Hawser" is run for
           it with Limit <host>,controller — do one host at a time.
 
       # How a change to the NetBird SSH decision reaches nodes that are already
@@ -101,11 +128,13 @@
       # built earlier keeps what it joined with, and the root login decided in
       # #102 would otherwise need a rebuild per node.
       #
-      # Limit must carry the controller, as for Sync Hawser: its play reads the
+      # Limit must carry the controller, as for "Fleet: Sync Hawser": its play reads the
       # setup key, and without it the node play stops at its assert. A node whose
       # settings differ drops off the mesh for seconds while they are re-applied
       # — the playbook header explains why the run survives that.
-      "Sync NetBird":
+      "Fleet: Sync NetBird":
+        view: Fleet
+        formerly: ["Sync NetBird"]
         playbook: playbooks/netbird.yml
         description: >-
           Bring each node's NetBird agent in line with the role — chiefly the
@@ -118,7 +147,9 @@
       # first of all — reaches the ones already serving. Limit must carry the
       # controller: its play reads the hub credentials, and the node play
       # asserts they were read.
-      "Sync Beszel agent":
+      "Fleet: Sync Beszel agent":
+        view: Fleet
+        formerly: ["Sync Beszel agent"]
         playbook: playbooks/beszel.yml
         description: >-
           Bring each node's Beszel agent in line with the role — registration
@@ -129,7 +160,9 @@
       # because apt-sources.yml chooses its hosts from apt_sources_target and
       # defaults to the lab group. A run with no arguments therefore cannot
       # reach the fleet, and widening it is a deliberate act typed at launch.
-      "Normalise apt sources":
+      "Fleet: Normalise apt sources":
+        view: Fleet
+        formerly: ["Normalise apt sources"]
         playbook: playbooks/apt-sources.yml
         description: >-
           Replace whatever apt arrangement the provider image shipped with one
@@ -137,7 +170,7 @@
           -e apt_sources_target=<host> in CLI args for one node at a time.
 
       # The only template here that can end with nobody able to reach a host,
-      # and it is deliberately not folded into "Trust the fleet SSH CA": that
+      # and it is deliberately not folded into "SSH: Trust the fleet CA": that
       # one adds a credential, this one removes two.
       #
       # Limit is REQUIRED, and unlike the CA template it must NOT carry the
@@ -145,7 +178,9 @@
       # secret. One host at a time, lab first, and open a NEW session to the
       # host before moving on: the reload does not drop the connection the run
       # is using, so a broken result stays invisible until the next login.
-      "Lock down SSH authentication":
+      "SSH: Lock down passwords":
+        view: Access
+        formerly: ["Lock down SSH authentication"]
         playbook: playbooks/ssh-lockdown.yml
         description: >-
           Turn off password authentication and password-based root login on a
@@ -163,7 +198,9 @@
       # A green run means a file reached the chat. It does NOT mean the backup
       # restores — that drill needs the unseal shares, which Semaphore does not
       # have and must never have.
-      "Back up OpenBao":
+      "OpenBao: Back up":
+        view: Panel
+        formerly: ["Back up OpenBao"]
         playbook: playbooks/openbao-backup.yml
         description: >-
           Snapshot OpenBao and send it to Telegram. Leave CLI args and Limit
@@ -174,7 +211,7 @@
       # a host. Additive — the node gains certificate logins and keeps
       # authorized_keys, so a failed certificate is not a lockout.
       #
-      # Limit is REQUIRED and must carry the controller, like Sync Hawser and
+      # Limit is REQUIRED and must carry the controller, like "Fleet: Sync Hawser" and
       # for the same reason: the CA key is read in a play targeting the
       # controller, and a limit without it produces a green run that installed
       # nothing. The playbook asserts rather than letting that pass.
@@ -182,7 +219,9 @@
       # One host at a time, lab first, with a real certificate login in between.
       # A run of this is not proof that certificates work — only that sshd
       # merged the directive.
-      "Trust the fleet SSH CA":
+      "SSH: Trust the fleet CA":
+        view: Access
+        formerly: ["Trust the fleet SSH CA"]
         playbook: playbooks/ssh-ca-trust.yml
         description: >-
           Install the fleet CA as a trust anchor on a node, so it accepts
@@ -205,7 +244,9 @@
       # public by construction and inert until a host trusts the CA, which no
       # host does yet. It is a probe, kept because the next phase edits sshd on
       # a live node and this is what says the credential side already works.
-      "Sign SSH certificate (test)":
+      "SSH: Sign certificate (test)":
+        view: Access
+        formerly: ["Sign SSH certificate (test)"]
         playbook: playbooks/openbao-ssh-sign.yml
         description: >-
           Sign Semaphore's own SSH key with the fleet CA and print what came
@@ -219,7 +260,9 @@
       #
       # Limit stays EMPTY: every play targets the controller. One node at a
       # time, with a client connecting through the new entry before the next.
-      "Enable xHTTP":
+      "Node: Enable xHTTP":
+        view: Nodes
+        formerly: ["Enable xHTTP"]
         playbook: playbooks/enable-xhttp.yml
         description: >-
           Add VLESS over xHTTP to one existing node, next to Reality TCP — the
@@ -231,7 +274,9 @@
       # checks that remnanode can read the node's certificate (a TLS inbound
       # Xray cannot load stops every protocol on the node) and opens UDP 443.
       # Limit stays EMPTY — that play targets the node by node_name.
-      "Enable Hysteria2":
+      "Node: Enable Hysteria2":
+        view: Nodes
+        formerly: ["Enable Hysteria2"]
         playbook: playbooks/enable-hysteria2.yml
         description: >-
           Add Hysteria2 (UDP 443) to one existing node, next to Reality TCP and
@@ -245,7 +290,9 @@
       # users off for seconds while it re-binds squads, nodes and hosts — one
       # profile per run, and the snapshot it prints is how a failed run is
       # repaired (migrate_restore in CLI args). Limit stays EMPTY.
-      "Migrate inbound tags":
+      "Node: Migrate inbound tags":
+        view: Nodes
+        formerly: ["Migrate inbound tags"]
         playbook: playbooks/migrate-inbound-tags.yml
         description: >-
           Rename ONE config profile's inbounds to <CC>-VLESS-TCP-REALITY /
@@ -258,7 +305,9 @@
       # remnawave-cookbook skill (audit.md). Both fields stay EMPTY. Profiles
       # deliberately left on old tags go in audit_legacy_profiles (by name)
       # (group_vars/control) and are reported as warnings, not errors.
-      "Audit fleet":
+      "Fleet: Audit":
+        view: Fleet
+        formerly: ["Audit fleet"]
         playbook: playbooks/audit-fleet.yml
         description: >-
           Check every profile, inbound, host, node and node stack against the
@@ -276,12 +325,114 @@
       # The first template still cannot come from here — something has to run
       # this playbook the first time. That is the irreducible seed, and it is the
       # same shape as the Hawser agent, which also cannot deliver itself.
-      "Sync Templates":
+      "Semaphore: Sync templates":
+        view: Panel
+        formerly: ["Sync Templates"]
         playbook: playbooks/semaphore-template.yml
         description: >-
-          Create any task template declared in this playbook that Semaphore does
-          not have yet. Existing templates are never modified — change one
-          deliberately if it needs changing.
+          Create the task templates and views declared in this playbook that
+          Semaphore does not have yet, and give existing templates their
+          declared name and view. Nothing else about an existing template is
+          changed. Leave CLI args and Limit EMPTY; run Sync surveys after it.
+
+      # The templates below were made by hand before this file declared them.
+      # Declaring them is what lets a rebuilt Semaphore get them back, and it is
+      # how their old names are found and replaced. Their settings on the live
+      # instance are left as they are, like every other existing template.
+
+      # The daily run, on its Semaphore schedule. serial: one host at a time,
+      # and an unreachable host is skipped rather than ending the run.
+      "Fleet: Update servers":
+        view: Fleet
+        formerly: ["Update servers"]
+        playbook: playbooks/update.yml
+        description: >-
+          Update packages on every managed host, one host at a time, and report
+          the result to Telegram. Runs daily on its schedule. Leave Limit EMPTY
+          for the fleet, or set one host.
+
+      # The survey (dns_target) comes from semaphore-survey.yml.
+      "Fleet: Encrypted DNS":
+        view: Fleet
+        formerly: ["DNS (encrypted resolver)"]
+        playbook: playbooks/dns.yml
+        description: >-
+          Apply encrypted DNS (systemd-resolved, DNS over TLS) to a node the
+          pipeline did not build. Fill dns_target in the survey. Stops on a node
+          whose containers are already running; see roles/dns/README.md.
+
+      # Both run playbooks/common.yml with arguments this file cannot see, and
+      # both predate it: one aimed at the lab group, which is empty now, the
+      # other rolled out the zram swap. Placed and renamed only — `create:
+      # false` keeps a rebuild from making two guesses at their arguments.
+      # Whether either is still needed is an open question.
+      "Fleet: Apply common (lab)":
+        view: Fleet
+        formerly: ["Apply common (lab)"]
+        playbook: playbooks/common.yml
+        create: false
+      "Fleet: Apply common (zram swap)":
+        view: Fleet
+        formerly: ["common-zram-swap"]
+        playbook: playbooks/common.yml
+        create: false
+
+      # The survey (node name, admin address, profile, country…) comes from
+      # semaphore-survey.yml; the header of provision-node.yml documents it.
+      "Node: Provision":
+        view: Nodes
+        formerly: ["Provision Node"]
+        playbook: playbooks/provision-node.yml
+        description: >-
+          Build a new node from a freshly rented VPS: base system, mesh, stack,
+          panel node and monitoring. Fill the survey; leave Limit EMPTY.
+
+      # Targets `panel` over SSH, which is why it runs from here and not from
+      # the panel shell: Semaphore holds the key.
+      "OpenBao: Deploy":
+        view: Panel
+        formerly: ["OpenBao Deploy"]
+        playbook: playbooks/openbao.yml
+        description: >-
+          Deploy or upgrade OpenBao on the panel. Recreating the container
+          SEALS the store: unseal it afterwards with `docker exec -it openbao
+          bao operator unseal`, once per share up to the threshold. Every
+          playbook that reads a secret fails until then.
+
+      "OpenBao: Verify":
+        view: Panel
+        formerly: ["OpenBao Verify"]
+        playbook: playbooks/openbao-verify.yml
+        description: >-
+          Prove the secret-delivery chain from inside Semaphore: AppRole login,
+          token, and a KV read of the self-test value. Leave CLI args and Limit
+          EMPTY.
+
+      "Semaphore: Sync surveys":
+        view: Panel
+        formerly: ["Sync Survey"]
+        playbook: playbooks/semaphore-survey.yml
+        description: >-
+          Bring every template's survey variables to the set declared in
+          semaphore-survey.yml. Run it after Sync templates. Leave CLI args and
+          Limit EMPTY.
+
+      "Semaphore: Switch inventory repo":
+        view: Panel
+        formerly: ["Inventory Repo Switch"]
+        playbook: playbooks/semaphore-inventory-repo.yml
+        description: >-
+          Report-only without arguments: prints the project's repositories,
+          inventories and keys. Pass the variables described in the playbook
+          header to point the inventory at the private repository.
+
+      "SSH: Mesh check":
+        view: Access
+        formerly: ["Mesh SSH Check"]
+        playbook: playbooks/mesh-ssh-check.yml
+        description: >-
+          Check that the automation user reaches hosts over the NetBird mesh by
+          name. Pass -e mesh_targets=node-a,node-b in CLI args.
 
   tasks:
     - name: Fetch the Semaphore API token
@@ -397,6 +548,71 @@
       tags:
         - config
 
+    # ---- Views -------------------------------------------------------------
+    - name: Fetch the views
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/views"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _views
+      changed_when: false
+      tags:
+        - config
+
+    # Position is the list index plus one: Semaphore's own "All" view (type
+    # `all`) sits in front of them.
+    - name: Create the missing views
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/views"
+        method: POST
+        headers: "{{ _api_headers }}"
+        body_format: json
+        body: >-
+          {{ {'project_id': _project_id | int,
+              'title': item,
+              'position': semaphore_views.index(item) + 1} }}
+        status_code: [201]
+      register: _views_created
+      loop: "{{ semaphore_views }}"
+      when: item not in (_views.json | default([]) | map(attribute='title') | list)
+      changed_when: _views_created.status == 201
+      tags:
+        - config
+
+    - name: Fetch the views again, with the new ones
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/views"
+        method: GET
+        headers: "{{ _api_headers }}"
+        status_code: [200]
+      register: _views
+      changed_when: false
+      tags:
+        - config
+
+    # A title that exists twice cannot be resolved to one view, and taking the
+    # first would spread templates over two tabs of the same name.
+    - name: Assert every declared view exists exactly once
+      ansible.builtin.assert:
+        that:
+          - (_views.json | selectattr('title', 'equalto', item) | list | length) == 1
+        fail_msg: >-
+          View "{{ item }}" matched
+          {{ _views.json | selectattr('title', 'equalto', item) | list | length }}
+          views; exactly one is needed. Rename or remove the duplicate in the UI.
+        quiet: true
+      loop: "{{ semaphore_views }}"
+      tags:
+        - config
+
+    - name: Resolve each declared view to its id
+      ansible.builtin.set_fact:
+        _view_ids: "{{ _views.json | items2dict(key_name='title', value_name='id') }}"
+      tags:
+        - config
+
+    # ---- Existing templates: name and view --------------------------------
     - name: Fetch the existing templates
       ansible.builtin.uri:
         url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates"
@@ -408,9 +624,63 @@
       tags:
         - config
 
-    # Fetch-then-guard (§6): created only when the name is absent. The POST is
-    # not idempotent — a second one would make a duplicate template with the same
-    # name and a different id, and Semaphore accepts that quite happily.
+    # One entry per declared template, with every existing template that
+    # carries its declared name or a former one. More than one match means an
+    # old and a new copy both exist, and renaming either would leave two
+    # templates with one name.
+    - name: Match each declared template to the one that exists
+      ansible.builtin.set_fact:
+        _placement: >-
+          {{ _placement | default([]) + [{
+               'key': item.key,
+               'view': _view_ids[item.value.view],
+               'matches': _templates.json | default([])
+                          | selectattr('name', 'in', [item.key] + item.value.formerly | default([]))
+                          | list}] }}
+      loop: "{{ semaphore_templates | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      tags:
+        - config
+
+    - name: Assert no declared template exists twice
+      ansible.builtin.assert:
+        that:
+          - (item.matches | length) <= 1
+        fail_msg: >-
+          "{{ item.key }}" matches {{ item.matches | map(attribute='name') | join(', ') }}
+          — an old and a new copy both exist. Delete the one that should not be
+          there, then run this again.
+        quiet: true
+      loop: "{{ _placement }}"
+      loop_control:
+        label: "{{ item.key }}"
+      tags:
+        - config
+
+    # Fetch-then-guard: only a template whose name or view differs is touched.
+    - name: Give existing templates their declared name and view
+      ansible.builtin.include_tasks: tasks/semaphore-template-place.yml
+      vars:
+        _place:
+          id: "{{ item.matches[0].id }}"
+          key: "{{ item.key }}"
+          view: "{{ item.view }}"
+      loop: "{{ _placement | selectattr('matches') | list }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: >-
+        item.matches[0].name != item.key
+        or (item.matches[0].view_id | default(0, true) | int) != (item.view | int)
+      tags:
+        - config
+
+    # ---- Missing templates -------------------------------------------------
+    # Fetch-then-guard (§6): created only when neither the name nor a former
+    # name exists. The POST is not idempotent — a second one would make a
+    # duplicate template with the same name and a different id, and Semaphore
+    # accepts that quite happily. `create: false` entries are placed, never
+    # created.
     - name: Create the missing templates
       ansible.builtin.uri:
         url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates"
@@ -423,30 +693,38 @@
               'repository_id': _repository_id | int,
               'environment_id': _environment_id | int,
               'name': item.key,
-              'playbook': item.value.playbook,
-              'description': item.value.description | default(''),
+              'playbook': semaphore_templates[item.key].playbook,
+              'description': semaphore_templates[item.key].description | default(''),
               'app': 'ansible',
-              'git_branch': item.value.git_branch | default(''),
+              'git_branch': semaphore_templates[item.key].git_branch | default(''),
               'arguments': '[]',
-              'allow_override_args_in_task': item.value.allow_override_args | default(true),
+              'allow_override_args_in_task': semaphore_templates[item.key].allow_override_args | default(true),
+              'view_id': item.view | int,
               'type': ''} }}
         status_code: [201]
-      loop: "{{ semaphore_templates | dict2items }}"
+      register: _created
+      loop: "{{ _placement | rejectattr('matches') | list }}"
       loop_control:
         label: "{{ item.key }}"
-      when: item.key not in (_templates.json | default([]) | map(attribute='name') | list)
-      changed_when: item.key not in (_templates.json | default([]) | map(attribute='name') | list)
+      when: semaphore_templates[item.key].create | default(true) | bool
+      changed_when: _created.status == 201
       tags:
         - config
 
-    - name: Report which templates were created
+    - name: Report what was created, renamed and left alone
       ansible.builtin.debug:
         msg: >-
-          {{ semaphore_templates.keys() | list | length }} declared;
-          created: {{ semaphore_templates.keys() | difference(_templates.json | default([]) | map(attribute='name') | list) | join(', ') | default('none', true) }};
-          already present: {{ semaphore_templates.keys() | intersect(_templates.json | default([]) | map(attribute='name') | list) | join(', ') | default('none', true) }}.
-          Existing templates are never modified — change one deliberately if it
-          needs changing.
+          {{ semaphore_templates | length }} declared in {{ semaphore_views | length }} views.
+          Created: {{ _placement | rejectattr('matches') | map(attribute='key') | join(', ') | default('none', true) }}.
+          Renamed: {{ _placement | selectattr('matches') | map(attribute='matches') | map('first')
+                      | map(attribute='name') | reject('in', semaphore_templates.keys() | list)
+                      | join(', ') | default('none', true) }}.
+          Not declared here, left as they are:
+          {{ _templates.json | default([]) | map(attribute='name')
+             | reject('in', semaphore_templates.keys() | list)
+             | reject('in', semaphore_templates.values() | map(attribute='formerly', default=[]) | flatten)
+             | join(', ') | default('none', true) }}.
+          Settings of existing templates were not changed — only name and view.
       tags:
         - debug
         - config

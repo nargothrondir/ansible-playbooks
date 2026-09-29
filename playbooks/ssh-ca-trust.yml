@@ -121,7 +121,7 @@
           - "authorized_keys is unchanged — the existing key is still the way in
              and is not affected by anything above."
           - "Prove it: sign a key with the Semaphore template
-             'Sign SSH certificate (test)', then ssh with -o CertificateFile
+             'SSH: Sign certificate (test)', then ssh with -o CertificateFile
              pointing at the result. Until that login succeeds, treat
              certificate access on this host as untested."
           - "The host now presents its own certificate too, but no client

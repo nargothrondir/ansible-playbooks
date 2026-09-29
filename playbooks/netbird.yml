@@ -6,9 +6,9 @@
 # with and re-applies only where that differs; see roles/netbird/README.md,
 # "SSH access".
 #
-# Semaphore template "Sync NetBird". Limit: EMPTY for every node, or
+# Semaphore template "Fleet: Sync NetBird". Limit: EMPTY for every node, or
 # <host>,controller for one. The controller must be in the limit, exactly as for
-# Sync Hawser: its play reads the setup key, and every task that joins or
+# "Fleet: Sync Hawser": its play reads the setup key, and every task that joins or
 # reconciles is gated on that key — without it the node play stops at its
 # assert rather than finishing green having changed nothing.
 #

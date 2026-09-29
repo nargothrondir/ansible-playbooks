@@ -29,7 +29,7 @@ Two things about that are deliberate:
   fleet — which keeps that change visible in this repository's history rather
   than only in another one.
 
-**A merge is what delivers it.** Semaphore's `Sync Hawser` template auto-runs
+**A merge is what delivers it.** Semaphore's `Fleet: Sync Hawser` template auto-runs
 when `ansible-playbooks` gains a commit on `main` — template option *Auto-run
 task if new git commit have been found*, repository `ansible-playbooks`, check
 interval 10 minutes. Renovate proposes the pin bump, you read the compose diff
@@ -75,8 +75,8 @@ each other, which is the easiest thing to get wrong:
 
 | Template | CLI args | Limit |
 |---|---|---|
-| `Rotate Hawser token` | `-e node_name=<host> -e dockhand_force_rotate=true` | **empty** |
-| `Sync Hawser` | empty | `<host>,controller` |
+| `Node: Rotate Hawser token` | `-e node_name=<host> -e dockhand_force_rotate=true` | **empty** |
+| `Fleet: Sync Hawser` | empty | `<host>,controller` |
 
 The rotation playbook targets the controller and speaks only to the OpenBao and
 Dockhand APIs — it never connects to the node, so a limit naming the node leaves

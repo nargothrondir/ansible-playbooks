@@ -27,7 +27,7 @@
 # -e xhttp_upstream=http, or =grpc to put it back. On a node that already has
 # xHTTP only the stack changes: its environment is rewritten and it redeploys.
 #
-# Run from Semaphore ("Enable xHTTP"), survey: node_name, node_profile,
+# Run from Semaphore ("Node: Enable xHTTP"), survey: node_name, node_profile,
 # node_country — the same values the node was provisioned with. Limit stays
 # EMPTY: every play targets the controller and talks to the panel and Dockhand
 # APIs only.

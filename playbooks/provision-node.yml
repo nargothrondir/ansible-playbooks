@@ -3,7 +3,7 @@
 # everything, and the target server is built in memory with add_host — so no
 # inventory edit/commit is needed between renting the VPS and running the task.
 #
-# Semaphore template "Provision Node" — survey variables:
+# Semaphore template "Node: Provision" — survey variables:
 #   node_ip        (required)        admin IP of the freshly rented VPS (root + admin key);
 #                                    used only for SSH — the panel never sees it.
 #                                    Recorded in OpenBao (infra/hosts) once the run

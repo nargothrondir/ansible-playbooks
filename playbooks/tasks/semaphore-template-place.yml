@@ -1,0 +1,44 @@
+---
+# Give ONE existing template its declared name and view. Included in a loop by
+# semaphore-template.yml, which has already resolved _project_id and decided
+# that this template needs it.
+#
+# Expects:
+#   _place.id    the template id
+#   _place.key   the declared name
+#   _place.view  the declared view id
+#
+# The only change semaphore-template.yml makes to an existing template, and
+# deliberately narrow: name and view_id, nothing else. Semaphore's PUT replaces
+# the WHOLE template — every column, plus its vaults and variable groups
+# (UpdateTemplate → UpdateTemplateVaults / UpdateTemplateEnvironments, v2.19.14)
+# — so the body has to be the full object. The LIST endpoint leaves vaults and
+# environment_ids out; only the DETAIL endpoint fills them (FillTemplate). A PUT
+# built from the list would detach the template from its variable group, and
+# with it from OPENBAO_SECRET_ID. Same lesson as semaphore-survey-template.yml.
+- name: "Fetch the full template object: {{ _place.key }}"
+  ansible.builtin.uri:
+    url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates/{{ _place.id }}"
+    method: GET
+    headers: "{{ _api_headers }}"
+    status_code: [200]
+  register: _place_detail
+  changed_when: false
+  tags:
+    - config
+
+# The caller's guard already established that name or view differs, so the PUT
+# is the state change.
+- name: "Give the template its declared name and view: {{ _place.key }}"
+  ansible.builtin.uri:
+    url: "{{ semaphore_api_url }}/api/project/{{ _project_id }}/templates/{{ _place.id }}"
+    method: PUT
+    headers: "{{ _api_headers }}"
+    body_format: json
+    body: "{{ _place_detail.json | combine({'name': _place.key, 'view_id': _place.view | int}) }}"
+    status_code: [200, 204]
+  register: _place_put
+  no_log: true
+  changed_when: _place_put.status in [200, 204]
+  tags:
+    - config

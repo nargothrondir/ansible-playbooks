@@ -50,7 +50,7 @@
     # the value. Existing variables always win — entries here only fill gaps.
     semaphore_surveys:
 
-      "Provision Node":
+      "Node: Provision":
         - name: node_ip
           title: Node IP
           description: >-
@@ -141,7 +141,7 @@
       # The values the node was provisioned with. node_name finds the node (by
       # its mesh address) and names its stack; node_profile is the profile
       # that gains the inbound; node_country gives the new host its flag.
-      "Enable xHTTP":
+      "Node: Enable xHTTP":
         - name: node_name
           title: Node name
           description: >-
@@ -164,7 +164,7 @@
 
       # Same three values, same meaning; node_name also picks the host the
       # first play runs on.
-      "Enable Hysteria2":
+      "Node: Enable Hysteria2":
         - name: node_name
           title: Node name
           description: >-
@@ -185,7 +185,7 @@
           type: ""
           required: true
 
-      "Migrate inbound tags":
+      "Node: Migrate inbound tags":
         - name: profile_name
           title: Config profile
           description: >-
@@ -201,7 +201,7 @@
           type: ""
           required: false
 
-      "DNS (encrypted resolver)":
+      "Fleet: Encrypted DNS":
         - name: dns_target
           title: Target
           description: >-

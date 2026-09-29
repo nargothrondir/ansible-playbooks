@@ -24,7 +24,7 @@
 # Rolling back one node: in the panel, take the Hysteria2 inbound off the node's
 # active inbounds (Nodes → the node → inbounds). Xray restarts without it.
 #
-# Run from Semaphore ("Enable Hysteria2"), survey: node_name, node_profile,
+# Run from Semaphore ("Node: Enable Hysteria2"), survey: node_name, node_profile,
 # node_country — the same values the node was provisioned with. Limit stays
 # EMPTY: the first play targets the node by name, the rest the controller.
 
