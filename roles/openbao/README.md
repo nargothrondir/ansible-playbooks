@@ -65,10 +65,12 @@ Raft data lives in the named Docker volume `openbao_file`, mounted at
 file and the rendered config.
 
 The mount point is not arbitrary. Docker seeds a fresh named volume from the
-image's directory, ownership included, so a path the image already declares
-(`/openbao/file`) works. A path it does not declare yields a root-owned
-directory, and the server — which runs as the unprivileged `openbao` user —
-dies with `failed to open bolt file: permission denied`.
+image's directory, ownership included, so a path the image already has
+(`/openbao/file`, created and owned by `openbao` in its Dockerfile) works. A
+path it does not have yields a root-owned directory, and the server — which
+runs as the unprivileged `openbao` user — dies with `failed to open bolt file:
+permission denied`. The seeding does not depend on a `VOLUME` instruction:
+images from 2.7.0 on carry none, and the path still works.
 
 ### The operator account: signing a certificate from a laptop
 
@@ -426,7 +428,8 @@ docker exec -e BAO_TOKEN=<the token that returned> bao-drill bao kv get -field=p
 ```
 
 The drill passed if that prints the CA public key the fleet actually trusts.
-Then remove the container along with its anonymous volume:
+Then remove the container along with any anonymous volume it created (images
+before 2.7.0 declare `VOLUME`s, so they create them; later ones do not):
 
 ```bash
 docker rm -fv bao-drill
