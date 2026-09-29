@@ -7,7 +7,7 @@ description: >
   "CLAUDE.md §N says W". Returns CONFIRMED / REFUTED / UNVERIFIABLE with a
   quote. Do NOT use to evaluate opinions, designs, or predictions — only
   checkable statements of fact.
-model: haiku
+model: sonnet
 tools: Read, Grep, Glob, WebFetch
 ---
 
