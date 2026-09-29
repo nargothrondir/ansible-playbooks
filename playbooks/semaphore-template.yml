@@ -383,7 +383,9 @@
         playbook: playbooks/provision-node.yml
         description: >-
           Build a new node from a freshly rented VPS: base system, mesh, stack,
-          panel node and monitoring. Fill the survey; leave Limit EMPTY.
+          panel node and monitoring, serving Reality TCP, xHTTP and Hysteria2
+          (Hysteria2 once Angie has issued its certificate; the report says if
+          it had to be left out). Fill the survey; leave Limit EMPTY.
 
       # Targets `panel` over SSH, which is why it runs from here and not from
       # the panel shell: Semaphore holds the key.

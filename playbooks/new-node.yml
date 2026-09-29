@@ -135,6 +135,12 @@
         body_format: json
         # Built as a Jinja dict so port stays a NUMBER — a templated YAML
         # scalar would arrive as a string and fail the panel's Zod validation.
+        #
+        # Every inbound of the profile except Hysteria2. Its TLS certificate is
+        # issued by Angie once the node's stack runs, which is after this; a
+        # node started with an inbound whose certificate Xray cannot read runs
+        # no protocol at all. Hysteria2 is added by the step below, with
+        # node_hysteria2, once the certificate has been checked on the node.
         body: >-
           {{ {'name': _node_display_name,
               'address': _node_address,
@@ -142,7 +148,9 @@
               'countryCode': _node_country | upper,
               'configProfile': {
                 'activeConfigProfileUuid': node_profile_resolved.uuid,
-                'activeInbounds': node_profile_resolved.inbounds | map(attribute='uuid') | list
+                'activeInbounds': node_profile_resolved.inbounds
+                                  | rejectattr('network', 'equalto', 'hysteria')
+                                  | map(attribute='uuid') | list
               }} }}
         status_code: [200, 201]
       register: new_node_result

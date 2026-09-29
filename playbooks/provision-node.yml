@@ -603,6 +603,12 @@
     # therefore will not create itself. Kept as a list so a second workload
     # does not need a second task — override to change what a node carries.
     provision_workload_volumes: "{{ workload_volumes | default(['angie-acme']) }}"
+    # Hysteria2 listens on UDP 443 (new-profile.yml host_port). Opened here,
+    # with the rest of the firewall, rather than in a second ufw run once the
+    # certificate exists: a port nothing listens on yet answers nothing.
+    ufw_public_udp:
+      - port: 443
+        comment: Hysteria2
     # From OpenBao, read in the first play. The role's defaults no longer name
     # a vault variable, so this is now the only source.
     beszel_agent_admin_email: >-
@@ -702,8 +708,13 @@
 
 # Ensure the config profile (+ squad + host) exists — created if missing, so a
 # new country needs no separate step (requires profile_domain then).
+#
+# A new node serves all three protocols. Reality TCP and xHTTP from here on;
+# Hysteria2 once its certificate exists, further down.
 - name: Ensure the config profile exists
   ansible.builtin.import_playbook: new-profile.yml
+  vars:
+    node_xhttp: true
 
 # Register the node in the panel, bound to node_profile. node_address defaults
 # to the mesh DNS name (the peer joined in the play above, so the name resolves
@@ -711,6 +722,7 @@
 - name: Register the node in the Remnawave panel
   ansible.builtin.import_playbook: new-node.yml
   vars:
+    node_xhttp: true
     # "FI-1 [Provider]" — the node's own name, upper-cased as the panel shows
     # it, and the provider when the survey gave one. No "Node": the panel's
     # nodes page needs no reminder of what it lists. Only the name the node is
@@ -724,6 +736,48 @@
 # first, because the stack is deployed onto it (#136).
 - name: Deploy the node's workload stack
   ansible.builtin.import_playbook: dockhand-stack.yml
+  vars:
+    # XHTTP_PATH on the stack is what switches Angie's xHTTP location on.
+    node_xhttp: true
+
+# Hysteria2 needs the node's certificate, and the certificate is issued by
+# Angie in the stack deployed just above — which is why it cannot be switched on
+# with the other two, and why new-node.yml never activates it at creation.
+#
+# The wait is generous (five minutes) and its failure is NOT the run's failure.
+# A node without Hysteria2 still serves Reality TCP and xHTTP, and failing here
+# would skip recording its address in OpenBao and the report — leaving a
+# working node nobody has written down. The report says Hysteria2 is missing;
+# "Node: Enable Hysteria2" adds it later with the same survey values.
+- name: Wait for the certificate Hysteria2 needs
+  hosts: _provision_target
+  gather_facts: false
+  become: true
+  vars:
+    ansible_user: "{{ bootstrap_user }}"
+  tasks:
+    - name: Wait for Angie to issue the certificate remnanode reads
+      ansible.builtin.include_tasks: tasks/hysteria2-cert-check.yml
+      vars:
+        # Must match new-profile.yml's profile_hysteria2_cert_dir.
+        hysteria2_cert_dir: /etc/xray-tls/letsencrypt
+        hysteria2_cert_wait_retries: 30
+
+    - name: Record whether the node can serve Hysteria2
+      ansible.builtin.set_fact:
+        _hysteria2_node_ready: "{{ _hysteria2_cert_check.rc == 0 }}"
+
+- name: Add Hysteria2 to the node's config profile
+  ansible.builtin.import_playbook: new-profile.yml
+  vars:
+    node_xhttp: true
+    node_hysteria2: "{{ hostvars[node_name]._hysteria2_node_ready | default(false) | bool }}"
+
+- name: Serve the Hysteria2 inbound on the node
+  ansible.builtin.import_playbook: new-node.yml
+  vars:
+    node_xhttp: true
+    node_hysteria2: "{{ hostvars[node_name]._hysteria2_node_ready | default(false) | bool }}"
 
 # Last of all, and deliberately only on success: a full provisioning run takes
 # about twenty minutes, and the operator should not have to watch it.
@@ -977,6 +1031,7 @@
           🔗 mesh <code>{{ node_name }}.{{ netbird_dns_domain }}</code>
           🌐 <code>{{ node_name }}.{{ infra_domain }}</code>
           📦 Dockhand <code>{{ node_name | upper }}</code> · stack <code>{{ dockhand_stack_name | default('remnanode') }}</code> deployed
+          🛰 Reality TCP · xHTTP · {{ 'Hysteria2' if (hostvars[node_name]._hysteria2_node_ready | default(false) | bool) else '⚠️ no Hysteria2 — the certificate was not ready; run "Node: Enable Hysteria2"' }}
           🕒 {{ provision_started_at }} → {{ _finished_at }} UTC ({{ _duration }})
           Panel, DNS, mesh, monitoring and the workload are all in place.
       tags:
