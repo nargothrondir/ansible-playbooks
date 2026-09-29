@@ -201,6 +201,15 @@
           type: ""
           required: false
 
+      "Fleet: Apply common":
+        - name: common_target
+          title: Target
+          description: >-
+            Host or group to re-apply the common baseline to — one node (e.g.
+            node-a) or fleet. Required on purpose: the playbook falls back to
+            the lab group when unset, and a run should state what it touches
+          type: ""
+          required: true
       "Fleet: Encrypted DNS":
         - name: dns_target
           title: Target
