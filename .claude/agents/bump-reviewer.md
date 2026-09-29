@@ -34,6 +34,14 @@ security fixes. A paraphrase of a breaking-change note is how a migration goes
 wrong. Prefer the project's CHANGELOG or GitHub release notes; a blog post or
 announcement is a lead to the changelog, not a substitute for it.
 
+**WebFetch is not a raw fetch.** It passes the page through a small model
+that answers your prompt, so a "quote" can come back condensed or reworded
+without saying so. Prefer raw sources — the CHANGELOG or a file at the tag on
+raw.githubusercontent.com — over rendered pages, and mark any quote you could
+not confirm verbatim as `(via WebFetch, unconfirmed)`. The caller confirms the
+quotes a decision rests on with a raw fetch; your job is to say which ones
+those are.
+
 **Map every change onto our files, or say it does not apply.** For each quoted
 change, search the paths you were given for the option, variable, image tag,
 port, volume or endpoint it names: compose files, Angie and application
