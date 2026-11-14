@@ -1,0 +1,218 @@
+---
+- name: Install Debian prerequisites without starting another firewall
+  ansible.builtin.apt:
+    name: [wireguard-tools, nftables, iproute2, ca-certificates, python3]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    policy_rc_d: 101
+  tags: [install]
+
+# Inspection itself needs iproute2/nftables. Do it before taking ownership,
+# registering a device, or changing any firewall or routing state.
+- name: Check ownership, policy routing and existing mark consumers
+  ansible.builtin.script:
+    cmd: warp-native.py preflight
+    executable: /usr/bin/python3
+  changed_when: false
+  check_mode: false
+  tags: [config]
+
+- name: Create private role directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - /var/lib/warp-native
+    - /etc/warp-native
+    - /usr/local/lib/warp-native
+  tags: [install]
+
+- name: Record ownership before downloading or generating state
+  ansible.builtin.copy:
+    content: "ansible warp_native v1\n"
+    dest: /etc/warp-native/owner
+    owner: root
+    group: root
+    mode: "0600"
+  tags: [config]
+
+- name: Create configuration and service directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /usr/local/libexec
+    - /etc/systemd/system/wg-quick@warp.service.d
+    - /etc/systemd/system/nftables.service.d
+  tags: [install]
+
+- name: Ensure the WireGuard configuration directory is private
+  ansible.builtin.file:
+    path: /etc/wireguard
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  tags: [install]
+
+- name: Inspect the binary directory for first-install check mode
+  ansible.builtin.stat:
+    path: /usr/local/lib/warp-native
+  register: _warp_native_binary_directory
+  tags: [install]
+
+# get_url otherwise fails in --check: file tasks predict, but do not create,
+# its parent directory. A real run always downloads and verifies the binary.
+- name: Download the pinned and checksum-verified wgcf binary
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/ViRb3/wgcf/releases/download/v{{ _warp_native_wgcf_version }}/wgcf_{{ _warp_native_wgcf_version }}_linux_{{ _warp_native_wgcf_architectures[ansible_facts['architecture']].name }}
+    checksum: "sha256:{{ _warp_native_wgcf_architectures[ansible_facts['architecture']].sha256 }}"
+    dest: /usr/local/lib/warp-native/wgcf
+    owner: root
+    group: root
+    mode: "0700"
+  when: not ansible_check_mode or _warp_native_binary_directory.stat.isdir | default(false)
+  tags: [install]
+
+- name: Install the role's local helper
+  ansible.builtin.copy:
+    src: warp-native.py
+    dest: /usr/local/libexec/warp-native
+    owner: root
+    group: root
+    mode: "0700"
+  notify: reconcile warp native firewall
+  tags: [config]
+
+- name: Write non-secret runtime settings
+  ansible.builtin.copy:
+    content: >-
+      {{ {'endpoint': warp_native_endpoint, 'mtu': warp_native_mtu | int,
+          'keepalive': warp_native_keepalive | int, 'timeout': warp_native_probe_timeout | int,
+          'cooldown': warp_native_watchdog_cooldown | int} | to_nice_json }}
+    dest: /etc/warp-native/settings.json
+    owner: root
+    group: root
+    mode: "0600"
+  tags: [config]
+
+- name: Register this node once with restrictive umask
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/warp-native, register]
+    creates: /var/lib/warp-native/wgcf-account.toml
+  no_log: true
+  diff: false
+  tags: [config]
+
+- name: Generate a reusable profile from the saved account
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/warp-native, generate]
+    creates: /var/lib/warp-native/wgcf-profile.conf
+  no_log: true
+  diff: false
+  tags: [config]
+
+- name: Enforce permissions on the account and generated profile
+  ansible.builtin.file:
+    path: "/var/lib/warp-native/{{ item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: [wgcf-account.toml, wgcf-profile.conf]
+  when: not ansible_check_mode
+  no_log: true
+  diff: false
+  tags: [config]
+
+- name: Render only the allowed IPv4 WireGuard settings locally on the node
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/warp-native, render]
+  register: _warp_native_render
+  changed_when: _warp_native_render.stdout == 'changed'
+  when: not ansible_check_mode
+  no_log: true
+  diff: false
+  notify: restart warp native interface
+  tags: [config]
+
+- name: Enforce root-only ownership of the live WireGuard private key
+  ansible.builtin.file:
+    path: /etc/wireguard/warp.conf
+    owner: root
+    group: root
+    mode: "0600"
+  when: not ansible_check_mode
+  no_log: true
+  diff: false
+  tags: [config]
+
+- name: Install systemd units and firewall reload integration
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - {src: guard.service.j2, dest: /etc/systemd/system/warp-native-guard.service}
+    - {src: watchdog.service.j2, dest: /etc/systemd/system/warp-native-watchdog.service}
+    - {src: watchdog.timer.j2, dest: /etc/systemd/system/warp-native-watchdog.timer}
+    - {src: wireguard.conf.j2, dest: /etc/systemd/system/wg-quick@warp.service.d/50-warp-native.conf}
+    - {src: nftables.conf.j2, dest: /etc/systemd/system/nftables.service.d/50-warp-native.conf}
+  notify:
+    - reload warp native systemd
+    - restart warp native timer
+  tags: [config]
+
+# Complete configuration before enabling the interface or the watchdog.
+- name: Apply pending unit and configuration changes
+  ansible.builtin.meta: flush_handlers
+  tags: [service]
+
+- name: Reconcile owned firewall and policy routes, including runtime drift
+  ansible.builtin.command: /usr/local/libexec/warp-native ensure
+  register: _warp_native_guard
+  changed_when: _warp_native_guard.stdout == 'changed'
+  when: not ansible_check_mode
+  tags: [service]
+
+- name: Enable the persistent guard before the WireGuard interface
+  ansible.builtin.systemd_service:
+    name: warp-native-guard.service
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+  tags: [service]
+
+- name: Enable the WireGuard interface
+  ansible.builtin.systemd_service:
+    name: wg-quick@warp.service
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+  tags: [service]
+
+- name: Set watchdog enablement
+  ansible.builtin.systemd_service:
+    name: warp-native-watchdog.timer
+    enabled: "{{ warp_native_watchdog_enabled }}"
+    state: "{{ warp_native_watchdog_enabled | bool | ternary('started', 'stopped') }}"
+  when: not ansible_check_mode
+  tags: [service]
+
+- name: Stop an in-flight watchdog when disabled for maintenance
+  ansible.builtin.systemd_service:
+    name: warp-native-watchdog.service
+    state: stopped
+  when:
+    - not warp_native_watchdog_enabled | bool
+    - not ansible_check_mode
+  tags: [service]

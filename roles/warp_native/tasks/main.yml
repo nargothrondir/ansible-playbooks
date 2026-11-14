@@ -1,0 +1,30 @@
+---
+- name: Validate the supported platform and settings
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+      - ansible_facts['distribution'] == 'Debian'
+      - ansible_facts['distribution_major_version'] in ['12', '13']
+      - ansible_facts['service_mgr'] == 'systemd'
+      - warp_native_state in ['present', 'absent']
+      - ansible_facts['architecture'] in _warp_native_wgcf_architectures
+      - warp_native_watchdog_interval | int >= 30
+      - warp_native_watchdog_cooldown | int >= 120
+      - warp_native_probe_timeout | int >= 2
+      - warp_native_probe_timeout | int <= 30
+      - warp_native_mtu | int >= 1280
+      - warp_native_mtu | int <= 1420
+      - warp_native_keepalive | int >= 0
+      - warp_native_keepalive | int <= 65535
+    fail_msg: This role requires Debian 12/13, systemd, amd64/arm64 and valid WARP settings.
+  tags: [always]
+
+- name: Install and configure selective WARP
+  ansible.builtin.import_tasks: present.yml
+  when: warp_native_state == 'present'
+  tags: [warp_native]
+
+- name: Remove this role's WARP installation
+  ansible.builtin.import_tasks: absent.yml
+  when: warp_native_state == 'absent'
+  tags: [warp_native]

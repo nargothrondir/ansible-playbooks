@@ -1,0 +1,13 @@
+[Unit]
+Description=Check real WARP egress and recover the interface
+After=network-online.target warp-native-guard.service
+ConditionPathExists=!/etc/warp-native/watchdog.disabled
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/warp-native watchdog
+TimeoutStartSec=90
+UMask=0077
+RuntimeDirectory=warp-native
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes

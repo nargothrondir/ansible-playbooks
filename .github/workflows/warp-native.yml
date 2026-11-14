@@ -1,0 +1,31 @@
+---
+name: WARP role tests
+on:
+  push:
+    branches: [main]
+    paths: ["roles/warp_native/**", "playbooks/templates/xray-reality-profile.json.j2", ".github/workflows/warp-native.yml"]
+  pull_request:
+    paths: ["roles/warp_native/**", "playbooks/templates/xray-reality-profile.json.j2", ".github/workflows/warp-native.yml"]
+  workflow_dispatch:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install template test dependency
+        run: pip install jinja2
+      - name: Run deterministic helper and Xray template tests
+        run: python -m unittest discover -s roles/warp_native/tests -v
+  network:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        release: [bookworm, trixie]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check nftables and policy routing in an isolated container
+        run: bash roles/warp_native/tests/run-network-tests.sh "${{ matrix.release }}"

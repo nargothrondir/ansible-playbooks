@@ -1,0 +1,17 @@
+---
+# Explicit opt-in: never included by provisioning or the fleet playbooks.
+- name: Configure selective WARP on one explicitly selected node
+  hosts: "{{ warp_native_target | default('warp_native_no_target') }}"
+  become: true
+  serial: 1
+  pre_tasks:
+    - name: Require a single explicit inventory host
+      ansible.builtin.assert:
+        that:
+          - warp_native_target is defined
+          - warp_native_target == inventory_hostname
+          - ansible_play_hosts_all | length == 1
+        fail_msg: Set warp_native_target to one inventory hostname; group patterns are refused.
+      tags: [always]
+  roles:
+    - role: warp_native

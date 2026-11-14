@@ -50,6 +50,15 @@
     # the value. Existing variables always win — entries here only fill gaps.
     semaphore_surveys:
 
+      "Node: Configure WARP":
+        - name: warp_native_target
+          title: WARP target node
+          description: >-
+            One exact inventory hostname, lab first. Group patterns are refused.
+            The playbook selects this host itself; leave Limit empty.
+          type: ""
+          required: true
+
       "Node: Provision":
         - name: node_ip
           title: Node IP

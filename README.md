@@ -44,6 +44,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | [dockhand](roles/dockhand/README.md) | Deploy Dockhand (Docker management UI) via Docker Compose | — |
 | [hawser](roles/hawser/README.md) | Deploy the Hawser edge agent (for Dockhand) on a host | — |
 | [beszel_agent](roles/beszel_agent/README.md) | Beszel monitoring agent (binary + systemd, WebSocket to the hub, no inbound port) | — |
+| [warp_native](roles/warp_native/README.md) | Selective IPv4 WARP for marked Xray outbounds, persistent kill switch and watchdog | — |
 | [openbao](roles/openbao/README.md) | OpenBao secret store (integrated Raft) on the panel host; init and unseal stay manual | — |
 
 ## Playbooks
@@ -62,6 +63,7 @@ Personal Ansible playbooks for VPS provisioning and management.
 | [playbooks/crowdsec.yml](playbooks/crowdsec.yml) | crowdsec | fleet (except panel) |
 | [playbooks/netbird.yml](playbooks/netbird.yml) | netbird (reconciles NetBird SSH: the break-glass and root login) | fleet (except panel) |
 | [playbooks/beszel.yml](playbooks/beszel.yml) | beszel_agent | fleet (except panel) |
+| [playbooks/warp-native.yml](playbooks/warp-native.yml) | warp_native | one explicit `warp_native_target` |
 | [playbooks/provision-node.yml](playbooks/provision-node.yml) | bootstrap, apt_sources, upgrade, debian_release, ssh_hardening, common, dns, netbird, docker, xanmod, hawser, crowdsec, ufw, beszel_agent, notify_telegram + panel API | (survey) |
 | [playbooks/new-profile.yml](playbooks/new-profile.yml) | — (panel API call) | control |
 | [playbooks/new-node.yml](playbooks/new-node.yml) | — (panel API call) | control |

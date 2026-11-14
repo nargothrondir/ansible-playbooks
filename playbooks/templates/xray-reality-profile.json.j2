@@ -38,9 +38,9 @@
     ,{
       "tag": "warp-out",
       "protocol": "freedom",
-      "settings": { "domainStrategy": "UseIP" },
+      "settings": { "domainStrategy": "ForceIPv4" },
       "streamSettings": {
-        "sockopt": { "interface": "warp", "tcpFastOpen": true }
+        "sockopt": { "interface": "warp", "mark": 51888, "tcpFastOpen": true }
       }
     }
 {% endif %}

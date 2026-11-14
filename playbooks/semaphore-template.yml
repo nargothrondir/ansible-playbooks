@@ -79,6 +79,21 @@
 
     semaphore_templates:
 
+      "Node: Configure WARP":
+        view: Nodes
+        playbook: playbooks/warp-native.yml
+        # The implementation is being tested on this branch, without changing
+        # the repository record or any existing template's main branch.
+        git_branch: feat/warp-native
+        description: >-
+          Configure selective WARP on one explicit inventory host, lab first.
+          Fill warp_native_target in the survey. Add --check --diff in CLI args
+          for the first run, then run twice without those flags and expect
+          changed=0 on the second real run. Leave Limit empty: the playbook
+          selects the host and refuses group patterns. For removal, first
+          remove WARP references from the test profile, then pass
+          -e warp_native_state=absent in CLI args.
+
       # "Sync", not "Deploy" or "Upgrade": the run does three different jobs and
       # only one of them is a version bump. It delivers a changed compose, it
       # hands the agent a token that was just rotated, and it is how a stranded

@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  role_name: warp_native
+  author: nargothrondir
+  description: Selective IPv4 WARP for marked Xray outbounds with a persistent kill switch and watchdog.
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+dependencies: []

@@ -44,6 +44,7 @@
 | [dockhand](roles/dockhand/README.ru.md) | Развёртывание Dockhand (веб-UI для Docker) через Docker Compose | — |
 | [hawser](roles/hawser/README.ru.md) | Развёртывание edge-агента Hawser (для Dockhand) на хосте | — |
 | [beszel_agent](roles/beszel_agent/README.ru.md) | Агент мониторинга Beszel (бинарник + systemd, WebSocket к хабу, без входящего порта) | — |
+| [warp_native](roles/warp_native/README.ru.md) | Выборочный IPv4 WARP для Xray, постоянный kill switch и watchdog | — |
 | [openbao](roles/openbao/README.ru.md) | Хранилище секретов OpenBao (встроенный Raft) на хосте панели; init и unseal остаются ручными | — |
 
 ## Плейбуки
@@ -62,6 +63,7 @@
 | [playbooks/crowdsec.yml](playbooks/crowdsec.yml) | crowdsec | fleet (кроме panel) |
 | [playbooks/netbird.yml](playbooks/netbird.yml) | netbird (сверка NetBird SSH: запасной вход и вход под root) | fleet (кроме panel) |
 | [playbooks/beszel.yml](playbooks/beszel.yml) | beszel_agent | fleet (кроме panel) |
+| [playbooks/warp-native.yml](playbooks/warp-native.yml) | warp_native | одна явно выбранная `warp_native_target` |
 | [playbooks/provision-node.yml](playbooks/provision-node.yml) | bootstrap, apt_sources, upgrade, debian_release, ssh_hardening, common, dns, netbird, docker, xanmod, hawser, crowdsec, ufw, beszel_agent, notify_telegram + API панели | (survey) |
 | [playbooks/new-profile.yml](playbooks/new-profile.yml) | — (вызов API панели) | control |
 | [playbooks/new-node.yml](playbooks/new-node.yml) | — (вызов API панели) | control |

@@ -1,0 +1,12 @@
+---
+warp_native_state: present
+# Keep the device identity across removal/reinstallation unless explicitly purged.
+warp_native_purge_account: false
+warp_native_watchdog_enabled: true
+warp_native_watchdog_interval: 60
+warp_native_watchdog_cooldown: 180
+warp_native_probe_timeout: 10
+# Empty uses the wgcf profile endpoint, resolved strictly to IPv4 on the node.
+warp_native_endpoint: ""
+warp_native_mtu: 1280
+warp_native_keepalive: 25

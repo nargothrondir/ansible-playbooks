@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic WARP egress check
+
+[Timer]
+OnBootSec=90s
+OnUnitInactiveSec={{ warp_native_watchdog_interval }}s
+AccuracySec=5s
+Unit=warp-native-watchdog.service
+
+[Install]
+WantedBy=timers.target

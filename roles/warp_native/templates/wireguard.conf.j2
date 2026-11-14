@@ -1,0 +1,8 @@
+[Unit]
+Requires=warp-native-guard.service
+After=warp-native-guard.service
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+ExecStartPre=/usr/local/libexec/warp-native ensure

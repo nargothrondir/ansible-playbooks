@@ -1,0 +1,6 @@
+# Keep the vendor's commands, including its existing ExecReload.
+# Do not enable nftables.service: UFW and CrowdSec remain the firewall owners.
+[Service]
+ExecStartPost=/usr/local/libexec/warp-native ensure
+ExecReload=/usr/local/libexec/warp-native ensure
+ExecStopPost=/usr/local/libexec/warp-native ensure

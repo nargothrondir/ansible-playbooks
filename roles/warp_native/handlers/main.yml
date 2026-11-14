@@ -1,0 +1,29 @@
+---
+- name: Reload systemd after unit changes
+  listen: reload warp native systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Reconcile the persistent WARP guard
+  listen: reconcile warp native firewall
+  ansible.builtin.command: /usr/local/libexec/warp-native ensure
+  register: _warp_native_reconciled
+  changed_when: _warp_native_reconciled.stdout == 'changed'
+  when: not ansible_check_mode
+
+- name: Restart the configured WARP interface
+  listen: restart warp native interface
+  ansible.builtin.systemd_service:
+    name: wg-quick@warp.service
+    state: restarted
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: Restart the watchdog timer after unit changes
+  listen: restart warp native timer
+  ansible.builtin.systemd_service:
+    name: warp-native-watchdog.timer
+    state: restarted
+  when:
+    - warp_native_watchdog_enabled | bool
+    - not ansible_check_mode

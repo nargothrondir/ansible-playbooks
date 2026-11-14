@@ -1,0 +1,81 @@
+---
+- name: Check whether this role owns the installation
+  ansible.builtin.stat:
+    path: /etc/warp-native/owner
+  register: _warp_native_owner
+  tags: [config]
+
+- name: Validate ownership before removal
+  ansible.builtin.script:
+    cmd: warp-native.py preflight
+    executable: /usr/bin/python3
+  changed_when: false
+  check_mode: false
+  when: _warp_native_owner.stat.exists
+  tags: [config]
+
+- name: Inspect owned units including the watchdog timer
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+  loop:
+    - warp-native-watchdog.timer
+    - warp-native-watchdog.service
+    - wg-quick@warp.service
+    - warp-native-guard.service
+  register: _warp_native_units
+  when: _warp_native_owner.stat.exists
+  tags: [service]
+
+- name: Stop owned services in dependency order
+  ansible.builtin.systemd_service:
+    name: "{{ item.item }}"
+    state: stopped
+    enabled: false
+  loop: "{{ _warp_native_units.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - _warp_native_owner.stat.exists
+    - item.status.LoadState | default('not-found') == 'loaded'
+  tags: [service]
+
+- name: Remove only owned rules and routes
+  ansible.builtin.script:
+    cmd: warp-native.py remove
+    executable: /usr/bin/python3
+  register: _warp_native_removed
+  changed_when: (_warp_native_removed.stdout | trim) == 'changed'
+  when:
+    - _warp_native_owner.stat.exists
+    - not ansible_check_mode
+  tags: [config]
+
+- name: Remove role-owned configuration and executables
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/wireguard/warp.conf
+    - /etc/systemd/system/warp-native-guard.service
+    - /etc/systemd/system/warp-native-watchdog.service
+    - /etc/systemd/system/warp-native-watchdog.timer
+    - /etc/systemd/system/wg-quick@warp.service.d/50-warp-native.conf
+    - /etc/systemd/system/nftables.service.d/50-warp-native.conf
+    - /usr/local/libexec/warp-native
+    - /usr/local/lib/warp-native
+    - /etc/warp-native
+    - /run/warp-native
+  when: _warp_native_owner.stat.exists
+  notify: reload warp native systemd
+  tags: [config]
+
+- name: Purge the saved device identity only when explicitly requested
+  ansible.builtin.file:
+    path: /var/lib/warp-native
+    state: absent
+  when:
+    - _warp_native_owner.stat.exists
+    - warp_native_purge_account | bool
+  no_log: true
+  diff: false
+  tags: [config]

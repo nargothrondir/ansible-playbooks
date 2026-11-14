@@ -1,0 +1,14 @@
+[Unit]
+Description=Selective WARP firewall and policy routing guard
+After=nftables.service ufw.service
+Before=wg-quick@warp.service docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/warp-native ensure
+ExecReload=/usr/local/libexec/warp-native ensure
+# Deliberately no ExecStop: stopping WARP or this unit must not remove protection.
+
+[Install]
+WantedBy=multi-user.target
